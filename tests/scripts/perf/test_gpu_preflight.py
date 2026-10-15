@@ -15,7 +15,7 @@ from vrl.scripts.perf.gpu_preflight import (
 def test_cpu_path_is_graceful_not_crash() -> None:
     """On a CPU box (CI), preflight must degrade to a well-formed 'unavailable' report,
     never raise — so perf probes can import/call it on non-CUDA CI."""
-    report = run_gpu_preflight(force=True)
+    report = run_gpu_preflight()
     assert isinstance(report, GpuPreflight)
     assert report.available is False
     assert report.bf16_peak_tflops == 0.0
@@ -37,7 +37,7 @@ def test_measured_peak_is_a_sane_bf16_denominator() -> None:
 
 @pytest.mark.gpu
 def test_arch_match_and_sdpa_measured() -> None:
-    report = run_gpu_preflight(force=True)
+    report = run_gpu_preflight()
     assert report.available is True
     assert report.sm.startswith("sm_")
     # If torch is built for this GPU there must be no arch warning; if not, arch_ok flags it.

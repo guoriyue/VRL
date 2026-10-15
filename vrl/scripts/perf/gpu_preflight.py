@@ -8,7 +8,7 @@ that again). Measuring an RTX 5090 at its real ~232 bf16 TFLOPS — not the 419 
 — is the difference between "the DiT is saturated" and a phantom "51% MFU, go write a
 kernel" goose chase (see SPRINT_lossless_diffusion_rl_research).
 
-What it checks/measures (all on the live GPU, one-time per process):
+What it checks/measures (all on the live GPU):
   1. torch is BUILT for this GPU's SM (else PTX-JIT fallback / failure).
   2. the real achievable bf16-dense GEMM peak (the correct MFU denominator).
   3. the fastest EXACT SDPA backend at a DiT attention shape, selected by
@@ -30,10 +30,6 @@ from dataclasses import dataclass, field
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-
-# Module cache so repeated perf probes in one process measure once.
-_PEAK_CACHE: dict[int, float] = {}
-_REPORT_CACHE: GpuPreflight | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,44 +66,37 @@ def _cuda_time_ms(fn, iters: int, warmup: int, trials: int = 3) -> float:
     return statistics.median(cuda_mean_ms(fn, iters=iters, warmup=0) for _ in range(trials))
 
 
-def measured_bf16_peak_tflops(size: int = 12288) -> float:
+def measured_bf16_peak_tflops() -> float:
     """Achievable dense bf16 (fp32-accumulate) GEMM TFLOPS on the current GPU.
 
-    The correct MFU denominator — measured, not the vendor headline. Cached per size.
+    The correct MFU denominator — measured, not the vendor headline.
     Returns 0.0 with no CUDA device.
     """
     import torch
 
     if not torch.cuda.is_available():
         return 0.0
-    if size in _PEAK_CACHE:
-        return _PEAK_CACHE[size]
     torch.backends.cuda.matmul.allow_tf32 = False
     best = 0.0
     # Two sizes: the big one tops out the tensor cores; the smaller is a fast floor.
-    for n in (8192, size):
+    for n in (8192, 12288):
         a = torch.randn(n, n, device="cuda", dtype=torch.bfloat16)
         b = torch.randn(n, n, device="cuda", dtype=torch.bfloat16)
         ms = _cuda_time_ms(lambda a=a, b=b: a @ b, iters=30, warmup=12)
         best = max(best, 2 * n * n * n / (ms / 1e3) / 1e12)
         del a, b
     torch.cuda.empty_cache()
-    _PEAK_CACHE[size] = best
     return best
 
 
-def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
-    """Measure the GPU once and return the resolved facts + best kernels (cached)."""
-    global _REPORT_CACHE
-    if _REPORT_CACHE is not None and not force:
-        return _REPORT_CACHE
-
+def run_gpu_preflight() -> GpuPreflight:
+    """Measure the GPU and return the resolved facts + best kernels."""
     import torch
     from torch.nn.attention import SDPBackend, sdpa_kernel
     from torch.nn.functional import scaled_dot_product_attention as sdpa_fn
 
     if not torch.cuda.is_available():
-        _REPORT_CACHE = GpuPreflight(
+        return GpuPreflight(
             available=False,
             device_name="cpu",
             sm="",
@@ -119,7 +108,6 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
             flash_attn_pkg=None,
             warnings=("no CUDA device",),
         )
-        return _REPORT_CACHE
 
     cap = torch.cuda.get_device_capability()
     sm = f"sm_{cap[0]}{cap[1]}"
@@ -174,7 +162,7 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
     except Exception:
         fa = None
 
-    _REPORT_CACHE = GpuPreflight(
+    return GpuPreflight(
         available=True,
         device_name=torch.cuda.get_device_name(0),
         sm=sm,
@@ -186,15 +174,13 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
         flash_attn_pkg=fa,
         warnings=tuple(warns),
     )
-    return _REPORT_CACHE
 
 
-def log_gpu_preflight() -> GpuPreflight:
-    """Log the perf preflight report and return it."""
+def main() -> None:
     r = run_gpu_preflight()
     if not r.available:
         logger.info("GPU preflight: no CUDA device (CPU run)")
-        return r
+        return
     logger.info(
         "GPU preflight: %s (%s) | arch_ok=%s | bf16 peak=%.0f TFLOPS (MFU denominator) "
         "| best SDPA=%s %s | flash_attn_pkg=%s",
@@ -208,16 +194,10 @@ def log_gpu_preflight() -> GpuPreflight:
     )
     for w in r.warnings:
         logger.warning("GPU preflight: %s", w)
-    return r
-
-
-def main() -> None:
-    log_gpu_preflight()
 
 
 __all__ = [
     "GpuPreflight",
-    "log_gpu_preflight",
     "main",
     "measured_bf16_peak_tflops",
     "run_gpu_preflight",
