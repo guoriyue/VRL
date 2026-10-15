@@ -58,18 +58,6 @@ def test_profile_executes_exact_warmup_and_active_counts():
     assert report.calls["other"] == 2
 
 
-@pytest.mark.parametrize("device_time, expected", [(0.0, 0.0), (2.0, 2.0), (None, 9.0)])
-def test_event_time_fallback_preserves_explicit_zero(device_time, expected):
-    from types import SimpleNamespace
-
-    from vrl.scripts.perf.profile_linear_projections import _event_self_us
-
-    event = SimpleNamespace(
-        self_cpu_time_total=1.0, self_device_time_total=device_time, self_cuda_time_total=9.0
-    )
-    assert _event_self_us(event, cuda=True) == (expected, 1.0)
-
-
 @pytest.mark.parametrize("failure_stage", [None, "body", "traversal"])
 def test_instrumentation_restores_forward_ownership(failure_stage):
     import torch

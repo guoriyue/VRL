@@ -170,11 +170,7 @@ def main(argv=None):
     for evt in prof.key_averages():
         if not _is_device_kernel(str(evt.key)):
             continue
-        dev_us = float(
-            getattr(evt, "self_device_time_total", 0)
-            or getattr(evt, "self_cuda_time_total", 0)
-            or 0
-        )
+        dev_us = float(evt.self_device_time_total)
         if dev_us <= 0:
             continue
         calls = int(getattr(evt, "count", 0) or 0)

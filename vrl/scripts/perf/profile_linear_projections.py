@@ -234,20 +234,6 @@ def instrument_linear_projections(model: nn.Module) -> Iterator[dict[str, list[s
                 del module.forward
 
 
-def _event_self_us(event: Any, *, cuda: bool) -> tuple[float, float]:
-    """(device_us, cpu_us) self-time for a profiler event, version-tolerant."""
-
-    cpu_us = float(getattr(event, "self_cpu_time_total", 0.0) or 0.0)
-    device_us = 0.0
-    if cuda:
-        # torch >= 2.1 renamed self_cuda_time_total -> self_device_time_total.
-        device_time = getattr(event, "self_device_time_total", None)
-        if device_time is None:
-            device_time = getattr(event, "self_cuda_time_total", 0.0)
-        device_us = float(device_time or 0.0)
-    return device_us, cpu_us
-
-
 def profile_linear_projections(
     model: nn.Module,
     forward_fn: Callable[[], Any],
@@ -301,9 +287,9 @@ def profile_linear_projections(
         cat = key.split("/", 1)[1]
         if cat not in bd.device_us:
             continue
-        device_us, cpu_us = _event_self_us(event, cuda=cuda)
-        bd.device_us[cat] += device_us
-        bd.cpu_us[cat] += cpu_us
+        if cuda:
+            bd.device_us[cat] += float(event.self_device_time_total)
+        bd.cpu_us[cat] += float(event.self_cpu_time_total)
         bd.calls[cat] += int(getattr(event, "count", 0) or 0)
     return bd
 
