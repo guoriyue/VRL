@@ -180,30 +180,15 @@ def test_setup_cli_creates_ignored_external_dirs(
     assert (data_root / "video_world" / "targets").is_dir()
 
 
-@pytest.mark.parametrize("value", [{"ref.ppm": 1}, [1], [None], b"ref.ppm"])
-def test_artifact_field_rejects_non_path_values(tmp_path, value):
-    example = PromptExample(prompt="test", reference_images=value)
-    with pytest.raises(ArtifactManifestError, match=r"reference_images.*string or.*strings"):
-        DatasetFileReport.from_examples(
-            [example],
-            manifest_path=tmp_path / "manifest.jsonl",
+def test_artifact_field_rejects_non_path_values(tmp_path):
+    manifest = tmp_path / "manifest.jsonl"
+    _write_manifest(manifest, {"prompt": "test", "target_video": {"ref.ppm": 1}})
+    with pytest.raises(ArtifactManifestError, match=r"target_video.*string or.*strings"):
+        DatasetFileReport.from_manifest(
+            manifest,
             data_root=tmp_path,
-            artifact_fields=("reference_images",),
+            artifact_fields=("target_video",),
         )
-
-
-@pytest.mark.parametrize("container", [list, tuple])
-def test_artifact_field_preserves_path_sequences(tmp_path, container):
-    _write_ppm(tmp_path / "ref.ppm")
-    example = PromptExample(prompt="test", reference_images=container(["", "ref.ppm", "  "]))
-    report = DatasetFileReport.from_examples(
-        [example],
-        manifest_path=tmp_path / "manifest.jsonl",
-        data_root=tmp_path,
-        artifact_fields=("reference_images",),
-    )
-    assert len(report.resolved_artifacts) == 1
-    assert report.resolved_artifacts[0].raw_path == "ref.ppm"
 
 
 def test_single_reference_image_row_key_loads_as_a_one_element_list() -> None:

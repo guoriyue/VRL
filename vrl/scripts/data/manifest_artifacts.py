@@ -89,10 +89,8 @@ class DatasetFileReport:
             with path.open("rb") as handle:
                 handle.read(1)
             if path.suffix.lower() in IMAGE_SUFFIXES:
-                try:
-                    from PIL import Image
-                except ImportError:
-                    return
+                from PIL import Image
+
                 with Image.open(path) as image:
                     image.verify()
         except Exception as exc:
@@ -144,41 +142,7 @@ class DatasetFileReport:
         """
 
         path = Path(manifest_path)
-        return cls.from_examples(
-            load_prompt_dataset_index(path),
-            manifest_path=path,
-            eval_examples=None
-            if eval_manifest is None
-            else load_prompt_dataset_index(eval_manifest),
-            eval_manifest_path=eval_manifest,
-            data_root=data_root,
-            artifact_fields=artifact_fields,
-            required_artifact_fields=required_artifact_fields,
-            required_metadata_fields=required_metadata_fields,
-        )
-
-    @classmethod
-    def from_examples(
-        cls,
-        examples: Sequence[PromptExample],
-        *,
-        manifest_path: str | Path,
-        eval_examples: Sequence[PromptExample] | None = None,
-        eval_manifest_path: str | Path | None = None,
-        data_root: str | Path | None = None,
-        artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
-        required_artifact_fields: Sequence[str] = (),
-        required_metadata_fields: Sequence[str] = (),
-    ) -> DatasetFileReport:
-        """Build the report for already-loaded examples.
-
-        The loader is the caller's choice (a native prompt manifest, an
-        image-caption manifest, a mixture); the artifact and provenance checks
-        are the same whichever produced the rows. ``manifest_path`` only names
-        the rows in errors.
-        """
-
-        path = Path(manifest_path)
+        examples = load_prompt_dataset_index(path)
         roots = RootedPaths.data_root(data_root)
         root = roots.root
         resolved: list[ResolvedArtifact] = []
@@ -235,14 +199,11 @@ class DatasetFileReport:
             warnings=tuple(warnings),
             source_episodes=source_episodes,
         )
-        if eval_examples is None:
+        if eval_manifest is None:
             return report
 
-        if eval_manifest_path is None:
-            raise ValueError("eval_examples require eval_manifest_path to name them in errors")
-        eval_report = cls.from_examples(
-            eval_examples,
-            manifest_path=eval_manifest_path,
+        eval_report = cls.from_manifest(
+            eval_manifest,
             data_root=data_root,
             artifact_fields=artifact_fields,
             required_artifact_fields=required_artifact_fields,
