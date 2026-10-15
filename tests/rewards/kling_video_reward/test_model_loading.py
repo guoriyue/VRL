@@ -427,7 +427,9 @@ def test_prepare_batch_decodes_a_real_clip_through_the_real_processor(tmp_path: 
         model=model,
         processor=processor,
         device="cpu",
-        data_config=_DataConfig(max_frame_pixels=28 * 28 * 4, num_frames=4),
+        # qwen_vl_utils rejects a frame budget below its video floor of 128
+        # patches per frame (VIDEO_FRAME_MIN_PIXELS), so the budget sits at it.
+        data_config=_DataConfig(max_frame_pixels=128 * 32 * 32, num_frames=4),
     )
 
     batch = reward_model._prepare_batch([str(clip)], ["a robot arm"])
