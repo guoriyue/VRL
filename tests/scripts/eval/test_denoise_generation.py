@@ -61,7 +61,6 @@ def test_native_generation_preserves_conditioning_precision_and_decode_context(m
             seed=37,
             samples_per_prompt=2,
             sampling=sampling,
-            torch=torch,
         )
         assert len(images) == 2
         assert model.conditioning[:2] == (["a bird", "a bird"], ["blur", "blur"])

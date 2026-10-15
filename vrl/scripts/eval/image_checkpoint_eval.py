@@ -184,8 +184,6 @@ class CheckpointEvaluation:
         return orders
 
     def generate(self, output_dir: Path) -> list[dict[str, Any]]:
-        import torch
-
         from vrl.trainers.checkpointing import TrainingCheckpoint
         from vrl.utils.cuda_memory import release_cuda_memory
 
@@ -230,7 +228,6 @@ class CheckpointEvaluation:
                                 seed=row["seed"],
                                 samples_per_prompt=1,
                                 sampling=self.sampling,
-                                torch=torch,
                             )
                         if len(images) != 1:
                             raise RuntimeError(f"expected one image, received {len(images)}")

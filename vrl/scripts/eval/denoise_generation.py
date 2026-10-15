@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -169,7 +168,6 @@ def generate_images(
     seed: int,
     samples_per_prompt: int,
     sampling: ImageSampling,
-    torch: ModuleType,
 ) -> list[Image.Image]:
     """Generate one reproducible image batch through native scheduler steps."""
 
