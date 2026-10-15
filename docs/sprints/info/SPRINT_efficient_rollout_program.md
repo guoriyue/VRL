@@ -261,7 +261,7 @@ A/C: 不立项 novelty；按需 compose AEGPO/TreeGRPO 机理对齐工程
 ## 11. 参考代码
 
 - `vrl/generation/diffusion/executor.py`：`run_denoise_steps`（`no_grad`、TeaCache gate、dense replay）。
-- `vrl/generation/diffusion/layout.py`：`select_sde_window` / `DiffusionSDEParams`。
+- `vrl/generation/diffusion/layout.py`：`select_sde_window` / `DenoiseSDEParams`。
 - `vrl/trainers/online/trainer.py`：`_train_timestep_indices`（denoising reduction / DanceGRPO）。
 - `vrl/math/diffusion/flow_matching.py`：`sde_step_with_logprob`（C1 随机 log-prob 定义点）。
 - `vrl/algorithms/advantages.py`：`group_relative_advantages`（C2）。

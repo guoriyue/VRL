@@ -104,6 +104,6 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 - config：`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
 - streaming + host-RAM guard：`vrl/scripts/common/online.py:_run_streaming_optimizer_update`
 - size↔count 派生：`vrl/config/builders.py:build_online_batch_plan`、
-  `vrl/trainers/online/config.py:OnlineBatchPlan`
+  `vrl/trainers/online/config.py:OnlineBatchConfig`
 - resume：`vrl/trainers/checkpointing.py`、`trainer.resume_from`
 - 本次产物：`outputs/cosmos25_kling_50ep/metrics.csv`（14 行）、`outputs/cosmos25_kling_50ep/checkpoint-10/`

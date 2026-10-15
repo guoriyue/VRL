@@ -29,7 +29,7 @@
 
 | 文章的对齐点（LLM-AR） | 我们扩散/flow 的对应 | 现状（证据） |
 |---|---|---|
-| 训练框架 vs 推理框架是两套实现 | **不成立**：采样和训练都走同一个 DiT `forward_step` / `replay_forward`；scheduler 是**同一个对象** | `factory.py:202` 把 generation 用的 `scheduler` 直接传给 `DiffusionSDELogProbEvaluator`；离散化逐项一致 |
+| 训练框架 vs 推理框架是两套实现 | **不成立**：采样和训练都走同一个 DiT `forward_step` / `replay_forward`；scheduler 是**同一个对象** | `factory.py:202` 把 generation 用的 `scheduler` 直接传给 `DenoiseSDELogProbEvaluator`；离散化逐项一致 |
 | KVCache 精度（FP32 累加 vs BF16 初始化） | 扩散无 KV-cache 自回归累加；但有 logprob 的高斯密度数学 | `flow_matching.py:58` `model_output.to(md)`，`math_dtype` 默认 fp32，bf16/fp8 强制 upcast 后再算 log-density |
 | LM_Head 需 FP32 softmax | 无 softmax 分类头；对应的是 SDE step 的高斯 log-prob | 同上，math 轴恒 fp32 |
 | RMSNorm / RoPE / Attention 训推实现差异 | **当前无分歧**：同一份 module，同一次前向定义 | 采样 `executor.py:720 model.forward_step` 与训练 `sde_logprob.py:78 model.replay_forward` 是同一模型的两次调用 |

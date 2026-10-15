@@ -343,12 +343,12 @@ step_kind: stochastic_branch
 
 ### P1 — executor MVP：shared prefix + dense fallback
 
-目标：在当前 `DiffusionChunkExecutorBase` 上加实验路径，不动 algorithm 主流程。
+目标：在当前 `DenoiseBatchExecutorBase` 上加实验路径，不动 algorithm 主流程。
 
 - 支持 `sampling.shared_prefix_steps`（默认 off）。
 - 只在 `sample_count > 1` 且同 prompt chunk 生效。
 - prefix batch=1，suffix batch=G。
-- dense fallback 输出当前 `DiffusionChunkResult`。
+- dense fallback 输出当前 `DenoiseBatchResult`。
 - context/counters 记录：
 
 ```text

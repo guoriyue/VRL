@@ -40,9 +40,9 @@ Diffusers-backed forward 误写成“没有自研 engine”。
 | 边界 | 已有事实 | 本 program 的处理 |
 |---|---|---|
 | Runtime | `GenerationRuntime` 定义统一 collector shape；`RayGenerationLauncher.create_runtime` 总是返回唯一的 `RayGenerationRuntime`，resolved lifecycle 只选择 eager session 或 deferred session factory | 保持 structural protocol；`RayGenerationSession` 只拥有 launched resources，不建第二个 runtime/base/manager |
-| Distributed launch | `GenerationRuntimeLaunchContract` 只传 primitive config 与 import path，拒绝 live tensor/module/pipeline | 继续作为 worker 构造与进程隔离边界 |
+| Distributed launch | `GenerationLaunchConfig` 只传 primitive config 与 import path，拒绝 live tensor/module/pipeline | 继续作为 worker 构造与进程隔离边界 |
 | Worker | `GenerationWorkerCore` 构造 family executor、安装版本化权重、执行 chunk、sleep/wake 与故障清理 | 外部 provider 必须进入此生命周期，不能另起旁路服务 |
-| Full-sequence × denoise | `bindings/full_sequence.DiffusionChunkExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
+| Full-sequence × denoise | `bindings/full_sequence.DenoiseBatchExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
 | Token-autoregressive × token | `bindings/token_autoregressive.ARChunkExecutorBase` 与 `composition.token_autoregressive.TokenAutoregressiveLoop` 拥有 prefill/decode/cache/token trajectory | 保持 native；本轮不做第二个 token-autoregressive full engine |
 | Replay | family model 导出 replay tensors/context，trainer 侧按 trajectory schema 重放 | provider 输出必须投影到同一 schema，不能让 trainer 认识 provider 私有对象 |
 | Native transformer forward | Wan/Cosmos 当前主要仍调用 Diffusers transformer | 保持事件门控的独立 Layer-B sprint，不在本 program 重复实现 |
@@ -136,7 +136,7 @@ gate is now complete.
 3. 先覆盖 fake/model-free 与 CPU 数学路径；需要真实模型/GPU 的门在 GPU 可用后单独跑，
    不用 mock 结果冒充通过。
 4. 不预建一个只有 native 实现的抽象 provider 层，也不假设所有 provider 都能逐
-   denoise step 调用。共同边界先保持现有 `GenerationChunkExecutor` + native trajectory。
+   denoise step 调用。共同边界先保持现有 `GenerationBatchExecutor` + native trajectory。
 5. 当前 contract hygiene 必须在 provider integration 前清零：
    - `tests/architecture/test_generation_rollout_boundaries.py` 全绿；generation 不得反向
      import rollout/trainer 类型。`ResolvedOnlineRun.ray_launch_inputs(replay_model)`
@@ -222,7 +222,7 @@ private timeout or partial-result policy.
 
 ### N1 — 保留两种 provider 粒度
 
-共同边界先使用已经存在的 `GenerationChunkExecutor`：
+共同边界先使用已经存在的 `GenerationBatchExecutor`：
 
 ```text
 FlashDreams:
@@ -239,7 +239,7 @@ SGLang:
 伪造 step call，或让 FlashDreams 绕过 native family executor/trajectory。只有 build/install/close
 等控制动作在两个真实实现中出现相同语义和重复复杂度时，才提取新的小协议；否则继续用
 provider 自己的 process/runtime builder + `ModelFamilyEntry.executor_cls` +
-`GenerationChunkExecutor` 这三个边界组合。
+`GenerationBatchExecutor` 这三个边界组合。
 
 policy version、Ray placement、admission/drain、trajectory schema、reward 与 replay
 仍不进入 provider 私有 API。
@@ -260,7 +260,7 @@ bindings 只声明实际实现的 executor/runtime builder/capability。launch �
 rejection 实际消费；否则删除或在定义处标注 display/provenance-only。
 
 config 不能把 provider 名塞进 `policy_semantics`。选择必须在构造
-`GenerationRuntimeLaunchContract` 前完成；未注册 family/provider binding、pin 不匹配、
+`GenerationLaunchConfig` 前完成；未注册 family/provider binding、pin 不匹配、
 capability 未实现时 fail closed。测试从这一个 typed source 发现 case，不维护平行
 `SUPPORTED_PROVIDERS` 常量。
 
@@ -300,9 +300,9 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - eager `RayGenerationRuntime.activate()` / `offload()` 即使只做 admission validation
   或 no-op 也保留；它们维持 eager/deferred session topology 的统一 protocol shape，避免
   schedule 识别 concrete runtime。
-- `GenerationChunkExecutor` 保持薄，因为它是 family execution 与 distributed gather
+- `GenerationBatchExecutor` 保持薄，因为它是 family execution 与 distributed gather
   的协议边界。
-- `GenerationRuntimeLaunchContract` 保持独立，因为 pickle/process boundary 必须拒绝
+- `GenerationLaunchConfig` 保持独立，因为 pickle/process boundary 必须拒绝
   live model 与 pipeline。
 - `build_family_runtime_bundle` 与注册的 replay runtime builder 即使很薄也保留：它们提供
   lazy import、worker-side construction 与跨 family 一致形状。

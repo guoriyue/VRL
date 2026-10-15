@@ -194,7 +194,7 @@ Step 3（与 Layer B 解耦）：native transformer executor 按
 
 - `vrl/generation/execution/planner.py`（`ExecutionStage:54`、`EnginePlan:100`）
 - `vrl/generation/execution/scheduler.py`（`DeviceAssignment`）
-- `vrl/generation/execution/chunks.py`（`SampleChunk`、`build_prompt_chunk_schedule`、`run_sample_chunks_with_oom_retry`）
+- `vrl/generation/execution/chunks.py`（`GenerationSampleBatch`、`build_prompt_chunk_schedule`、`run_sample_chunks_with_oom_retry`）
 - `vrl/generation/diffusion/executor.py`
 - `vrl/generation/ray/{launcher,placement,weight_sync,worker}.py`
 - `vrl/rollouts/orchestration/continuous/{producer,consumer,queue,staleness}.py`

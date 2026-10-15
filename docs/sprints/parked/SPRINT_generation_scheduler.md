@@ -132,9 +132,9 @@ policy_version sync 时怎么 drain in-flight stage payload？
 
 ## 1. Existing Boundary
 
-### 1.1 Logical work unit: SampleChunk
+### 1.1 Logical work unit: GenerationSampleBatch
 
-`SampleChunk` 是 rollout 的逻辑工作单元：
+`GenerationSampleBatch` 是 rollout 的逻辑工作单元：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -381,7 +381,7 @@ cleanup callback for stage-owned buffers / relay slots
 bounded retained aborted ids to avoid unbounded memory growth
 ```
 
-特别是 diffusion RL：失败不能只返回普通 exception。必须知道失败属于哪个 `SampleChunk`、哪个 policy_version、哪个 replay payload，才能正确取消 gather / trainer consumption。
+特别是 diffusion RL：失败不能只返回普通 exception。必须知道失败属于哪个 `GenerationSampleBatch`、哪个 policy_version、哪个 replay payload，才能正确取消 gather / trainer consumption。
 
 ### 3.5 Coordinator tracks terminal completion
 
@@ -718,7 +718,7 @@ stamp new policy_version
 resume admission
 ```
 
-不能让一个 `SampleChunk` 的 replay tensors 混入两个 policy versions。
+不能让一个 `GenerationSampleBatch` 的 replay tensors 混入两个 policy versions。
 
 ## 6. First Implementation Plan
 

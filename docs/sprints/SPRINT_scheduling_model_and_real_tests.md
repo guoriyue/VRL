@@ -17,7 +17,7 @@
 三个事实决定一切调度行为，而且只在一个地方声明：
 
 1. **放置**：`distributed.resources.<role>.devices`。不写就共 trainer 的卡；交集即共享。
-   由它推出 `RayLifecyclePlan` 的三个 offload 位和四个 `park_<role>_for_<phase>` 边界位。
+   由它推出 `RoleLifecycle` 的三个 offload 位和四个 `park_<role>_for_<phase>` 边界位。
 2. **调度模式**：`rollout_orchestration.schedule_mode`，strict（生成、训练、同步权重三段串行）
    或 continuous（producer 线程持续生成，consumer 按同版本凑整一批）。
 3. **策略版本**：trainer 推一次权重版本加一；每个请求盖章；continuous 按版本窗口判新鲜。
@@ -37,7 +37,7 @@
 | 2 | coordinator 用 `getattr(runtime, "supports_non_draining_weight_sync", False)` 探能力 | 先改为 family 能力 + launch contract 下发 + runtime 协议属性（f12ee2d0）；之后发现 family 能力位对全部 21 个家族都等于 `supports_policy_replay`，删除；决定改由 `TrainerConfig.from_root` 按调度模式与 `model.use_lora` 算一次（`versioned_weight_sync`），launch contract 与调度器都读它，runtime 不再暴露该属性 | 完成 f12ee2d0 |
 | 3 | `OwnedCollection` 在三处用 `callable(getattr(item, "collect", None))` 鸭子判断 | 协议 `runtime_checkable`，`isinstance` | 完成 |
 | 4 | `runtime_debug` 和 `group_size` 从 trainer 经 schedule、collector、request builder 逐层透传（63 处） | 它们是请求数据而非能力位，可接受；若要收口，合成一个每轮迭代的请求描述对象一次下发 | 待定 |
-| 5 | `memory_parking_required` 在 registry 里被翻译成组件 kwargs 里的 `sleep_offload` 字符串 | 核对后判定可接受：计划位 → `ModelRewardFunction(sleep_offload=)` 构造参数 → `RewardRuntimeLaunchContract` 跨 Ray 进程边界，这是唯一会被序列化到 actor 的载体；YAML 侧已拒绝手写该键 | 不改 |
+| 5 | `memory_parking_required` 在 registry 里被翻译成组件 kwargs 里的 `sleep_offload` 字符串 | 核对后判定可接受：计划位 → `ModelRewardFunction(sleep_offload=)` 构造参数 → `RewardWorkerConfig` 跨 Ray 进程边界，这是唯一会被序列化到 actor 的载体；YAML 侧已拒绝手写该键 | 不改 |
 | 6 | `online.py` 1168 行同时承担 Ray 会话、资源计划、模型构建、训练循环、检查点 | 拆成"构建角色"和"驱动调度"两段，每段只读上面三个事实 | 第三批 |
 | 7 | `_RayClusterSession` / `_OnlineRecipeLifecycle` 等私有生命周期类 | 随 #6 评估 | 第三批 |
 | 8 | 策略版本在 coordinator 里从两个 provider（collector 的 runtime、syncer）探测，可能为 None，再 `require_int` 复验；staleness、consumer、continuous types 全带"版本缺失"分支，而生产从不产生 None（launch contract 发布 0，每次 push 发布 int） | 协议 `current_policy_version: int`；Ray runtime 从 contract 版本起（默认 0）；syncer 直读、只校验自己的 resume 覆盖；coordinator 只读 collector runtime 的版本；StalenessPolicy/PromptBatch/ScoredRollout 只收 int | 完成 f12ee2d0 |

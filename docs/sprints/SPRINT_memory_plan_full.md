@@ -15,8 +15,8 @@
 > startup real-execution probe (`AffinePeakFit` plus confirmation/bisection), not
 > the abandoned steady-state estimator. `build_chunk_memory_shadow` is retained
 > only to format log-only provenance rows; it no longer writes
-> collector output metadata. `ChunkMemoryReading` crosses the worker boundary as
-> a typed field on `ChunkExecutionResult`; the old typed-to-dict-to-typed relay
+> collector output metadata. `BatchMemoryReading` crosses the worker boundary as
+> a typed field on `GenerationBatchResult`; the old typed-to-dict-to-typed relay
 > and its unused latent-byte field were removed.
 
 > **当前状态修正（2026-07-25，`003ad92e`）。** VAE memory 的现行值流是：
@@ -138,13 +138,13 @@ lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 ×
 > ### L2 current state (verified 2026-07-13)
 >
 > - The full-sequence denoise executor still records separate denoise and decode allocated
->   peaks. `ChunkMemoryReading.from_metrics` rejects incomplete mappings using
+>   peaks. `BatchMemoryReading.from_metrics` rejects incomplete mappings using
 >   dataclass-derived field names.
 > - `samples_per_chunk: auto` runs truncated real chunks, fits two measured
 >   points, confirms the candidate, bisects an OOM boundary, and applies the
 >   throughput knee. Recursive per-chunk OOM splitting remains the final safety
 >   net.
-> - `ChunkExecutionResult.memory` carries a typed memory reading. The driver
+> - `GenerationBatchResult.memory` carries a typed memory reading. The driver
 >   formats one `chunk memory:` INFO row per chunk. Those rows are explicitly
 >   log/provenance-only and do not travel to the collector.
 > - The older v0 estimator, predicted/admissible fields, and standalone scheduler

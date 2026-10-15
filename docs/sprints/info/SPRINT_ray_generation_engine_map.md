@@ -83,7 +83,7 @@ online recipe
   -> RayGenerationLaunchInputs(contract, entry.new_gatherer())
 ```
 
-`GenerationRuntimeLaunchContract` 不携带 live model、pipeline、callable 或 executor class。
+`GenerationLaunchConfig` 不携带 live model、pipeline、callable 或 executor class。
 family registry 是 model builder、executor class、gatherer 和 static capability 的唯一
 taxonomy source。launch contract 最终只携带 primitive `versioned_weight_sync` fact，
 这个 fact 由 `vrl/run.py` 从已解析的 typed trainer schedule、generation config 与
@@ -300,14 +300,14 @@ deadline 也看不到 requests 之间的 idle process death。
 | `RayGenerationExecutor` | plan, dispatch, OOM, correlation, gather | keep: driver scheduler |
 | `RayGenerationWorker` | Ray methods and concurrency-group adapters | keep thin: framework boundary |
 | `GenerationWorkerCore` | Ray-independent build/version/parking/forward | keep: process core |
-| `GenerationChunkExecutor` | family forward/gather shape | keep thin: cross-family protocol |
-| `ChunkGatherer` | pure driver-side assembly | keep thin: transport boundary |
+| `GenerationBatchExecutor` | family forward/gather shape | keep thin: cross-family protocol |
+| `GenerationBatchGatherer` | pure driver-side assembly | keep thin: transport boundary |
 | `RayActorGroup` | actor construction/startup/metadata | keep: shared Ray adapter |
-| `RayGenerationWeightSync` | all-worker transactional ACK | keep: protocol boundary |
-| `GenerationRuntimeLaunchContract` | primitive pickle payload | keep: process boundary |
+| `RayGenerationSession.update_weights` | all-worker transactional ACK | keep: protocol boundary |
+| `GenerationLaunchConfig` | primitive pickle payload | keep: process boundary |
 | `ModelFamilyEntry` / `FAMILY_REGISTRY` | family taxonomy and factories | keep: isolated registry |
 
-`RayGenerationExecutor` 与 `GenerationChunkExecutor` 都叫 executor，但分别处在 driver
+`RayGenerationExecutor` 与 `GenerationBatchExecutor` 都叫 executor，但分别处在 driver
 scheduler 和 actor family contract 两侧。不要为了少一个名字 flatten 任一层。
 
 eager runtime 的 `activate()` 与 `offload()` 当前只验证 admission 或执行 no-op，但不能

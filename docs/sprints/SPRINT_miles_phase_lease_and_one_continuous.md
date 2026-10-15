@@ -23,7 +23,7 @@
 
 **已落地（本轮）**：
 
-- `RayLifecyclePlan` 坍缩为拓扑三角的三条共卡边
+- `RoleLifecycle` 坍缩为拓扑三角的三条共卡边
   （`trainer_and_rollout_share_gpu` / `rollout_and_reward_share_gpu` /
   `trainer_and_reward_share_gpu`），全部 `release_*` 旗子与 `rollout_mode`
   变成派生 property 视图——存储模型无序、不可自相矛盾；`PhaseHandoffPolicy`
@@ -570,7 +570,7 @@ rollout GPU:  generate n+1 -- generate n+2 -----
 关键不变量：
 
 - continuous launch 前证明 trainer/rollout GPU pools disjoint；
-- continuous launch 前证明 `RayLifecyclePlan.handoff.release_rollout_before_reward=false`；
+- continuous launch 前证明 `RoleLifecycle.handoff.release_rollout_before_reward=false`；
 - runtime 始终 resident；continuous 不调用 trainer park、rollout activate/offload；
 - producer 的控制 loop 不依赖 trainer asyncio loop 的让步点；
 - 每个 group 带 submit-time policy version；
@@ -678,7 +678,7 @@ continuous + no trainer/rollout intersection + no rollout/reward handoff
 rollout_on_demand = release_rollout_before_train OR release_rollout_before_reward
 ```
 
-Preflight 直接消费 `RayLifecyclePlan.handoff`，不要复制这组布尔公式。删除 role cap 后，
+Preflight 直接消费 `RoleLifecycle.handoff`，不要复制这组布尔公式。删除 role cap 后，
 `samples_per_chunk:auto` 只探测当前 rollout phase 可用的整段容量；shared on-demand 与 dedicated
 resident 都在各自 active phase 拥有这份容量。Backend-specific KV/cache budget 继续由 engine
 配置消费，不再通过通用 role fraction 间接传递。
@@ -1024,7 +1024,7 @@ node/GPU identity 校验 placement。“先启动再由 schedule 猜”不算完
 
 ### 应保持不变
 
-- `RayLifecyclePlan`：topology -> role lease / phase handoff 的 typed source of truth；
+- `RoleLifecycle`：topology -> role lease / phase handoff 的 typed source of truth；
 - `RayGenerationRuntime.activate/offload/update_weights/shutdown`：runtime protocol boundary，并直接
   拥有 executor/sync/actor/monitor/parking/teardown；
 - `GenerationRuntime.requires_driver_model_offload` 与 coordinator adapter：continuous 的

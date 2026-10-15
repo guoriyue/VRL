@@ -122,13 +122,13 @@ audio/action = 非目标
   通过唯一 `_assemble_packed_static` 建 cond/uncond pack；`restore_eval_state` 复用同一
   helper；`forward_step` 每步 splice `vision_timesteps` + latents，返回 raw velocity、
   cond 与 uncond，CFG 与 logprob 留给共享 denoise loop。
-- `runtime.py`：`Cosmos3ChunkExecutor` 复用
+- `runtime.py`：`Cosmos3BatchExecutor` 复用
   `vrl/generation/bindings/full_sequence/`，并因 pipeline 契约固定 batch=1；
   trainer replay 由注册表调 `Cosmos3Model.from_build` 构造。
 - `vrl/models/families/registry.py` 是 family/executor/replay builder 的唯一 binding；
   `vrl/config/presets/model/cosmos/cosmos3_nano.yaml` 是当前唯一 Cosmos3 model preset，
   必须保留，不能在 preset sweep 中当作孤儿删除。
-- **复用**：`DiffusionModelBase`、`vrl/generation/steps/denoise/loop.py`、
+- **复用**：`DenoiseModelBase`、`vrl/generation/steps/denoise/loop.py`、
   full-sequence executor/gatherer、`vrl/math/denoise/flow_matching.py` 与
   `vrl/rollouts/evaluators/denoise/sde_logprob.py`。
 - **剩余 gate**：family executor 出一个非 RL T2V clip，并与 MR1 pipeline 的相同

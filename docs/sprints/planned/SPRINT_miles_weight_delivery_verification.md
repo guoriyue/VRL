@@ -224,7 +224,7 @@ Python files. This is a tiny CPU source test, not a repeated real SD3 GPU run.
 
 ## 2026-09-09: Exercise the configured production transport
 
-The CLI now sends both target installs through `RayGenerationWeightSync`, using
+The CLI now sends both target installs through `RayGenerationSession.update_weights`, using
 `resolved.generation.worker.weight_sync_bucket_bytes` exactly as the production
 launcher does. Previously the actor installed the received snapshot twice inside
 one RPC, so selecting bucket transport did not actually exercise it in the CLI.

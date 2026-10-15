@@ -120,7 +120,7 @@ CPU 门通过后，另开有空闲 GPU 的硬件验收：
 
 ## 4. 应保持不变
 
-- `GlobalRayPlacementOwner`、`BundleLayout` 和 `RayLifecyclePlan` 继续作为现有协议边界；
+- `GlobalRayPlacementOwner`、`BundleLayout` 和 `RoleLifecycle` 继续作为现有协议边界；
 - 角色 GPU 集合交集仍是 topology 的事实来源，不新增第二套 `colocated` 配置；
 - `gpu_pool=auto|trainer|dedicated` 保持公开 grammar；
 - rollout↔reward 共享不重复塞进 `OverlapPolicy`；

@@ -63,7 +63,7 @@ Miles 论文 §4 的借鉴是准备与传输分开，以及内容验证。
 
 ## 应改／应留／非目标
 
-改变已测瓶颈所在的 snapshot/transport 生命周期。保留 RayGenerationWeightSync、
+改变已测瓶颈所在的 snapshot/transport 生命周期。保留 RayGenerationSession.update_weights、
 薄 Ray actor adapter、trainable-state owner 和现有版本事务，因为它们是真实边界。
 协议名/schema key/file name 常量有用；不添加按算法名的传输名单。
 

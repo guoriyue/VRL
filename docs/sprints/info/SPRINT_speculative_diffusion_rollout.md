@@ -494,7 +494,7 @@ previous-policy draft 在 early training 可能和 target 差很远。需要 acc
 
 - `vrl/math/diffusion/flow_matching.py`：`sde_step_with_logprob`，当前 target transition/logprob 地基。
 - `vrl/generation/diffusion/executor.py`：denoise loop，未来 speculative transition 接入点。
-- `vrl/generation/diffusion/gather.py`：`DiffusionChunkResult` 聚合，加入 speculative counters。
+- `vrl/generation/diffusion/gather.py`：`DenoiseBatchResult` 聚合，加入 speculative counters。
 - `vrl/trajectory/builders.py`：`old_log_prob` / `mask` / replay input contract。
 - `vrl/rollouts/evaluators/diffusion/sde_logprob.py`：trainer replay logprob，必须与 speculative rollout logprob contract 对齐。
 - `vrl/trainers/weight_sync.py`：previous-policy draft / target-policy version 的同步边界。

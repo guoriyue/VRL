@@ -15,7 +15,7 @@ class RayGenerationRuntime(GenerationRuntime):
     ...
 ```
 
-`ChunkExecutorBase` 没有自己的 `forward_chunk_plan`，因此继承 Protocol 中的
+`BatchExecutorBase` 没有自己的 `forward_chunk_plan`，因此继承 Protocol 中的
 `...` 空桩。当前 `_require_chunked_executor()` 只检查 `callable`，这个不完整类会
 通过并在运行时返回 `None`。CPU 反例已复现：
 
@@ -38,10 +38,10 @@ if isinstance(value, ReplayModel):
 
 ### 1. Generation implementation ownership
 
-- `ChunkExecutorBase` 改为 `ABC`，声明 abstract `forward_chunk_plan`；
+- `BatchExecutorBase` 改为 `ABC`，声明 abstract `forward_chunk_plan`；
 - `forward_plan(..., plan: Any)` 收紧为已有公共 `EnginePlan`；
 - concrete `RayGenerationRuntime` 不再 nominally 继承 `GenerationRuntime`；
-- 保留 structural `isinstance(..., GenerationRuntime/GenerationChunkExecutor)` contract；
+- 保留 structural `isinstance(..., GenerationRuntime/GenerationBatchExecutor)` contract；
 - 更新只使用 base 局部方法的 test fake，显式实现最小 `forward_chunk_plan`。
 
 ### 2. Model call-shape validation
@@ -65,19 +65,19 @@ production guard；不维护第二份手写 method list。
 
 | Suspect | 裁决 | 原因 |
 |---|---|---|
-| `GenerationRuntime` / `GenerationChunkExecutor` Protocol | **KEEP** | collector/worker 的真实 public capability |
+| `GenerationRuntime` / `GenerationBatchExecutor` Protocol | **KEEP** | collector/worker 的真实 public capability |
 | concrete class nominal Protocol inheritance | **REMOVE** | 错误 implementation ownership，Protocol stub 可进入 MRO |
-| `ChunkExecutorBase.forward_chunk_plan` | **FIX** | shared implementation base 的必需 extension point，应由 ABC fail early |
+| `BatchExecutorBase.forward_chunk_plan` | **FIX** | shared implementation base 的必需 extension point，应由 ABC fail early |
 | `plan: Any` | **FIX** | 已有唯一公共 `EnginePlan`，开放 bag 没有消费者需求 |
 | Replay/Runtime callable-only guard | **FIX** | live caller 需要明确 positional/keyword ABI |
-| `ChunkResult = Any` | **KEEP** | family-owned opaque payload transport，具体 gatherer 拥有验证 |
+| `BatchPayload = Any` | **KEEP** | family-owned opaque payload transport，具体 gatherer 拥有验证 |
 | thin generation binding bases | **KEEP** | 跨 family 一致公共形状与 lazy registry boundary |
 
 ## True / false regressions
 
 - 缺 `forward_chunk_plan` 的 subclass 无法实例化；
-- 完整 fake 可实例化并 structural-match `GenerationChunkExecutor`；
-- `GenerationChunkExecutor` / `GenerationRuntime` 不在 concrete MRO；
+- 完整 fake 可实例化并 structural-match `GenerationBatchExecutor`；
+- `GenerationBatchExecutor` / `GenerationRuntime` 不在 concrete MRO；
 - `RayGenerationRuntime` 仍 structural-match `GenerationRuntime`；
 - 合法 minimal ReplayModel/RuntimeModel 通过；
 - 缺 `request`、缺 keyword `timestep_idx`、缺 positional timestep、缺

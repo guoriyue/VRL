@@ -3,7 +3,7 @@
 > **Current-state correction (2026-07-13).** This parked document preserves old
 > measurements and design alternatives; it does not define the current API. The
 > canonical diffusion implementation is
-> `DiffusionChunkExecutorBase.forward_chunk_plan`, which directly runs the typed
+> `DenoiseBatchExecutorBase.forward_chunk_plan`, which directly runs the typed
 > prompt-encode, prepare, denoise, and decode methods. The optional single-worker
 > request pipeline calls that same canonical chunk forward while the previous
 > chunk's D2H teardown runs on a side stream. The former logical topology,
@@ -445,7 +445,7 @@ class DiffusionChunkResult:
     context: dict[str, Any]
 ```
 
-This final contract should stay stable at first so `DiffusionChunkGatherer` and
+This final contract should stay stable at first so `DenoiseBatchGatherer` and
 the trainer do not change.
 
 ## 4. Profiling Gate
@@ -808,7 +808,7 @@ DiffusionDecodeOutput
 ```
 
 The final adapter converts `DiffusionDecodeOutput` back into the existing
-`DiffusionChunkResult`.
+`DenoiseBatchResult`.
 
 ### 5.3 Execution modes
 

@@ -184,7 +184,7 @@ requirements below remain open. Data preparation is not a training acceptance.
 > 2. **§6 的 I2V 专属硬契约已用真权重单独验证 PASS**：新探针
 >    `vrl/scripts/eval/wan_i2v_logprob_parity_probe.py`（rollout 记录 old_log_prob →
 >    `export_replay_tensors`（condition+image_embeds）过 CPU wire → `restore_eval_state` →
->    replay 前向重算 log_prob，逐步对比；与 `run_denoise_steps` / `DiffusionSDELogProbEvaluator`
+>    replay 前向重算 log_prob，逐步对比；与 `run_denoise_steps` / `DenoiseSDELogProbEvaluator`
 >    同一代码路径）。结果（480p×33f×10 步，batch=2，sequential offload）：
 >    **mean/max |fresh−old| = 0.0 逐位一致，ratio=1.0**（阈值 0.01，同 trainer
 >    `debug.first_step`）；rollout 192s / replay 176s，**峰值仅 6.16GiB**；生成 mp4 已目检——
@@ -223,8 +223,8 @@ requirements below remain open. Data preparation is not a training acceptance.
 | experiment recipe | `configs/experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml` | 组合 `/model/.../i2v_14b` + `/reward/kling_video_reward` + `/reward/videocon_physics` + `/dataset/videophy_i2v`；`entrypoint=...wan_2_1.train:train_wan_2_1_i2v_grpo` |
 | 入口分发 | `vrl/scripts/train.py` | 解析 `trainer.entrypoint`（`module:function`）动态 import 调用 |
 | 族训练 | `vrl/scripts/diffusion/wan_2_1/train.py` | `train_wan_2_1_i2v_grpo` → `run_online_recipe(...)`；`model.family` 选择 `wan_2_1_i2v` registry entry，`_i2v_collector_kwargs` 校验每行 `reference_image` |
-| 注册表选 executor | `vrl/models/families/registry.py` | `wan_2_1_i2v`（task=i2v, `supports_reference_conditioning=True`）→ `Wan_2_1I2VChunkExecutor`，打开 `include_reference_image` |
-| 采样（首帧条件） | `vrl/generation/diffusion/executor.py` | `ReferenceConditionedChunks` load 首帧；共享 `run_denoise_steps`：`forward_step → sde_step_with_logprob` 逐步记 GRPO 轨迹 |
+| 注册表选 executor | `vrl/models/families/registry.py` | `wan_2_1_i2v`（task=i2v, `supports_reference_conditioning=True`）→ `Wan_2_1I2VBatchExecutor`，打开 `include_reference_image` |
+| 采样（首帧条件） | `vrl/generation/diffusion/executor.py` | `ReferenceConditionedBatches` load 首帧；共享 `run_denoise_steps`：`forward_step → sde_step_with_logprob` 逐步记 GRPO 轨迹 |
 | I2V 模型 | `vrl/models/diffusion/wan_2_1/{model,runner}.py` | 首帧 → CLIP `image_embeds` + 潜空间 `condition`；`runner` 通道拼接 `cat([latents, condition], dim=1)`；无 `reference_image` 直接 raise |
 | 奖励 | `vrl/rewards/functions/{kling_video_reward,videocon_physics}.py` | 本地 HF 视频奖励，Ray pool，mp4；权重 `motion_quality 0.3 / physical_commonsense 0.7` |
 | 损失 + 回放 | `vrl/algorithms/grpo/continuous.py`、`vrl/models/diffusion/wan_2_1/model.py` | GRPO clipped-PPO（模态无关）；`export_replay_tensors` 存 `condition+image_embeds`，`restore_eval_state` 重建 → **梯度也看到同一个首帧** |
@@ -328,7 +328,7 @@ canonical `data/external/videophy_i2v/manifests/{train,eval}.jsonl` 冒充正式
 - 入口 / 族训练：`vrl/scripts/train.py`、`vrl/scripts/diffusion/wan_2_1/train.py`（`train_wan_2_1_i2v_grpo`、
   `_i2v_collector_kwargs`）
 - I2V 条件链：`vrl/models/families/registry.py`（`wan_2_1_i2v`）、
-  `vrl/generation/diffusion/executor.py`（`ReferenceConditionedChunks` / `run_denoise_steps`）、
+  `vrl/generation/diffusion/executor.py`（`ReferenceConditionedBatches` / `run_denoise_steps`）、
   `vrl/models/diffusion/wan_2_1/{model,runner}.py`（`reference_image` raise / `export_replay_tensors` /
   `restore_eval_state` / `cat([latents, condition])` / `enable_sequential_cpu_offload`）
 - 奖励：`vrl/rewards/functions/{kling_video_reward,videocon_physics}.py`、`configs/reward/kling_video_reward.yaml`

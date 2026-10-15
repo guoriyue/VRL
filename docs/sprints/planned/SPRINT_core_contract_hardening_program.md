@@ -65,7 +65,7 @@ campaign，不提交用户当前脏文件，不 push。
 
 - 不合并 generation Protocol、implementation base 和 family executor。薄 facade/
   binding 在这里提供跨 family 一致形状，grepability 比少几行 LOC 更重要。
-- 不把 `ChunkResult = Any` 强行类型化。它是 family-owned opaque transport；
+- 不把 `BatchPayload = Any` 强行类型化。它是 family-owned opaque transport；
   driver/gatherer 已在各自边界验证 payload。
 - 不建立统一 perf-script registry 或万能 benchmark result。不同 probe 的测量对象与
   生命周期不同；这里只收紧会直接产出 merge verdict 的 overlap benchmark。

@@ -748,7 +748,7 @@ kernel/activation/decode 代价抵消了少跑一个 chunk 的收益。
 `rollout.sample_batch_size`，不混入 VAE decode micro-batch。
 
 先修了一个 instrumentation gap：Ray worker 的 `runtime_debug.ray_chunks[*]` 之前只返回
-chunk metadata，没有把 `DiffusionChunkResult.stage_durations / engine_counters /
+chunk metadata，没有把 `DenoiseBatchResult.stage_durations / engine_counters /
 peak_memory_mb` 带回 trainer debug record。现在 debug chunk metrics 会包含：
 
 ```text

@@ -16,7 +16,7 @@
   diffusers 0.38 自带 `ContextParallelConfig`（ulysses_degree/ring_degree）和 Wan 的
   `_cp_plan`，SD3/Cosmos 没有 plan。
 - FSDP mesh 只允许 `["dp_shard"]`（`vrl/trainers/fsdp.py:46`）。
-- 权重同步：Ray 快照 / bucket（`RayGenerationWeightSync`）；LoRA 不走 IPC。
+- 权重同步：Ray 快照 / bucket（`RayGenerationSession.update_weights`）；LoRA 不走 IPC。
 - sglang-diffusion 的 RL API（`/rollout/generate`、rollout log-prob、`[T+1]` latent
   trajectory）在 2026-07 已核对（`parked/SPRINT_sglang_diffusion_execution_provider.md`）；
   miles_diffusion 用它跑通 SD3.5 / Qwen-Image / Wan2.2 / LTX-2.3 / Cosmos3，引擎从
@@ -137,7 +137,7 @@ Wan 的 `_cp_plan`（`transformer_wan.py:552`）。
 ### E. LoRA IPC 权重同步（依赖 B）
 
 miles_diffusion 的 `--lora-ipc-weight-sync` 只传 `lora_A/lora_B` 并在引擎侧合并。VRL 的
-`RayGenerationWeightSync` 已按可训练状态扁平化传输；引擎落地后，colocated 情形改走 CUDA IPC。
+`RayGenerationSession.update_weights` 已按可训练状态扁平化传输；引擎落地后，colocated 情形改走 CUDA IPC。
 
 ### F. 引擎侧一致性（依赖 B）
 

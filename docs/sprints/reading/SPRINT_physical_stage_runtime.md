@@ -5,7 +5,7 @@
 > `vrl/generation/pipeline/` package and Ray stage adapters were test-only seams
 > with no production constructor, config reader, resource placement, or dotted
 > launch reference, so they were deleted. The canonical implementation is
-> `DiffusionChunkExecutorBase.forward_chunk_plan`. Optional single-worker request
+> `DenoiseBatchExecutorBase.forward_chunk_plan`. Optional single-worker request
 > pipelining calls that same chunk forward and overlaps only the previous result's
 > D2H teardown. Every topology, stage payload, actor, queue, relay, and per-stage
 > policy name below is a historical sketch or future proposal, not a current API.
@@ -50,7 +50,7 @@ planner label 加字段可以自然演进出来的东西。
 
 ### 0.1 Chunk vs pipeline
 
-`SampleChunk` 和 physical pipeline 是两层，不要互相替代。
+`GenerationSampleBatch` 和 physical pipeline 是两层，不要互相替代。
 
 ```text
 GenerationRequest
@@ -59,7 +59,7 @@ GenerationRequest
           prompt_encode -> prepare_latent -> denoise -> decode_latents
 ```
 
-`SampleChunk` 回答的是：
+`GenerationSampleBatch` 回答的是：
 
 ```text
 这次 rollout 要生成哪一小批样本？
@@ -93,7 +93,7 @@ Physical stage runtime (proposal only):
   would define how a SampleChunk moves through stage actors and placements.
 ```
 
-没有 `SampleChunk`，rollout 会丢失 group/sample identity、batch split、seed、OOM retry
+没有 `GenerationSampleBatch`，rollout 会丢失 group/sample identity、batch split、seed、OOM retry
 和 gather 语义。没有 physical pipeline，`prompt_encode / denoise / decode_latents` 只能在
 同一个 worker 里串行执行，不能给 denoise 和 decode 独立 placement、batch policy、
 memory policy 或 backpressure。
@@ -487,8 +487,8 @@ RayPipelineStageWorker
 RayPipelineRunner
 ```
 
-Level 2 is the next useful scheduler boundary. It should schedule `SampleChunk`
-payloads through stage queues, not replace `SampleChunk` itself. The scheduler
+Level 2 is the next useful scheduler boundary. It should schedule `GenerationSampleBatch`
+payloads through stage queues, not replace `GenerationSampleBatch` itself. The scheduler
 should see:
 
 ```text

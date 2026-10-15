@@ -240,7 +240,7 @@ private-counter assertions and config layout-only policies still need review.
 - Removed the factory test claiming a fresh Wan adapter preserves base output
   based only on `lora_config.get("init_lora_weights", True)`. Its claim now
   lives in the existing Wan PEFT test: a real CPU Linear projection is compared
-  before and after the real `WanT2VDiffusersModel.apply_lora` call, with exact
+  before and after the real `WanT2VPipelineModel.apply_lora` call, with exact
   equality and effective dropout checks. No full Wan model or image-quality
   result is claimed. A process-local mutation disabling zero initialization
   was rejected by this comparison; production source was never changed.
