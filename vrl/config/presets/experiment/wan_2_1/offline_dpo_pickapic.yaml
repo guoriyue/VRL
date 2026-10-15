@@ -1,10 +1,14 @@
-# Wan 2.1 1.3B + Diffusion-DPO (offline, Pick-a-Pic v2)
+# Wan 2.1 1.3B + Diffusion-DPO (offline, Pick-a-Pic v1).
+#
+# Smoke vs full run differ by CLI override only (no separate file):
+#   smoke  : ... data.split=train[:32] trainer.max_train_steps=15 trainer.log_interval=1
+#   refine : ... data.split=train[:512] trainer.max_train_steps=1500 actor.optim.lr=1e-6
 defaults:
   - /recipe/offline/diffusion_dpo
   - /model/wan_2_1/1_3b
   - /sampling/video/240p_33f
   - /sampling/denoise/20_step_cfg_4_5
-  - /dataset/pickapic_v2
+  - /dataset/pickapic_v1
 
 precision:
   training:
