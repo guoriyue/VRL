@@ -249,11 +249,7 @@ class _OnlineRecipeLifecycle:
         # A failed role cleanup leaves shared-GPU ownership unknown. The
         # strategy may not restore a parked trainer into memory whose release
         # was not proven.
-        await self._shutdown_one(
-            "strategy",
-            self.strategy,
-            call_kwargs={"restore_parked": pipeline_released},
-        )
+        await self._shutdown_one("strategy", self.strategy, restore_parked=pipeline_released)
         # Ray follows: actor and placement cleanup above still need its client.
         await self._shutdown_one("ray_session", self.ray_session)
         # The process group is last: every role above may still coordinate
@@ -273,25 +269,13 @@ class _OnlineRecipeLifecycle:
             name, exc = self._shutdown_errors[0]
             raise RuntimeError(f"{name} shutdown failed during online recipe cleanup") from exc
 
-    async def _shutdown_one(
-        self,
-        name: str,
-        target: Any,
-        *,
-        call_kwargs: Mapping[str, Any] | None = None,
-    ) -> bool:
+    async def _shutdown_one(self, name: str, target: Any, **shutdown_kwargs: Any) -> bool:
         """Run one terminal cleanup, recording its failure."""
 
         if target is None:
             return True
-        shutdown = getattr(target, "shutdown", None)
-        if not callable(shutdown):
-            self._shutdown_errors.append(
-                (name, TypeError(f"{name} does not expose callable shutdown()")),
-            )
-            return False
         try:
-            result = shutdown(**dict(call_kwargs or {}))
+            result = target.shutdown(**shutdown_kwargs)
             if inspect.isawaitable(result):
                 await result
         except Exception as exc:
@@ -357,22 +341,6 @@ def _log_rollout_memory_plan(
             prompts_per_batch,
             target_samples,
         )
-
-
-def _log_global_std_streaming_scope(
-    batch_config: OnlineBatchConfig,
-    *,
-    global_std: bool,
-) -> None:
-    """Make update-wide normalization and its temporary disk requirement visible."""
-    if not batch_config.streaming or not global_std:
-        return
-    logger.info(
-        "global_std streaming: normalize all %d prompt groups before clipping/filtering; "
-        "temporarily spool trajectories under trainer.output_dir and replay %d groups at a time",
-        batch_config.prompts_per_batch,
-        batch_config.prompts_per_collection,
-    )
 
 
 def _load_sft_latents_from_config(
@@ -719,7 +687,14 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             else None
         ),
     )
-    _log_global_std_streaming_scope(batch_config, global_std=built.algorithm.global_std)
+    if batch_config.streaming and built.algorithm.global_std:
+        logger.info(
+            "global_std streaming: normalize all %d prompt groups before clipping/filtering; "
+            "temporarily spool trajectories under trainer.output_dir and replay %d groups "
+            "at a time",
+            batch_config.prompts_per_batch,
+            batch_config.prompts_per_collection,
+        )
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
