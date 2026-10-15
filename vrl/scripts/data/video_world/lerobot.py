@@ -12,6 +12,7 @@ dataset and video dependencies stay inside the paths that use them.
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -47,36 +48,12 @@ def iter_lerobot_first_frames(
     per-camera mp4 with PyAV streamed over HTTP.
     """
 
-    import json
-
-    info = json.loads(
-        Path(_lerobot_file(repo_id, cache_dir, "meta/info.json")).read_text(encoding="utf-8")
-    )
-    features = list(info.get("features", {}).keys())
-    video_key = camera or next(
-        (f for f in features if f.startswith("observation.images.")),
-        "",
-    )
-    if not video_key:
+    source = _open_lerobot_source(repo_id, cache_dir=cache_dir, camera=camera)
+    if source is None:
         return
-
-    version = str(info.get("codebase_version", "v2.1")).lower()
-    if version.startswith("v2.0"):
-        yield from _iter_lerobot_v20(
-            repo_id,
-            info,
-            video_key=video_key,
-            limit=limit,
-            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
-        )
-    else:
-        yield from _iter_lerobot_v21(
-            repo_id,
-            info,
-            video_key=video_key,
-            limit=limit,
-            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
-        )
+    info, video_key, is_v20, dl = source
+    iterate = _iter_lerobot_v20 if is_v20 else _iter_lerobot_v21
+    yield from iterate(repo_id, info, video_key=video_key, limit=limit, dl=dl)
 
 
 def iter_lerobot_target_clips(
@@ -89,41 +66,47 @@ def iter_lerobot_target_clips(
 ) -> Iterator[dict[str, Any]]:
     """Yield {frames, prompt, episode_id} target clips from a real LeRobot dataset."""
 
-    import json
-
     if max_target_frames <= 0:
         raise ValueError("--max-target-frames must be positive")
 
-    info = json.loads(
-        Path(_lerobot_file(repo_id, cache_dir, "meta/info.json")).read_text(encoding="utf-8")
+    source = _open_lerobot_source(repo_id, cache_dir=cache_dir, camera=camera)
+    if source is None:
+        return
+    info, video_key, is_v20, dl = source
+    iterate = _iter_lerobot_v20_target_clips if is_v20 else _iter_lerobot_v21_target_clips
+    yield from iterate(
+        repo_id,
+        info,
+        video_key=video_key,
+        limit=limit,
+        max_target_frames=max_target_frames,
+        dl=dl,
     )
+
+
+def _open_lerobot_source(
+    repo_id: str,
+    *,
+    cache_dir: Path,
+    camera: str,
+) -> tuple[dict[str, Any], str, bool, Callable[[str], str]] | None:
+    """Read ``meta/info.json``: (info, video key, is the v2.0 layout, file fetcher).
+
+    ``None`` when no camera is named and the dataset declares no
+    ``observation.images.*`` feature.
+    """
+
+    dl = functools.partial(_lerobot_file, repo_id, cache_dir)
+    info = json.loads(Path(dl("meta/info.json")).read_text(encoding="utf-8"))
     features = list(info.get("features", {}).keys())
     video_key = camera or next(
         (f for f in features if f.startswith("observation.images.")),
         "",
     )
     if not video_key:
-        return
-
-    version = str(info.get("codebase_version", "v2.1")).lower()
-    if version.startswith("v2.0"):
-        yield from _iter_lerobot_v20_target_clips(
-            repo_id,
-            info,
-            video_key=video_key,
-            limit=limit,
-            max_target_frames=max_target_frames,
-            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
-        )
-    else:
-        yield from _iter_lerobot_v21_target_clips(
-            repo_id,
-            info,
-            video_key=video_key,
-            limit=limit,
-            max_target_frames=max_target_frames,
-            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
-        )
+        return None
+    is_v20 = str(info.get("codebase_version", "v2.1")).lower().startswith("v2.0")
+    return info, video_key, is_v20, dl
 
 
 def _iter_lerobot_v21(
@@ -199,35 +182,11 @@ def _iter_lerobot_v20(
     limit: int,
     dl: Callable[[str], str],
 ) -> Iterator[dict[str, Any]]:
-    import json
-
     from PIL import Image
 
-    video_tmpl = str(info["video_path"])
-    chunks_size = int(info.get("chunks_size", 1000))
-
-    episodes: list[dict[str, Any]] = []
-    with Path(dl("meta/episodes.jsonl")).open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            episodes.append(json.loads(line))
-            if len(episodes) >= limit:
-                break
-
-    for ep in episodes:
-        episode = int(ep["episode_index"])
-        tasks = ep.get("tasks") or []
-        prompt = str(tasks[0]).strip() if tasks else ""
-        if not prompt:
-            continue
-        rel = video_tmpl.format(
-            episode_chunk=episode // chunks_size,
-            video_key=video_key,
-            episode_index=episode,
-        )
-        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+    for episode, prompt, rel, url in _iter_v20_episodes(
+        repo_id, info, video_key=video_key, limit=limit, dl=dl
+    ):
         for _, frame in _decode_frames(url, stop_after=0):
             yield {
                 "image": Image.fromarray(frame),
@@ -348,12 +307,45 @@ def _iter_lerobot_v20_target_clips(
     max_target_frames: int,
     dl: Callable[[str], str],
 ) -> Iterator[dict[str, Any]]:
-    import json
+    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
+    for episode, prompt, rel, url in _iter_v20_episodes(
+        repo_id, info, video_key=video_key, limit=limit, dl=dl
+    ):
+        frames = [frame for _, frame in _decode_frames(url, stop_after=max_target_frames - 1)]
+        if frames:
+            yield {
+                "frames": frames,
+                "prompt": prompt,
+                "episode_id": f"{episode:06d}",
+                "metadata": {
+                    "source_repo": repo_id,
+                    "source_split": "main",
+                    "source_video": rel,
+                    "source_frame_index": 0,
+                    "source_target_frame_count": len(frames),
+                    "source_fps": fps,
+                    "source_camera": video_key,
+                    "decode_method": "pyav_http_target_clip",
+                    "codebase_version": str(info.get("codebase_version", "v2.0")),
+                },
+            }
+
+
+def _iter_v20_episodes(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    limit: int,
+    dl: Callable[[str], str],
+) -> Iterator[tuple[int, str, str, str]]:
+    """(episode index, prompt, video path, video URL) for the first ``limit`` v2.0 episodes.
+
+    Episodes without a task caption are skipped after counting toward ``limit``.
+    """
 
     video_tmpl = str(info["video_path"])
     chunks_size = int(info.get("chunks_size", 1000))
-    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
-
     episodes: list[dict[str, Any]] = []
     with Path(dl("meta/episodes.jsonl")).open(encoding="utf-8") as handle:
         for line in handle:
@@ -375,25 +367,7 @@ def _iter_lerobot_v20_target_clips(
             video_key=video_key,
             episode_index=episode,
         )
-        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
-        frames = [frame for _, frame in _decode_frames(url, stop_after=max_target_frames - 1)]
-        if frames:
-            yield {
-                "frames": frames,
-                "prompt": prompt,
-                "episode_id": f"{episode:06d}",
-                "metadata": {
-                    "source_repo": repo_id,
-                    "source_split": "main",
-                    "source_video": rel,
-                    "source_frame_index": 0,
-                    "source_target_frame_count": len(frames),
-                    "source_fps": fps,
-                    "source_camera": video_key,
-                    "decode_method": "pyav_http_target_clip",
-                    "codebase_version": str(info.get("codebase_version", "v2.0")),
-                },
-            }
+        yield episode, prompt, rel, f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
 
 
 def _decode_grouped_target_clips(
