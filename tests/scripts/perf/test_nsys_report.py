@@ -225,14 +225,6 @@ def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
     }
 
 
-@pytest.mark.parametrize(
-    ("field", "value"), [("top_gaps", -1), ("top_nvtx", True), ("min_gap_ns", 1.5)]
-)
-def test_analysis_rejects_invalid_limits_before_opening_capture(tmp_path, field, value):
-    with pytest.raises(ValueError, match=field):
-        GpuBusyReport.from_capture(tmp_path / "missing.sqlite", **{field: value})
-
-
 def test_zero_report_limits_disable_gap_and_stage_rows(tmp_path):
     report = GpuBusyReport.from_capture(
         _make_db(tmp_path / "cap.sqlite"), top_gaps=0, top_nvtx=0, min_gap_ns=0

@@ -44,7 +44,6 @@ from pathlib import Path
 
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TimeIntervals
-from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -186,13 +185,6 @@ class GpuBusyReport:
         attribution; default is the device with the most kernels in the window.
         Per-device busy fractions are always reported for every device.
         """
-
-        for name, value in (
-            ("top_gaps", top_gaps),
-            ("top_nvtx", top_nvtx),
-            ("min_gap_ns", min_gap_ns),
-        ):
-            require_int(value, path=name, minimum=0)
 
         conn, sqlite_path = open_report(path)
         try:

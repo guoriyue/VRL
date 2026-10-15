@@ -52,7 +52,6 @@ from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import profile_range
-from vrl.utils.validation import require_int
 
 logger = init_logger(__name__)
 
@@ -249,8 +248,6 @@ def profile_linear_projections(
     Run on CUDA for real kernel time; CPU works for self-test (CPU self-time).
     """
 
-    require_int(warmup, path="warmup", minimum=0)
-    require_int(active, path="active", minimum=1)
     device = torch.device(device)
     cuda = device.type == "cuda"
 
@@ -343,6 +340,8 @@ def main() -> None:
         help="fuse to_q/to_k/to_v into one to_qkv GEMM (SD3/Wan; no-op on Cosmos) before profiling",
     )
     args = parser.parse_args()
+    if args.warmup < 0 or args.active < 1:
+        parser.error("--warmup must be >= 0 and --active >= 1")
 
     dtype = resolve_torch_dtype(args.dtype)
     device = torch.device(args.device)

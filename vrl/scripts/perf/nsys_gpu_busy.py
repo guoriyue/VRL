@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.min_gap_ms < 0 or not math.isfinite(gap_ns):
         parser.error("--min-gap-ms must be nonnegative and finite when converted to nanoseconds")
     min_gap_ns = int(gap_ns)
+    if args.top_gaps < 0 or args.top_nvtx < 0:
+        parser.error("--top-gaps and --top-nvtx must be >= 0")
 
     window = None
     if args.window_ns is not None:

@@ -22,24 +22,6 @@ def test_report_preserves_measured_total_when_zero(device_kind, duration):
     assert category[2] == expected_percent
 
 
-@pytest.mark.parametrize(
-    "field, value",
-    [
-        ("warmup", -1),
-        ("warmup", True),
-        ("active", 0),
-    ],
-)
-def test_profile_rejects_invalid_counts_before_forward(field, value):
-    from vrl.scripts.perf.profile_linear_projections import profile_linear_projections
-
-    def forward():
-        pytest.fail("invalid profiling counts must fail before model execution")
-
-    with pytest.raises(ValueError, match=field):
-        profile_linear_projections(None, forward, **{field: value})
-
-
 def test_profile_executes_exact_warmup_and_active_counts():
     import torch
 
