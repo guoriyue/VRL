@@ -37,7 +37,6 @@ from typing import Any
 import torch
 
 from vrl.config.loading import load_config
-from vrl.generation.types import GenerationInput
 from vrl.models.families.semantics import task_modality
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.scripts.eval._device import resolve_eval_device
@@ -131,16 +130,12 @@ def preflight_rewards(
     )
     samples: list[RewardSample] = []
     for index, example in enumerate(examples):
-        generation_input = (
-            example.generation_input()
-            if hasattr(example, "generation_input")
-            else GenerationInput(prompt=str(example))
-        )
+        generation_input = example.generation_input()
         collector_request = request_builder.build(
             [generation_input],
             1,
-            metadata=example.reward_metadata() if hasattr(example, "reward_metadata") else None,
-            request_overrides=dict(getattr(example, "request_overrides", None) or {}),
+            metadata=example.reward_metadata(),
+            request_overrides=dict(example.request_overrides),
         )
         samples.append(
             RewardSample(
