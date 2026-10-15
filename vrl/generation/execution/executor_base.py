@@ -7,7 +7,6 @@ from typing import Any
 
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
-    execute_generation_batches,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
@@ -46,10 +45,7 @@ class BatchExecutorBase:
         self._gatherer = gatherer
 
     def forward_request(self, request: GenerationRequest) -> GenerationOutput:
-        batches = execute_generation_batches(
-            request.sample_batches(),
-            lambda batch: self.forward_batch(request, batch),
-        )
+        batches = [self.forward_batch(request, batch) for batch in request.sample_batches()]
         return self.merge_generation_batches(request, batches)
 
     def execute_request_batches(

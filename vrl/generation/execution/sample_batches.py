@@ -10,13 +10,10 @@ otherwise disagree silently about what one batch means.
 
 from __future__ import annotations
 
-import traceback
-from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
-from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -352,38 +349,10 @@ class GenerationSampleBatch:
         return tuple(batches)
 
 
-def execute_generation_batches[T](
-    batches: Sequence[GenerationSampleBatch],
-    run_one: Callable[[GenerationSampleBatch], T],
-) -> list[T]:
-    """Run batches, splitting CUDA-OOM batches until the floor is reached."""
-
-    results: list[T] = []
-    pending = deque(batches)
-    while pending:
-        batch = pending.popleft()
-        try:
-            results.append(run_one(batch))
-        except RuntimeError as exc:
-            # A single-sample batch cannot be split further; re-raise the
-            # original OOM instead of letting split() mask it with ValueError.
-            if not is_cuda_out_of_memory(exc) or batch.sample_count <= 1:
-                raise
-            # Failed forward frames can retain CUDA tensors. Release those
-            # locals before asking the allocator to return unused storage.
-            traceback.clear_frames(exc.__traceback__)
-            empty_cuda_cache()
-            left, right = batch.split()
-            pending.appendleft(right)
-            pending.appendleft(left)
-    return results
-
-
 __all__ = [
     "GenerationSampleBatch",
     "SampleAlignedValues",
     "concatenate_sample_values",
-    "execute_generation_batches",
     "gather_batch_context",
     "gather_batch_media",
     "gather_replay_tensors",
