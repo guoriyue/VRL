@@ -230,8 +230,6 @@ class TestDiagnostics:
         weight transport), so every streamed replay disagrees with its rollout.
         """
 
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-
         tb = _trainer(
             monkeypatch, tmp_path, "actor.prompts_per_collection=1", "actor.ppo_epochs=1"
         )
@@ -253,9 +251,7 @@ class TestDiagnostics:
         before = _snapshot(tb)
 
         with pytest.raises(RuntimeError, match="replay parity failed"):
-            asyncio.run(
-                _run_streaming_optimizer_update(tb.trainer, ["a cat"]),
-            )
+            asyncio.run(tb.trainer.step(["a cat"]))
 
         assert "optimizer_step" not in tb.collector.trace.events
         assert tb.trainer._replay_parity_passed is False

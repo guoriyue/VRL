@@ -21,7 +21,6 @@ import torch
 from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
-from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.data.prompts import PromptExample
 
 # Prompt "c" has equal rewards, so its group advantage is zero (filtered when
@@ -120,9 +119,7 @@ def test_streaming_matches_full_batch_advantages_gradients_and_adam(
     random.seed(0)
     full_metrics = asyncio.run(full.trainer.step(list(prompts)))
     random.seed(0)
-    streamed_metrics = asyncio.run(
-        _run_streaming_optimizer_update(streamed.trainer, list(prompts))
-    )
+    streamed_metrics = asyncio.run(streamed.trainer.step(list(prompts)))
 
     # Same request seeds, so both updates train on the same real rollouts.
     assert [r.sampling["seed"] for r in full.collector.trace.requests] == [
@@ -186,7 +183,7 @@ def test_spool_cleanup_on_failure(monkeypatch, tmp_path, stage):
     monkeypatch.setattr(trainer, "_run_replay_pass", replay)
 
     with pytest.raises(RuntimeError, match="injected"):
-        asyncio.run(_run_streaming_optimizer_update(trainer, ["a", "b"]))
+        asyncio.run(trainer.step(["a", "b"]))
 
     assert not list(output.glob(".advantage-spool-*"))
     assert trainer.state.global_step == 0

@@ -6,7 +6,6 @@ import gc
 import inspect
 import logging
 import os
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -15,7 +14,6 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -27,12 +25,10 @@ from vrl.ray.resources import ResourcePlan
 from vrl.rewards import RewardRuntime
 from vrl.rewards.ray import RayRewardPlacement
 from vrl.rewards.runtime import RewardFunctionRuntime
-from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import OwnedCollection
 from vrl.rollouts.orchestration import RolloutSchedule
-from vrl.rollouts.stats import RolloutStats
 from vrl.run import OnlineRunConfig
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.activation_checkpointing import (
@@ -57,11 +53,7 @@ from vrl.trainers.distributed import (
 )
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchConfig
-from vrl.trainers.online.trainer import (
-    OnlineTrainer,
-    _compute_rollout_advantages,
-    _global_reward_stats,
-)
+from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -365,232 +357,6 @@ def _load_sft_latents_from_config(
         model_path=str(model.path or ""),
         model_revision=str(model.revision or ""),
     )
-
-
-def _check_host_memory_budget(
-    budget_fraction: float,
-    *,
-    collection_prompts: int,
-    n_samples_per_prompt: int,
-) -> None:
-    """Fail fast if one streamed collection batch already pushes host RAM past budget.
-
-    Streaming accumulation holds ~one collection batch of rollout/replay tensors at a
-    time, so if system memory is already over budget right after collecting the
-    first collection batch, a larger ``prompts_per_collection`` (or simply more
-    epochs) would only OOM later in the run. Raising now — with the measured
-    snapshot — turns a delayed mid-run OOM into an immediate, actionable error.
-    The guard uses system MemAvailable / MemTotal from /proc, so other processes
-    also contribute to the measured pressure. Process RSS is included in the
-    diagnostic snapshot but does not determine this threshold.
-    """
-    snapshot = _host_memory.capture()
-    used = snapshot.used_fraction
-    if used is None or used <= budget_fraction:
-        return
-    raise MemoryError(
-        f"Host RAM is at used={used:.1%} after collecting one streamed collection_batch "
-        f"({collection_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
-        f"above actor.host_memory_budget_fraction={budget_fraction:.1%} "
-        f"({snapshot}). One collection_batch already does not fit the "
-        "host-RAM budget; reduce actor.prompts_per_collection to stream smaller "
-        "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
-        "already 1.",
-    )
-
-
-async def _run_global_std_streaming_update(
-    trainer: OnlineTrainer,
-    example_batch: list[Any],
-    *,
-    next_example_batch: list[Any] | None,
-) -> Any:
-    """Compute update-wide advantages before replay, keeping trajectories on disk."""
-    batch_config = trainer.config.batch_config
-    micro = batch_config.prompts_per_collection
-    microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
-    output = Path(trainer.config.output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".advantage-spool-", dir=output) as spool:
-        spool_stats = RolloutStats()
-        metadata = []
-        sizes = []
-        batch_counts = []
-        paths = []
-        group_offset = 0
-        for index, prompts in enumerate(microbatches):
-            lookahead = (
-                microbatches[index + 1]
-                if index + 1 < len(microbatches)
-                else next_example_batch[:micro]
-                if next_example_batch
-                else None
-            )
-            iteration = await trainer.rollout_schedule.next_iteration(
-                prompts,
-                group_size=batch_config.n_samples_per_prompt,
-                runtime_debug=bool(trainer.config.debug.first_step and trainer.state.step == 0),
-                next_prompts=lookahead,
-            )
-            if batch_config.host_memory_budget_fraction > 0:
-                _check_host_memory_budget(
-                    batch_config.host_memory_budget_fraction,
-                    collection_prompts=len(prompts),
-                    n_samples_per_prompt=batch_config.n_samples_per_prompt,
-                )
-            # Prompt indices restart in each collect call; disjoint optimizer
-            # groups must not accidentally share a centering mean across slices.
-            groups = torch.cat([batch.group_ids.detach().cpu() for batch in iteration.batches])
-            unique, inverse = torch.unique(groups, return_inverse=True)
-            offset = 0
-            for batch in iteration.batches:
-                count = batch.rewards.numel()
-                metadata.append(
-                    RolloutBatch(
-                        rewards=batch.rewards.detach().cpu().clone(),
-                        group_ids=inverse[offset : offset + count] + group_offset,
-                        extras={"reward_components": batch.extras.get("reward_components", {})},
-                    )
-                )
-                offset += count
-            sizes.append(offset)
-            batch_counts.append(len(iteration.batches))
-            group_offset += unique.numel()
-            path = Path(spool) / f"{index}.pt"
-            with spool_stats.phase("advantage.spool_write"):
-                torch.save(iteration, path)
-            spool_stats.add_counter("advantage.spool_bytes", path.stat().st_size)
-            paths.append(path)
-            del batch, iteration
-
-        with spool_stats.phase("advantage.global_normalization"):
-            advantages = _compute_rollout_advantages(trainer.algorithm, metadata)
-            reward_stats = _global_reward_stats(torch.cat([batch.rewards for batch in metadata]))
-        slices = torch.split(advantages, sizes)
-        group_advantages = torch.split(advantages, [batch.rewards.numel() for batch in metadata])
-        surviving = [
-            not trainer.config.drop_zero_advantage or bool(nonzero_advantage_mask(values).any())
-            for values in group_advantages
-        ]
-        effective_groups = sum(surviving)
-        dist = torch.distributed
-        if dist.is_initialized() and dist.get_world_size() > 1:
-            # Averaged rank gradients match the global group mean only with
-            # balanced denominators. Also reject rank-local empty microbatches
-            # before the legacy unanimous-skip path can discard a peer's data.
-            counts = []
-            offset = 0
-            for count in batch_counts:
-                counts.append(sum(surviving[offset : offset + count]))
-                offset += count
-            device = trainer.device if dist.get_backend() == "nccl" else "cpu"
-            lower = torch.tensor(counts, dtype=torch.long, device=device)
-            upper = lower.clone()
-            dist.all_reduce(lower, op=dist.ReduceOp.MIN)
-            dist.all_reduce(upper, op=dist.ReduceOp.MAX)
-            if not torch.equal(lower, upper):
-                raise ValueError(
-                    "distributed global_std streaming requires equal surviving group counts "
-                    "per microbatch across ranks; uneven filtering is not supported"
-                )
-        del metadata
-
-        def prepared():
-            for index, (path, values) in enumerate(zip(paths, slices, strict=True)):
-                # Only deserialize files created in this private temporary
-                # directory by this process, never an external checkpoint.
-                read_stats = RolloutStats()
-                with read_stats.phase("advantage.spool_read"):
-                    iteration = torch.load(path, map_location="cpu", weights_only=False)
-                iteration.stats.merge(read_stats)
-                if index == 0:
-                    iteration.stats.merge(spool_stats)
-                yield iteration, values, reward_stats
-                del iteration
-                path.unlink()
-
-        return await _run_streaming_optimizer_update(
-            trainer,
-            example_batch,
-            next_example_batch=next_example_batch,
-            _prepared=prepared(),
-            _total_groups=effective_groups,
-        )
-
-
-async def _run_streaming_optimizer_update(
-    trainer: OnlineTrainer,
-    example_batch: list[Any],
-    *,
-    next_example_batch: list[Any] | None = None,
-    _prepared: Any | None = None,
-    _total_groups: int | None = None,
-) -> Any:
-    """One optimizer update streamed over ``collections_per_update`` collection batches.
-
-    Splits the ``prompts_per_batch`` prompts into collection batches and runs
-    collect -> backward -> RELEASE for each before the next, so host RAM holds
-    ~one collection batch of rollout/replay tensors instead of the whole target batch
-    (the memory fix that lets bigger models train on limited GPUs). The trainer's
-    ``train_on_collections`` owns the update: one optimizer.step / EMA /
-    weight-sync / metric row, gradients accumulated across collection batches
-    with the global loss scale ``prompts_per_batch``, so the update is
-    gradient-equivalent to training on the whole batch at once.
-
-    When ``host_memory_budget_fraction`` > 0, the first collected collection batch is
-    checked against the host-RAM budget and the run fails fast if it is already
-    over budget (SPRINT_memory_budgeted_microbatch T2).
-    """
-    batch_config = trainer.config.batch_config
-    if not batch_config.streaming:
-        raise ValueError("_run_streaming_optimizer_update requires a streaming batch config")
-    collection_size = batch_config.prompts_per_collection
-    collection_batches = [
-        example_batch[k : k + collection_size]
-        for k in range(0, len(example_batch), collection_size)
-    ]
-    total_groups = batch_config.prompts_per_batch if _total_groups is None else _total_groups
-
-    if _prepared is None and trainer.algorithm.config.global_std:
-        return await _run_global_std_streaming_update(
-            trainer, example_batch, next_example_batch=next_example_batch
-        )
-
-    async def collections():
-        for collection_index, collection_batch in enumerate(collection_batches):
-            if collection_index + 1 < len(collection_batches):
-                next_prompts = collection_batches[collection_index + 1]
-            elif next_example_batch:
-                next_prompts = next_example_batch[:collection_size]
-            else:
-                next_prompts = None
-            if _prepared is None:
-                batch = await trainer.collect_training_batch(
-                    collection_batch, next_prompts=next_prompts
-                )
-            else:
-                iteration, advantages, reward_stats = next(_prepared)
-                batch = await trainer.collect_training_batch(
-                    collection_batch,
-                    _iteration=iteration,
-                    _advantages=advantages,
-                    _reward_stats=reward_stats,
-                )
-                del iteration, advantages
-            # Host-RAM fail-fast on the first collection batch: one slice is the host
-            # peak under streaming, so if it is already over budget, stop now.
-            if batch_config.host_memory_budget_fraction > 0.0 and collection_index == 0:
-                _check_host_memory_budget(
-                    batch_config.host_memory_budget_fraction,
-                    collection_prompts=len(collection_batch),
-                    n_samples_per_prompt=batch_config.n_samples_per_prompt,
-                )
-            yield batch
-            # The trainer released its reference after training on it; drop ours
-            # before the next collection so the two never coexist in host RAM.
-            del batch
-
-    return await trainer.train_on_collections(collections(), total_groups=total_groups)
 
 
 @dataclass(slots=True)
@@ -1023,20 +789,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             # optimizer step, and the post-step rollout weight sync. It is the
             # denominator for update-level barrier attribution in nsys traces.
             with profile_range("trainer.optimizer_update"):
-                if batch_config.streaming:
-                    # Streaming accumulation: split the optimizer-target batch into
-                    # collection batches collected/trained/released one at a time so host
-                    # RAM does not have to hold the whole batch at once.
-                    metrics = await _run_streaming_optimizer_update(
-                        trainer,
-                        example_batch,
-                        next_example_batch=next_example_batch,
-                    )
-                else:
-                    metrics = await trainer.step(
-                        example_batch,
-                        next_prompts=next_example_batch,
-                    )
+                metrics = await trainer.step(example_batch, next_prompts=next_example_batch)
             if is_primary:
                 assert run.metrics_csv is not None
                 run.metrics_csv.append(epoch, metrics)

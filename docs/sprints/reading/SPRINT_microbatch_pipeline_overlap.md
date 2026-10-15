@@ -138,7 +138,7 @@ next rollout generation continues under explicit staleness rules
 
 ## 关键引用
 
-- 同步 microbatch 基线：`vrl/scripts/common/online.py:_run_streaming_optimizer_update`
+- 同步 microbatch 基线：`vrl/trainers/online/trainer.py:OnlineTrainer._streaming_update`
 - 同步 backward/step 边界：`vrl/trainers/online/trainer.py:begin_optimizer_update`、`backward_on_training_batch`、`finish_optimizer_update`
 - 已完成同步 sprint：`docs/sprints/done/SPRINT_streaming_rollout_accumulation.md`、`docs/sprints/done/SPRINT_memory_budgeted_microbatch.md`
 - 真 async sprint：`docs/sprints/done/SPRINT_continuous_scheduler_redesign.md`、`docs/sprints/done/SPRINT_shadow_model_weight_sync.md`、`docs/sprints/parked/SPRINT_async_rollout_train_overlap.md`

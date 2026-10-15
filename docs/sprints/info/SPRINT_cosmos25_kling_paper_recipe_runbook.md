@@ -157,7 +157,7 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 
 - 配方：`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`（commit `5738914`）
 - Training entrypoint: `vrl.scripts.diffusion.train:train_diffusion_online` → `run_online_recipe`
-- streaming + host-RAM guard：`vrl/scripts/common/online.py:_run_streaming_optimizer_update`
+- streaming + host-RAM guard：`vrl/trainers/online/trainer.py:OnlineTrainer._streaming_update`
 - size↔count 派生：`vrl/trainers/core/types.py:TrainerConfig.__post_init__`
 - 固定 eval：`vrl/scripts/eval/cosmos_predict25_kling_eval.py`（同 prompt+seed、Kling 打分、per-ckpt summary）
 - DiffusionNFT 双 adapter（= 论文的 diffusion-loss 正则）：`vrl/algorithms/diffusion_nft.py`、

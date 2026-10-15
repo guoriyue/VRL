@@ -15,7 +15,6 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
-from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -175,13 +174,13 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(
 
     async def update():
         if streaming:
-            await _run_streaming_optimizer_update(
-                trainer,
+            await trainer._streaming_update(
                 ["prompt"],
-                _prepared=iter([(iteration, None, None)]),
+                next_example_batch=None,
+                prepared=iter([(iteration, None, None)]),
             )
         else:
-            batch = await trainer.collect_training_batch(["prompt"], _iteration=iteration)
+            batch = trainer._training_batch(iteration)
             await trainer.train_on_rollout_batch(batch)
         await trainer.rollout_schedule.shutdown()
 

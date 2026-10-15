@@ -28,7 +28,6 @@ from tests.trainers._strategy_policies import run_ranks
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
-from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import FSDPStrategy, SingleProcessStrategy
@@ -129,7 +128,7 @@ def _full(value: Any) -> torch.Tensor:
 async def _updates(trainer: OnlineTrainer, prompts: list[str]) -> list[float]:
     norms = []
     for _ in range(2):
-        metric = await _run_streaming_optimizer_update(trainer, prompts)
+        metric = await trainer.step(prompts)
         norms.append(metric.grad_norm)
         state = trainer._training_memory_state()
         trainer._strategy.park_training_state(state)

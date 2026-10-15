@@ -20,7 +20,6 @@ import torch
 
 from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rollouts.batch import RolloutBatch
-from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.data.prompts import PromptExample
 
 # One replay epoch and per-group std keep the streaming and full-batch paths
@@ -34,13 +33,7 @@ _STREAM_FOUR = ("rollout.prompts_per_batch=4", "actor.prompts_per_collection=1")
 
 
 def _stream(bench: TrainerBench, prompts: list[Any], **kwargs: Any) -> Any:
-    return asyncio.run(
-        _run_streaming_optimizer_update(
-            bench.trainer,
-            prompts,
-            **kwargs,
-        ),
-    )
+    return asyncio.run(bench.trainer.step(prompts, **kwargs))
 
 
 def _requested_prompts(bench: TrainerBench) -> list[list[str]]:
@@ -239,18 +232,14 @@ def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) 
 
     async def run_two_updates():
         try:
-            await _run_streaming_optimizer_update(
-                bench.trainer,
+            await bench.trainer.step(
                 ["prompt-a", "prompt-b"],
-                next_example_batch=["prompt-c", "prompt-d"],
+                next_prompts=["prompt-c", "prompt-d"],
             )
             microbatch_stats.clear()
             # The second update consumes groups produced before the first
             # update's weight sync, so one microbatch is a version stale.
-            return await _run_streaming_optimizer_update(
-                bench.trainer,
-                ["prompt-c", "prompt-d"],
-            )
+            return await bench.trainer.step(["prompt-c", "prompt-d"])
         finally:
             await bench.trainer.rollout_schedule.shutdown()
 
@@ -295,7 +284,7 @@ def test_streaming_announces_the_next_prompt_batch_before_backward(monkeypatch, 
 
     monkeypatch.setattr(bench.trainer, "collect_training_batch", collect_training_batch)
 
-    _stream(bench, ["prompt-a", "prompt-b"], next_example_batch=["prompt-c", "prompt-d"])
+    _stream(bench, ["prompt-a", "prompt-b"], next_prompts=["prompt-c", "prompt-d"])
 
     assert announced == [
         (["prompt-a"], ["prompt-b"]),
@@ -432,7 +421,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
     """The host-RAM guard raises over budget and passes under it (injected RSS)."""
     import pytest
 
-    from vrl.scripts.common import online
+    from vrl.trainers.online import trainer as trainer_module
     from vrl.utils.memory import HostMemoryMonitor, HostMemorySnapshot
 
     def _inject(used_fraction: float) -> None:
@@ -448,13 +437,13 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
     # Over budget -> fail fast with an actionable message.
     _inject(0.95)
     with pytest.raises(MemoryError, match=r"actor\.prompts_per_collection"):
-        online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
+        trainer_module._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
     # Exactly at / under budget -> pass (<= budget does not trip).
     _inject(0.90)
-    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
+    trainer_module._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
     _inject(0.50)
-    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
+    trainer_module._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
     # Unreadable host memory (used_fraction None) -> never raises (no false kill).
     monkeypatch.setattr(
@@ -462,7 +451,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
         "capture",
         lambda self: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None),
     )
-    online._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
+    trainer_module._check_host_memory_budget(0.9, collection_prompts=1, n_samples_per_prompt=8)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
