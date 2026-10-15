@@ -1,8 +1,8 @@
 # SANA 1.6B + PickScore GRPO on production-scale Pick-a-Pic prompts.
 #
-# Successor to online_grpo_aesthetic_pickapic_sfw after its post-mortem: that
-# historical BF16 aesthetic-only run produced no held-out gain and drifted into
-# texture hacking (structure collapse by update 300; see
+# Successor to the deleted online_grpo_aesthetic_pickapic_sfw after its
+# post-mortem: that historical BF16 aesthetic-only run produced no held-out
+# gain and drifted into texture hacking (structure collapse by update 300; see
 # outputs/sana_aesthetic_pickapic_sfw/compare_* sweeps). This recipe adapts the
 # high-level choices from upstream Flow-GRPO's pickscore_sd3 recipe: PickScore —
 # a prompt-aware human-preference model — as the sole optimized reward and EMA

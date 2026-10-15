@@ -38,7 +38,7 @@ Flash-GRPO，使用 VRL 的标准训练入口。不要调用官方训练脚本�
 - `vrl/scripts/eval/wan_hpsv3_checkpoint_eval.py`：固定提示词配对评测。
 
 现有 `online_grpo_hpsv3_fsdp_4x_l40s` 和
-`online_flash_grpo_kling_video_reward` 只能作为结构参考：前者有历史数值/批量偏离，
+`online_flash_grpo_kling_video_reward`（后已删除）只能作为结构参考：前者有历史数值/批量偏离，
 后者改用了 Kling 奖励。不要凭配置名或旧 sprint 的“已完成”状态认定忠实复现。
 
 ## 必须先处理的语义差异
