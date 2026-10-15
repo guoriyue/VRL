@@ -48,6 +48,19 @@ def _noop_encode_text(captions):  # pragma: no cover
     return None
 
 
+class _AdapterLinear(torch.nn.Linear):
+    """A policy with the PEFT ``disable_adapter`` scope the trainer's reference pass enters."""
+
+    def __init__(self, *, bias: bool = True) -> None:
+        super().__init__(1, 1, bias=bias)
+        self.reference_passes = 0
+
+    @contextmanager
+    def disable_adapter(self):
+        self.reference_passes += 1
+        yield
+
+
 def _make_trainer(
     scheduler_timesteps,
     *,
@@ -69,7 +82,6 @@ def _make_trainer(
     return OfflineDPOTrainer(
         model=model,
         algorithm=DiffusionDPO(DiffusionDPOConfig()),
-        ref_model=None,
         forward_fn=_noop_forward,
         noise_scheduler=scheduler,
         encode_pixels=_noop_encode_pix,
@@ -147,7 +159,6 @@ def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
     trainer = OfflineDPOTrainer(
         model=model,
         algorithm=DiffusionDPO(DiffusionDPOConfig()),
-        ref_model=None,
         forward_fn=_noop_forward,
         noise_scheduler=SimpleNamespace(timesteps=torch.arange(20)),
         encode_pixels=_noop_encode_pix,
@@ -206,8 +217,7 @@ def test_step_metrics_report_the_optimized_loss(
 ) -> None:
     import vrl.trainers.offline.dpo as dpo_module
 
-    model = torch.nn.Linear(1, 1, bias=False)
-    ref_model = torch.nn.Linear(1, 1, bias=False)
+    model = _AdapterLinear(bias=False)
     scheduler = SimpleNamespace(
         timesteps=torch.arange(1),
         add_noise=lambda latents, noise, timesteps: latents,
@@ -268,7 +278,6 @@ def test_step_metrics_report_the_optimized_loss(
     trainer = OfflineDPOTrainer(
         model=model,
         algorithm=algorithm,
-        ref_model=ref_model,
         forward_fn=forward_fn,
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],
@@ -289,6 +298,8 @@ def test_step_metrics_report_the_optimized_loss(
     )
 
     assert metrics.loss == pytest.approx(expected_loss)
+    # The reference prediction is the policy's adapter-disabled pass.
+    assert model.reference_passes == 1
     assert sft_calls == expected_sft_calls
     assert clip_calls == [max_grad_norm] * expected_clip_calls
     assert metrics.grad_norm == pytest.approx(expected_grad_norm)
@@ -305,7 +316,7 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
 
 @pytest.mark.parametrize("invalid", [None, "captions", "pixels", "text"])
 def test_step_preserves_caption_pairing(invalid) -> None:
-    model = torch.nn.Linear(1, 1)
+    model = _AdapterLinear()
     model.precision = PRECISION
     seen = []
 
@@ -317,7 +328,6 @@ def test_step_preserves_caption_pairing(invalid) -> None:
     trainer = OfflineDPOTrainer(
         model=model,
         algorithm=DiffusionDPO(DiffusionDPOConfig()),
-        ref_model=torch.nn.Linear(1, 1),
         forward_fn=forward,
         noise_scheduler=SimpleNamespace(
             timesteps=torch.arange(20),
@@ -367,7 +377,7 @@ def test_step_preserves_caption_pairing(invalid) -> None:
 def test_step_uses_schedule_values_and_exact_sigma_indices(
     monkeypatch, prediction_type, scale_noise
 ):
-    model = torch.nn.Linear(1, 1)
+    model = _AdapterLinear()
     model.precision = PRECISION
     observed = []
     scheduler = SimpleNamespace(
@@ -393,7 +403,6 @@ def test_step_uses_schedule_values_and_exact_sigma_indices(
     trainer = OfflineDPOTrainer(
         model=model,
         algorithm=DiffusionDPO(DiffusionDPOConfig()),
-        ref_model=torch.nn.Linear(1, 1),
         forward_fn=forward,
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],

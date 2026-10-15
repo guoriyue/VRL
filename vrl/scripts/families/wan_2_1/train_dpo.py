@@ -249,7 +249,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     trainer = OfflineDPOTrainer(
         model=wan_model,
         algorithm=algorithm,
-        ref_model=None,  # use LoRA disable_adapter for ref
         forward_fn=wan_forward,
         noise_scheduler=pipeline.scheduler,
         encode_pixels=encoders.encode_pixels,

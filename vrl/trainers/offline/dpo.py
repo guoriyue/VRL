@@ -65,9 +65,9 @@ class OfflineDPOTrainer(OfflineTrainer):
     """Offline DPO trainer over preference pairs.
 
     Caller responsibilities:
-      * Build the policy ``model`` (typically a LoRA-wrapped backbone).
-      * Build the frozen ``ref_model`` (or pass ``None`` and rely on
-        LoRA adapter-disable inside ``forward_fn``).
+      * Build the policy ``model`` as a LoRA-wrapped backbone: its
+        adapter-disabled pass (PEFT ``disable_adapter``) is the frozen
+        reference policy.
       * Provide ``encode_pixels`` — turns ``[2B, 3, H, W]`` pixels into
         latents preserving the 2B samples (handles VAE + temporal
         replication for video models).
@@ -85,7 +85,6 @@ class OfflineDPOTrainer(OfflineTrainer):
         self,
         model: nn.Module,
         algorithm: DiffusionDPO,
-        ref_model: nn.Module | None,
         forward_fn: ForwardFn,
         noise_scheduler: Any,
         encode_pixels: Callable[[torch.Tensor], torch.Tensor],
@@ -95,15 +94,9 @@ class OfflineDPOTrainer(OfflineTrainer):
     ) -> None:
         super().__init__(model, noise_scheduler, config=config, device=device)
         self.algorithm = algorithm
-        self.ref_model = ref_model
         self.forward_fn = forward_fn
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-
-        if self.ref_model is not None:
-            self.ref_model.eval()
-            for p in self.ref_model.parameters():
-                p.requires_grad_(False)
 
     # ------------------------------------------------------------------
     # One training step
@@ -201,31 +194,14 @@ class OfflineDPOTrainer(OfflineTrainer):
         timesteps: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        """Forward through the reference policy.
-
-        If a separate ``ref_model`` was provided, use it directly. Otherwise
-        assume the policy is a LoRA-wrapped backbone and disable adapters
-        for the reference pass (PEFT convention).
-        """
-        if self.ref_model is not None:
+        """Forward through the reference policy: the policy with its adapters disabled."""
+        with self.model.disable_adapter():
             return self.forward_fn(
-                self.ref_model,
+                self.model,
                 noisy_latents,
                 timesteps,
                 encoder_hidden_states,
             )
-        if hasattr(self.model, "disable_adapter"):
-            with self.model.disable_adapter():
-                return self.forward_fn(
-                    self.model,
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states,
-                )
-        raise RuntimeError(
-            "no ref_model and policy has no ``disable_adapter`` — "
-            "cannot compute reference prediction"
-        )
 
 
 __all__ = ["DPOStepMetrics", "ForwardFn", "OfflineDPOTrainer"]
