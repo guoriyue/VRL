@@ -22,7 +22,6 @@ def build_video_world_rows(
     reference_dir: Path,
     data_root: Path,
     source: str,
-    conditioning: str = "first_frame",
 ) -> list[dict[str, Any]]:
     """Write first-frame PNGs and return Video2World dataset index rows.
 
@@ -47,7 +46,6 @@ def build_video_world_rows(
             episode,
             source=source,
             episode_id=episode_id,
-            conditioning=conditioning,
         )
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         write_png(image, ref_path)
@@ -70,7 +68,6 @@ def build_target_video_world_rows(
     data_root: Path,
     source: str,
     fps: float,
-    conditioning: str = "first_frame",
 ) -> list[dict[str, Any]]:
     """Write first-frame PNGs and target clips from real demonstrations."""
 
@@ -94,7 +91,6 @@ def build_target_video_world_rows(
             episode,
             source=source,
             episode_id=episode_id,
-            conditioning=conditioning,
         )
         metadata_raw = episode.get("metadata") or {}
         source_fps = metadata_raw.get("source_fps")
@@ -128,7 +124,6 @@ def _dataset_metadata(
     *,
     source: str,
     episode_id: str,
-    conditioning: str,
 ) -> dict[str, Any]:
     metadata = episode.get("metadata")
     if metadata is not None and not isinstance(metadata, Mapping):
@@ -141,7 +136,7 @@ def _dataset_metadata(
     return {
         "source": source,
         "source_episode": episode_id,
-        "conditioning": conditioning,
+        "conditioning": "first_frame",
         **source_metadata,
     }
 
