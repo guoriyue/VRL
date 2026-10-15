@@ -40,6 +40,7 @@ from vrl.scripts.eval._checkpoint_comparison import (
     BASE_LABEL,
     CheckpointComparison,
     GeneratedVideo,
+    generate_arm,
     load_wan_run_config,
     reward_worker_config,
     score_rows,
@@ -122,6 +123,14 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     comparison = CheckpointComparison.from_args(
         args, requires_trainer="Wan HPSv3 checkpoint evaluation"
     )
+    # Every arm renders the same cells; only the weights differ between them.
+    grid = {
+        "prompts": comparison.prompts,
+        "output_dir": comparison.output_dir,
+        "samples_per_prompt": comparison.samples_per_prompt,
+        "base_seed": comparison.base_seed,
+        "sampling": comparison.sampling,
+    }
     bundle = comparison.entry.build_rollout(
         comparison.build, expected_identity=comparison.identity
     )
@@ -133,14 +142,14 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
         # means the base model for any later arm.
         if not args.no_base:
             with model.disable_adapter():
-                videos += comparison.generate_arm(model, BASE_LABEL)
+                videos += generate_arm(model, BASE_LABEL, **grid)
         for target in comparison.targets:
             TrainingCheckpoint.load(target.path).restore_model(
                 bundle=bundle,
                 family=comparison.entry.family,
                 expected_model_identity=comparison.identity,
             )
-            videos += comparison.generate_arm(model, target.label)
+            videos += generate_arm(model, target.label, **grid)
     finally:
         del model, bundle
         release_cuda_memory()

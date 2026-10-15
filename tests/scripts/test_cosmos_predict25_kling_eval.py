@@ -16,7 +16,7 @@ from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
-from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
+from vrl.scripts.eval._checkpoint_comparison import generate_arm, reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.trainers.checkpointing import save_training_checkpoint
 
@@ -46,7 +46,7 @@ def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
 def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
     """The generator must derive each seed from the (prompt, sample) cell only.
 
-    ``target`` is in scope inside the generation loop, so folding the checkpoint
+    ``label`` is in scope inside the generation loop, so folding the checkpoint
     label into the seed is one live edit away -- and it would silently turn every
     reward delta into a different latent-noise draw instead of a weight effect.
     That edit is invisible one level down in ``seed_for``, which never sees a
@@ -59,13 +59,13 @@ def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
     sampling = resolve_eval_sampling(root)
 
     def run(label: str) -> list[int]:
-        videos = eval_script._generate_checkpoint_videos(
+        videos = generate_arm(
             model,
-            eval_script.CheckpointTarget(label, tmp_path / label),
+            label,
             ["p0", "p1"],
+            output_dir=tmp_path / label,
             samples_per_prompt=2,
             base_seed=17,
-            output_dir=tmp_path / label,
             sampling=sampling,
         )
         assert all(Path(video.path).is_file() and video.size_bytes > 0 for video in videos)

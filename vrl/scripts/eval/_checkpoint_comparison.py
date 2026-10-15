@@ -142,7 +142,7 @@ class CheckpointComparison:
     build: Any
     identity: dict[str, Any]
     targets: tuple[CheckpointTarget, ...]
-    examples: list[Any]
+    prompts: tuple[str, ...]
     sampling: dict[str, Any]
     output_dir: Path
     samples_per_prompt: int
@@ -205,7 +205,7 @@ class CheckpointComparison:
             build=build,
             identity=identity,
             targets=loaded,
-            examples=examples,
+            prompts=tuple(example.prompt for example in examples),
             sampling=sampling,
             output_dir=args.output_dir,
             samples_per_prompt=int(args.samples_per_prompt),
@@ -216,45 +216,53 @@ class CheckpointComparison:
     def seed_formula(self) -> str:
         return "base_seed + prompt_index * samples_per_prompt + sample_index"
 
-    def generate_arm(self, model: Any, label: str) -> list[GeneratedVideo]:
-        """Generate every (prompt, sample) cell of one arm with the model as it stands."""
 
-        import torch
+def generate_arm(
+    model: Any,
+    label: str,
+    prompts: Sequence[str],
+    *,
+    output_dir: Path,
+    samples_per_prompt: int,
+    base_seed: int,
+    sampling: dict[str, Any],
+) -> list[GeneratedVideo]:
+    """Generate every (prompt, sample) cell of one arm with the model as it stands."""
 
-        arm_dir = self.output_dir / "videos" / label
-        arm_dir.mkdir(parents=True, exist_ok=True)
-        produced: list[GeneratedVideo] = []
-        for prompt_index, example in enumerate(self.examples):
-            for sample_index in range(self.samples_per_prompt):
-                seed = seed_for(
-                    base_seed=self.base_seed,
+    import torch
+
+    arm_dir = output_dir / "videos" / label
+    arm_dir.mkdir(parents=True, exist_ok=True)
+    produced: list[GeneratedVideo] = []
+    for prompt_index, prompt in enumerate(prompts):
+        for sample_index in range(samples_per_prompt):
+            seed = seed_for(
+                base_seed=base_seed,
+                prompt_index=prompt_index,
+                sample_index=sample_index,
+                samples_per_prompt=samples_per_prompt,
+            )
+            video = generate_one_video(model, prompt=prompt, seed=seed, sampling=sampling)
+            # A silently broken adapter yields constant frames that still
+            # score; refuse here rather than spend reward GPU-hours on noise.
+            if not bool(torch.isfinite(video).all()) or float(video.float().std()) < 1e-3:
+                raise RuntimeError(
+                    f"degenerate video for {label} prompt {prompt_index} sample {sample_index}",
+                )
+            path = arm_dir / f"p{prompt_index:04d}_s{sample_index:02d}.mp4"
+            write_mp4(video, path, fps=float(sampling["fps"]))
+            produced.append(
+                GeneratedVideo.from_file(
+                    path,
+                    checkpoint_label=label,
                     prompt_index=prompt_index,
                     sample_index=sample_index,
-                    samples_per_prompt=self.samples_per_prompt,
-                )
-                video = generate_one_video(
-                    model, prompt=example.prompt, seed=seed, sampling=self.sampling
-                )
-                # A silently broken adapter yields constant frames that still
-                # score; refuse here rather than spend reward GPU-hours on noise.
-                if not bool(torch.isfinite(video).all()) or float(video.float().std()) < 1e-3:
-                    raise RuntimeError(
-                        f"degenerate video for {label} prompt {prompt_index} sample {sample_index}",
-                    )
-                path = arm_dir / f"p{prompt_index:04d}_s{sample_index:02d}.mp4"
-                write_mp4(video, path, fps=float(self.sampling["fps"]))
-                produced.append(
-                    GeneratedVideo.from_file(
-                        path,
-                        checkpoint_label=label,
-                        prompt_index=prompt_index,
-                        sample_index=sample_index,
-                        seed=seed,
-                        prompt=example.prompt,
-                    ),
-                )
-            logger.info("%s: %d/%d prompts", label, prompt_index + 1, len(self.examples))
-        return produced
+                    seed=seed,
+                    prompt=prompt,
+                ),
+            )
+        logger.info("%s: %d/%d prompts", label, prompt_index + 1, len(prompts))
+    return produced
 
 
 def score_video(
@@ -343,6 +351,7 @@ __all__ = [
     "CheckpointComparison",
     "GeneratedVideo",
     "cell_id",
+    "generate_arm",
     "load_wan_run_config",
     "reward_worker_config",
     "score_rows",

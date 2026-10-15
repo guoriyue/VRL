@@ -42,6 +42,7 @@ from vrl.scripts.eval._checkpoint_comparison import (
     BASE_LABEL,
     CheckpointComparison,
     GeneratedVideo,
+    generate_arm,
     load_wan_run_config,
     reward_worker_config,
     score_rows,
@@ -178,6 +179,14 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     if provenance is not None and provenance["grid"] != protocol:
         raise ValueError(f"grid differs from the existing {provenance_path}: {provenance['grid']}")
 
+    # Every arm renders the same cells; only the weights differ between them.
+    grid = {
+        "prompts": comparison.prompts,
+        "output_dir": comparison.output_dir,
+        "samples_per_prompt": comparison.samples_per_prompt,
+        "base_seed": comparison.base_seed,
+        "sampling": comparison.sampling,
+    }
     bundle = comparison.entry.build_rollout(
         comparison.build, expected_identity=comparison.identity
     )
@@ -188,7 +197,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             if BASE_LABEL in present:
                 raise ValueError(f"base arm already exists in {grid_path}; pass --no-base")
             with model.disable_adapter():
-                videos += comparison.generate_arm(model, BASE_LABEL)
+                videos += generate_arm(model, BASE_LABEL, **grid)
         for target in comparison.targets:
             checkpoint = TrainingCheckpoint.load(target.path)
             # Install the adapters through the family's weight-sync path: the
@@ -203,7 +212,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
                     for name, value in state.items()
                 },
             )
-            videos += comparison.generate_arm(model, target.label)
+            videos += generate_arm(model, target.label, **grid)
     finally:
         del model, bundle
         release_cuda_memory()

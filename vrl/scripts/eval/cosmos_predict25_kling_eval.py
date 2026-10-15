@@ -17,13 +17,13 @@ from vrl.config.schema import RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-from vrl.scripts.eval._checkpoint_comparison import GeneratedVideo, reward_worker_config
+from vrl.scripts.eval._checkpoint_comparison import (
+    GeneratedVideo,
+    generate_arm,
+    reward_worker_config,
+)
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.scripts.eval.denoise_generation import (
-    generate_one_video,
-    seed_for,
-)
 from vrl.scripts.eval.score_report import write_scores
 from vrl.trainers.checkpointing import (
     CheckpointTarget,
@@ -33,7 +33,6 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json, write_jsonl
-from vrl.utils.media import write_mp4
 from vrl.utils.paths import user_path
 from vrl.utils.score_statistics import distribution
 
@@ -257,13 +256,13 @@ def _generate_all(
             model = bundle.model.eval()
             try:
                 generated.extend(
-                    _generate_checkpoint_videos(
+                    generate_arm(
                         model,
-                        target,
+                        target.label,
                         prompts,
+                        output_dir=output_dir,
                         samples_per_prompt=samples_per_prompt,
                         base_seed=base_seed,
-                        output_dir=output_dir,
                         sampling=sampling,
                     ),
                 )
@@ -277,55 +276,6 @@ def _generate_all(
         del bundle
         release_cuda_memory()
     return generated
-
-
-def _generate_checkpoint_videos(
-    model: Any,
-    target: CheckpointTarget,
-    prompts: list[str],
-    *,
-    samples_per_prompt: int,
-    base_seed: int,
-    output_dir: Path,
-    sampling: dict[str, Any],
-) -> list[GeneratedVideo]:
-    videos: list[GeneratedVideo] = []
-    video_dir = output_dir / "videos" / target.label
-    video_dir.mkdir(parents=True, exist_ok=True)
-    for prompt_index, prompt in enumerate(prompts):
-        for sample_index in range(samples_per_prompt):
-            seed = seed_for(
-                base_seed=base_seed,
-                prompt_index=prompt_index,
-                sample_index=sample_index,
-                samples_per_prompt=samples_per_prompt,
-            )
-            logger.info(
-                "Generating checkpoint=%s prompt=%d sample=%d seed=%d",
-                target.label,
-                prompt_index,
-                sample_index,
-                seed,
-            )
-            tensor = generate_one_video(
-                model,
-                prompt=prompt,
-                seed=seed,
-                sampling=sampling,
-            )
-            path = video_dir / f"prompt{prompt_index:04d}_sample{sample_index:02d}.mp4"
-            write_mp4(tensor, path, fps=float(sampling["fps"]))
-            videos.append(
-                GeneratedVideo.from_file(
-                    path.resolve(),
-                    checkpoint_label=target.label,
-                    prompt_index=prompt_index,
-                    sample_index=sample_index,
-                    seed=seed,
-                    prompt=prompt,
-                ),
-            )
-    return videos
 
 
 def _score_generated_videos(
