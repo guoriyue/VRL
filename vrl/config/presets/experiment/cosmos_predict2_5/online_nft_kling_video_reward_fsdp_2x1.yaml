@@ -54,7 +54,6 @@ distributed:
     num_nodes: 2
     gpus_per_node: 1
     fsdp:
-      mesh: ["dp_shard"]           # 1D ZeRO-3 across the 2 ranks (no HSDP at 2x1)
       # precision_policy=none (fp32 sharded master params), NOT actor (bf16 params).
       # This recipe uses activation checkpointing (actor.gradient_checkpointing, on
       # by default, and required — without it the 2B DiT at 480p/33f OOMs a 44GB
@@ -69,7 +68,6 @@ distributed:
       # FSDP+GC needs a deeper fix (apply the MP cast during recompute) — tracked as
       # a follow-up; this is the correct, standard FSDP2+checkpointing recipe.
       precision_policy: none       # fp32 master params; bf16 compute via trainer autocast
-      reshard_after_forward: true  # ZeRO-3 (re-gather params each forward, lowest mem)
   # Each rank's unpinned rollout and unpinned Kling reward share its own
   # (trainer) GPU: 2 GPUs total, no spare card. Same as the DDP variant.
 

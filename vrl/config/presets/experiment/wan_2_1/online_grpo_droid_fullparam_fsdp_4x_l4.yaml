@@ -63,14 +63,9 @@ rollout:
 
 distributed:
   training:
-    strategy: fsdp
-    num_nodes: 1
     gpus_per_node: 4
     fsdp:
-      mesh: ["dp_shard"]
       precision_policy: actor
-      reshard_after_forward: true
-      cpu_offload: false
 
 trainer:
   output_dir: outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_4x_l4

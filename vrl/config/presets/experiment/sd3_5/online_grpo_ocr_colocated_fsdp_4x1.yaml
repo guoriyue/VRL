@@ -8,7 +8,6 @@ defaults:
 distributed:
   training:
     strategy: fsdp
-    num_nodes: 1
     gpus_per_node: 4
     fsdp:
       precision_policy: none

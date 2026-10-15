@@ -74,14 +74,9 @@ rollout:
 
 distributed:
   training:
-    strategy: fsdp
-    num_nodes: 1
     gpus_per_node: 3
     fsdp:
-      mesh: ["dp_shard"]
       precision_policy: actor
-      reshard_after_forward: true
-      cpu_offload: false
 
 reward:
   components:

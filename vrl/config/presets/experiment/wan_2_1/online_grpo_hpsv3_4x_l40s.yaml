@@ -67,7 +67,6 @@ model:
 distributed:
   training:
     strategy: single_process
-    num_nodes: 1
     gpus_per_node: 1
   rollout:
     # Each rollout worker loads the full Wan pipeline (T5 alone is five 2GB+

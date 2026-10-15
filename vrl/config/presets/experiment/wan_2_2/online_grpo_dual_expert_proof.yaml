@@ -29,17 +29,13 @@ defaults:
 
 distributed:
   training:
-    strategy: fsdp
-    num_nodes: 1
     # One rank is deliberate on the 181 GiB proof host. Two symmetric ranks
     # would duplicate two complete 64 GiB rollout pipelines in addition to the
     # replay shards and exceed host RAM. Multi-rank dual-root FSDP is covered by
     # the tiny-real distributed acceptance test; this run proves real weights.
     gpus_per_node: 1
     fsdp:
-      mesh: ["dp_shard"]
       precision_policy: actor
-      reshard_after_forward: true
       # Both 14B roots stay on host between forwards. FSDP materializes only the
       # expert selected by the current timestep, so the inactive root does not
       # consume the active GPU budget.

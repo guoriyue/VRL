@@ -21,16 +21,11 @@ defaults:
 
 distributed:
   training:
-    strategy: fsdp
-    num_nodes: 1
     gpus_per_node: 4
     fsdp:
-      mesh: ["dp_shard"]
       # Checkpoint recompute must observe the same parameter dtype as forward;
       # trainer autocast still supplies bf16 compute.
       precision_policy: none
-      reshard_after_forward: true
-      cpu_offload: false
 
 model:
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.

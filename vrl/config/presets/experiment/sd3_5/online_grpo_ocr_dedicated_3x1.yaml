@@ -27,7 +27,6 @@ defaults:
 distributed:
   training:
     strategy: single_process
-    num_nodes: 1
     gpus_per_node: 1
   resources:
     visible_devices: [0, 1, 2, 3]

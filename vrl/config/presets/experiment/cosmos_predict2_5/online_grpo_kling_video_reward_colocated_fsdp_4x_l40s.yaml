@@ -7,14 +7,10 @@ defaults:
 distributed:
   training:
     strategy: fsdp
-    num_nodes: 1
     gpus_per_node: 4
     fsdp:
-      mesh: [dp_shard]
       precision_policy: none
       shard_trainable_only: true
-      reshard_after_forward: true
-      cpu_offload: false
   resources:
     visible_devices: auto
     trainer:

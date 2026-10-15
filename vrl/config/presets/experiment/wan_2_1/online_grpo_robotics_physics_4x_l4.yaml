@@ -60,7 +60,6 @@ model:
 distributed:
   training:
     strategy: single_process
-    num_nodes: 1
     gpus_per_node: 1
   resources:
     # GPU 3 belongs to the external reward service and must remain invisible to
