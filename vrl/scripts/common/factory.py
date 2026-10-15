@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.algorithms.base import OfflineAlgorithm, OnlineAlgorithm
+from vrl.algorithms.base import OnlineAlgorithm
 from vrl.config.algorithm import algorithm_class
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
@@ -37,17 +37,10 @@ class AlgorithmEvaluatorPair:
                 "trainable actions, transition likelihoods, or policy replay evaluator",
             )
         algorithm_config = built.algorithm
-        algorithm_section = built.root.algorithm
-        if algorithm_section is None:
-            raise ValueError("online recipe requires an algorithm section")
-        kind = algorithm_section.kind
-        if issubclass(algorithm_class(kind), OfflineAlgorithm):
-            raise ValueError(
-                f"{kind} is an offline recipe and is not supported by common online recipe",
-            )
-        reward = built.reward
-        if reward is None:
-            raise ValueError("online recipe requires reward configuration")
+        # BuiltConfigs.from_cfg requires the algorithm section (and a reward for every
+        # online kind); run_online_recipe refuses an offline kind's missing online trainer
+        # config before it pairs the algorithm.
+        kind = built.root.algorithm.kind
         diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
         precision = built.precision
         if precision.denoise_math != "fp32" and kind not in diffusion_logprob_kinds:
