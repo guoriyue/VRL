@@ -52,36 +52,23 @@ def _summarize(
     return passed
 
 
-def main(*, schemes: tuple[str, ...] = ("fp8", "nvfp4")) -> None:
-    """Benchmark the requested schemes; the canonical CLI runs both by default."""
-
-    schemes = tuple(dict.fromkeys(schemes))
-    unknown = sorted(set(schemes) - {"fp8", "nvfp4"})
-    if not schemes or unknown:
-        raise ValueError(f"schemes must be a non-empty fp8/nvfp4 subset; got {schemes!r}")
+def main() -> None:
     if not torch.cuda.is_available():
         raise SystemExit("needs a CUDA device with fp8 support (Hopper/Blackwell)")
-    if "nvfp4" in schemes and not nvfp4_available():
+    if not nvfp4_available():
         raise SystemExit(
             "nvfp4 benchmarking requires an NVFP4-capable CUDA build and Blackwell-class GPU",
         )
     torch.manual_seed(0)
     dev = "cuda"
-    run_fp8 = "fp8" in schemes
-    run_nvfp4 = "nvfp4" in schemes
-    print(f"== {'/'.join(schemes)} vs bf16 linear on {torch.cuda.get_device_name(0)} ==")
-    recipes = []
-    if run_fp8:
-        recipes.append("fp8=rowwise(default)")
-    if run_nvfp4:
-        recipes.append("nvfp4")
-    print(f"M=tokens*batch, K=in, N=out; {', '.join(recipes)}; includes activation quant")
+    print(f"== fp8/nvfp4 vs bf16 linear on {torch.cuda.get_device_name(0)} ==")
+    print("M=tokens*batch, K=in, N=out; fp8=rowwise(default), nvfp4; includes activation quant")
     print()
-    header = f"{'projection':>10} | {'shape (M,K,N)':>22} | {'bf16 ms':>8}"
-    if run_fp8:
-        header += f" | {'fp8 ms':>8} | {'speedup':>7} | {'drift':>8}"
-    if run_nvfp4:
-        header += f" | {'nvfp4 ms':>9} | {'nvfp4 spd':>10} | {'nvfp4 drift':>12}"
+    header = (
+        f"{'projection':>10} | {'shape (M,K,N)':>22} | {'bf16 ms':>8}"
+        f" | {'fp8 ms':>8} | {'speedup':>7} | {'drift':>8}"
+        f" | {'nvfp4 ms':>9} | {'nvfp4 spd':>10} | {'nvfp4 drift':>12}"
+    )
     print(header)
     print("-" * len(header))
 
@@ -107,20 +94,19 @@ def main(*, schemes: tuple[str, ...] = ("fp8", "nvfp4")) -> None:
             ref = lin(x)
             bf16_ms = cuda_mean_ms(lambda lin=lin, x=x: lin(x), iters=100, warmup=25)
         row = f"{projection:>10} | {f'({m},{k},{n})':>22} | {bf16_ms:8.4f}"
-        if run_fp8:
-            # Use the module default because that is also the loader's default
-            # production recipe. Historical tensorwise numbers are not a valid
-            # claim for an unspecified ``precision.rollout_recipe``.
-            fp8 = Fp8Linear(lin)
-            with torch.no_grad():
-                q8 = fp8(x)
-                fp8_ms = cuda_mean_ms(lambda fp8=fp8, x=x: fp8(x), iters=100, warmup=25)
-            fp8_speedup = bf16_ms / fp8_ms
-            fp8_drift = relative_l1_drift(q8, ref)
-            fp8_speedups.append(fp8_speedup)
-            fp8_drifts.append(fp8_drift)
-            row += f" | {fp8_ms:8.4f} | {fp8_speedup:6.2f}x | {fp8_drift:8.4f}"
-        if run_nvfp4 and projection.startswith("mlp_"):
+        # Use the module default because that is also the loader's default
+        # production recipe. Historical tensorwise numbers are not a valid
+        # claim for an unspecified ``precision.rollout_recipe``.
+        fp8 = Fp8Linear(lin)
+        with torch.no_grad():
+            q8 = fp8(x)
+            fp8_ms = cuda_mean_ms(lambda fp8=fp8, x=x: fp8(x), iters=100, warmup=25)
+        fp8_speedup = bf16_ms / fp8_ms
+        fp8_drift = relative_l1_drift(q8, ref)
+        fp8_speedups.append(fp8_speedup)
+        fp8_drifts.append(fp8_drift)
+        row += f" | {fp8_ms:8.4f} | {fp8_speedup:6.2f}x | {fp8_drift:8.4f}"
+        if projection.startswith("mlp_"):
             nvfp4_linear = Fp4Linear(lin)
             with torch.no_grad():
                 q4 = nvfp4_linear(x)
@@ -134,22 +120,16 @@ def main(*, schemes: tuple[str, ...] = ("fp8", "nvfp4")) -> None:
             nvfp4_speedups.append(nvfp4_speedup)
             nvfp4_drifts.append(nvfp4_drift)
             row += f" | {nvfp4_ms:9.4f} | {nvfp4_speedup:9.2f}x | {nvfp4_drift:12.4f}"
-        elif run_nvfp4:
+        else:
             row += f" | {'-':>9} | {'-':>10} | {'-':>12}"
         print(row)
 
     print("-" * len(header))
     print("\n-- verdict --")
-    results: dict[str, bool] = {}
-    if run_fp8:
-        results["fp8"] = _summarize("fp8", fp8_speedups, fp8_drifts, min_speedup=1.05)
-    if run_nvfp4:
-        results["nvfp4"] = _summarize(
-            "nvfp4 (MLP-only)",
-            nvfp4_speedups,
-            nvfp4_drifts,
-            min_speedup=1.05,
-        )
+    results = {
+        "fp8": _summarize("fp8", fp8_speedups, fp8_drifts, min_speedup=1.05),
+        "nvfp4": _summarize("nvfp4 (MLP-only)", nvfp4_speedups, nvfp4_drifts, min_speedup=1.05),
+    }
     failed = [scheme for scheme, passed in results.items() if not passed]
     if failed:
         print(f"performance gate failed: {', '.join(failed)}")
