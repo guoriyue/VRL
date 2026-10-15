@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.utils.json_files import write_csv, write_json, write_jsonl
+from vrl.utils.json_files import read_jsonl, write_csv, write_json, write_jsonl
 from vrl.utils.score_statistics import bootstrap_mean_interval, distribution
 
 
@@ -412,10 +412,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
-    with args.scores.open(encoding="utf-8") as handle:
-        rows = [json.loads(line) for line in handle if line.strip()]
     summary = write_curve_report(
-        rows,
+        read_jsonl(args.scores),
         args.output_dir,
         score_keys=args.score_keys,
         base_label=args.base_label,
