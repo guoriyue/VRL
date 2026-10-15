@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import random
 import weakref
 
@@ -11,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 
+from tests import ci_envs
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
@@ -397,9 +397,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA pool gate"
-)
+@pytest.mark.skipif(not ci_envs.WM_RUN_REAL_MODEL_TESTS, reason="explicit CUDA pool gate")
 async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch) -> None:
     """A reward pinned to cuda:1 must pool, park, and restore on cuda:1 while
     the driver's current device stays cuda:0 throughout."""
@@ -477,9 +475,7 @@ def test_reward_parking_session_scopes_pool_operations_to_the_configured_device(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(
-    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA RNG gate"
-)
+@pytest.mark.skipif(not ci_envs.WM_RUN_REAL_MODEL_TESTS, reason="explicit CUDA RNG gate")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raises", [False, True])
 async def test_reward_build_scope_preserves_all_initialized_cuda_rngs(monkeypatch, raises) -> None:
@@ -571,7 +567,7 @@ def test_sleep_offload_rejects_injected_model() -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(
-    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1",
+    not ci_envs.WM_RUN_REAL_MODEL_TESTS,
     reason="set WM_RUN_REAL_MODEL_TESTS=1 for cached real-model gates",
 )
 @pytest.mark.asyncio

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 import torch
+
+from tests import ci_envs
 
 
 @pytest.mark.gpu
@@ -13,7 +13,7 @@ import torch
 def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     """Compare the exact training context against an independently built native loop."""
 
-    if os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1":
+    if not ci_envs.WM_RUN_REAL_MODEL_TESTS:
         pytest.skip("set WM_RUN_REAL_MODEL_TESTS=1 to load the pinned SANA checkpoint")
     if not torch.cuda.is_available():
         pytest.skip("SANA real-checkpoint parity requires CUDA")
