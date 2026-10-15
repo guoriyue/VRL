@@ -183,6 +183,3 @@ def test_image_sampling_carries_family_keys_in_one_flat_record() -> None:
     assert sampling.family == {"reference_resolution": 512, "output_mode": "rgb"}
     record = sampling.to_record()
     assert record["num_steps"] == 40 and record["reference_resolution"] == 512
-    assert ImageSampling.from_mapping(record) == sampling
-    with pytest.raises(ValueError, match="missing keys"):
-        ImageSampling.from_mapping({"width": 8})

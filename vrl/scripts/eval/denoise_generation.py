@@ -34,9 +34,8 @@ class ImageSampling:
 
     One type serves the checkpoint evaluators and the generation archive:
     ``from_root`` projects the parsed config through ``resolve_eval_sampling``
-    (no defaults of its own), ``from_mapping`` re-reads a persisted record and
-    fails closed on missing or unknown keys, and ``to_record`` writes it back
-    with keys derived from the fields.
+    (no defaults of its own), and ``to_record`` writes it out with keys
+    derived from the fields.
     """
 
     width: int
@@ -94,30 +93,6 @@ class ImageSampling:
     @classmethod
     def _named_fields(cls) -> tuple[str, ...]:
         return tuple(f.name for f in fields(cls) if f.name != "family")
-
-    @classmethod
-    def from_mapping(
-        cls,
-        value: Mapping[str, Any] | Any,
-        *,
-        what: str = "sampling",
-    ) -> ImageSampling:
-        """Build sampling values from one persisted record (flat, as ``to_record`` wrote it).
-
-        The named fields must all be present; any other key is a family key
-        and rides along unchanged.
-        """
-
-        if not isinstance(value, Mapping):
-            raise TypeError(f"{what} must be a mapping, got {type(value).__name__}")
-        named = cls._named_fields()
-        missing = sorted(set(named) - set(value))
-        if missing:
-            raise ValueError(f"{what} missing keys: {missing}")
-        return cls(
-            **{name: value[name] for name in named},
-            family={key: item for key, item in value.items() if key not in named},
-        )
 
     def to_record(self) -> dict[str, Any]:
         """One flat mapping of every effective sampling value, family keys included."""

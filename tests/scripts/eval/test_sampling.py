@@ -69,7 +69,6 @@ def test_family_without_a_prompt_length_knob_projects_no_key() -> None:
 
     sampling = ImageSampling.from_root(root)
     assert sampling.max_sequence_length is None
-    assert ImageSampling.from_mapping(sampling.to_record()) == sampling
 
 
 def test_family_keys_come_from_the_family_schema_not_a_hand_list() -> None:
