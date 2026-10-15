@@ -196,7 +196,7 @@ class CheckpointComparison:
         # rollout's: a GRPO rollout's SDE knobs describe exploration, not an
         # evaluation protocol (measured: inheriting denoise_mode='sde' buried
         # the weight difference under sampler noise).
-        sampling = resolve_eval_sampling(cfg)
+        sampling = resolve_eval_sampling(root)
         sampling["denoise_mode"] = str(args.denoise_mode)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         return cls(

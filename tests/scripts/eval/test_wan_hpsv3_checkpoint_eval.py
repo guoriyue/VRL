@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
+from tests.tiny_real_stack import write_tiny_wan_snapshot
 from vrl.scripts.eval import score_report
 from vrl.scripts.eval import wan_hpsv3_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval._checkpoint_comparison import load_wan_run_config
@@ -231,3 +232,77 @@ def test_score_grid_builds_hpsv3_from_the_runs_own_reward_block(
     scored = [json.loads(line) for line in (output_dir / "scores.jsonl").read_text().splitlines()]
     assert scored[0]["r_top_frame_mean"] == 3.0
     assert scored[0]["r_frame_min"] == 1.0
+
+
+# --- generate ----------------------------------------------------------------
+
+
+def test_generate_renders_the_base_arm_of_a_tiny_lora_run(tmp_path: Path) -> None:
+    """``generate`` runs the real resolve -> build -> adapter-disabled base arm -> mp4
+    chain on a tiny Wan snapshot, so the sampler projection reads the parsed config."""
+
+    snapshot = write_tiny_wan_snapshot(tmp_path / "wan-snapshot")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "wan",
+                    "path": str(snapshot),
+                    "revision": None,
+                    "use_lora": True,
+                    "lora": {"rank": 2, "alpha": 2, "target_modules": ["to_q"]},
+                },
+                "trainer": {},
+                "precision": {
+                    "float32_precision": "ieee",
+                    "training": {"dtype": "fp32"},
+                    "rollout": {"dtype": "fp32"},
+                },
+                "sampling": {
+                    "width": 32,
+                    "height": 32,
+                    "num_frames": 1,
+                    "num_steps": 2,
+                    "fps": 4,
+                    "max_sequence_length": 8,
+                    "guidance_scale": 1.0,
+                },
+            },
+        ),
+        run_dir / "resolved_config.yaml",
+    )
+    prompts = tmp_path / "prompts.txt"
+    prompts.write_text("a cat\n")
+    output_dir = tmp_path / "eval"
+
+    result = checkpoint_eval.generate_grid(
+        checkpoint_eval.build_parser().parse_args(
+            [
+                "generate",
+                "--run-dir",
+                str(run_dir),
+                "--output-dir",
+                str(output_dir),
+                "--prompts",
+                str(prompts),
+                "--limit",
+                "1",
+                "--samples-per-prompt",
+                "1",
+                "--device",
+                "cpu",
+            ],
+        ),
+    )
+
+    assert result["videos"] == 1 and result["arms"] == ["base"]
+    (row,) = [
+        json.loads(line) for line in (output_dir / "generated.jsonl").read_text().splitlines()
+    ]
+    assert row["prompt"] == "a cat"
+    assert row["sha256"] == sha256_file(Path(row["path"]))
+    provenance = json.loads((output_dir / "provenance.json").read_text())
+    assert provenance["sampling"]["denoise_mode"] == "native"
+    assert provenance["sampling"]["fps"] == 4

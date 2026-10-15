@@ -91,7 +91,10 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--base-seed", type=int, default=DEFAULT_BASE_SEED)
     generate.add_argument("--device", default="auto")
     generate.add_argument(
-        "--fps", type=int, default=16, help="sampling.fps when the run omits it."
+        "--fps",
+        type=int,
+        default=16,
+        help="Frame rate for every arm; always replaces the run's sampling.fps.",
     )
     generate.add_argument(
         "--denoise-mode",
