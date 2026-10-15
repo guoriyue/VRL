@@ -148,7 +148,7 @@ def _save_real_checkpoint(path: Path, *, entry, build, identity, fill: float) ->
         trainer=_Trainer(),
         bundle=bundle,
         family="cosmos-predict2.5",
-        progress={"next_epoch": 1},
+        progress={"completed_epoch": 0, "next_epoch": 1},
         rng_state={},
         model_identity=identity,
     )
@@ -254,11 +254,15 @@ def test_checkpoint_identity_rejects_before_model_generation(monkeypatch, tmp_pa
     _snapshot, config_path, *_ = _tiny_cosmos_run(tmp_path)
     checkpoint = tmp_path / "checkpoint-final"
     checkpoint.mkdir()
+    # Published shape (payload file + metadata) so the arm pins; the payload is
+    # never read because the metadata identity already disagrees.
+    (checkpoint / "checkpoint.pt").write_bytes(b"")
     (checkpoint / "checkpoint_meta.json").write_text(
         json.dumps(
             {
                 "schema_version": 2,
                 "family": "cosmos-predict2.5",
+                "completed_epoch": 1,
                 "model_identity": {"schema": "wrong/v1"},
             },
         ),

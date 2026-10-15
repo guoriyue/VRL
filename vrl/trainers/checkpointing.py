@@ -69,7 +69,6 @@ class CheckpointTarget:
         values: Sequence[str],
         *,
         run_dir: str | Path | None = None,
-        require_directory: bool = True,
         reserved_label: str | None = None,
     ) -> list[CheckpointTarget]:
         """Parse ``--checkpoint [LABEL=]PATH`` arguments into distinct arms.
@@ -82,9 +81,7 @@ class CheckpointTarget:
         checkpoint directory that holds it. Labels must be distinct because
         they name the report's columns.
 
-        ``require_directory`` rejects a plain file, which an entrypoint that
-        loads a published checkpoint directory wants and one that accepts a
-        single weights file does not. ``reserved_label`` is the name an
+        Every path must be a directory. ``reserved_label`` is the name an
         entrypoint keeps for an arm of its own, such as an adapter-disabled
         baseline.
         """
@@ -108,7 +105,7 @@ class CheckpointTarget:
             label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
             if not label:
                 raise ValueError(f"checkpoint label resolved empty for {value!r}")
-            if not (path.is_dir() if require_directory else path.exists()):
+            if not path.is_dir():
                 raise FileNotFoundError(f"checkpoint path does not exist: {path}")
             targets.append(cls(label=label, path=path))
 

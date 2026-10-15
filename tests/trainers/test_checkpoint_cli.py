@@ -10,11 +10,7 @@ from vrl.trainers.checkpointing import (
 
 
 def test_checkpoint_cli_values_become_distinct_labelled_arms(tmp_path: Path) -> None:
-    """`--checkpoint [LABEL=]PATH` parsing, shared by the evaluation entrypoints.
-
-    Two of them used to carry byte-identical copies of this, down to the error
-    strings, differing only in whether a plain file is acceptable.
-    """
+    """`--checkpoint [LABEL=]PATH` parsing, shared by the evaluation entrypoints."""
 
     final = tmp_path / "epoch-3" / "checkpoint-final"
     final.mkdir(parents=True)
@@ -49,22 +45,3 @@ def test_checkpoint_cli_values_refuse_collisions_and_the_reserved_label(
 
     with pytest.raises(ValueError, match="resolved empty"):
         CheckpointTarget.from_cli_values([f"!!!={first}"])
-
-
-def test_require_directory_is_what_separates_the_two_entrypoints(tmp_path: Path) -> None:
-    """One entrypoint loads a published directory; another may name a weights file."""
-
-    weights = tmp_path / "adapter.safetensors"
-    weights.touch()
-
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        CheckpointTarget.from_cli_values([f"arm={weights}"])
-
-    (target,) = CheckpointTarget.from_cli_values([f"arm={weights}"], require_directory=False)
-    assert target.path == weights.resolve()
-
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        CheckpointTarget.from_cli_values(
-            [f"arm={tmp_path / 'absent'}"],
-            require_directory=False,
-        )

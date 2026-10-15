@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -25,11 +25,7 @@ from vrl.scripts.eval._checkpoint_comparison import (
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.score_report import write_scores
-from vrl.trainers.checkpointing import (
-    CheckpointTarget,
-    TrainingCheckpoint,
-    read_checkpoint_meta,
-)
+from vrl.trainers.checkpointing import CheckpointTarget, TrainingCheckpoint
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json, write_jsonl
@@ -121,9 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         prompts = prompts[: args.limit]
     if not prompts:
         raise ValueError("provide --prompt, --manifest, or --eval-manifest")
-    # A cosmos arm may name a single weights file, so the path need not be a
-    # directory; wan_hpsv3 loads published checkpoint directories and requires one.
-    checkpoint_targets = CheckpointTarget.from_cli_values(args.checkpoint, require_directory=False)
+    checkpoint_args = CheckpointTarget.from_cli_values(args.checkpoint)
 
     device = resolve_eval_device(args.device)
     dtype = resolve_eval_dtype(
@@ -157,12 +151,11 @@ def main(argv: list[str] | None = None) -> None:
         parameter_dtype_override=dtype,
     )
     model_identity = build.checkpoint_identity()
+    checkpoint_targets = [
+        CheckpointTarget.load(target.path, label=target.label) for target in checkpoint_args
+    ]
     for target in checkpoint_targets:
-        checkpoint_dir = target.path.parent if target.path.is_file() else target.path
-        replace(target, meta=read_checkpoint_meta(checkpoint_dir)).validate_compatibility(
-            family=entry.family,
-            expected_model_identity=model_identity,
-        )
+        target.validate_compatibility(family=entry.family, expected_model_identity=model_identity)
     output_dir = user_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
