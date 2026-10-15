@@ -3,7 +3,7 @@
 # Qwen-Image-2.1 aesthetic reward composes it with pinned SigLIP V2.5 at
 # 1.0 : 2.75, about one within-group standard deviation each
 # (docs/rewards/cards/hpsv3_siglip_qwen21_t2i.md):
-#   /reward=hpsv3_http +reward=aesthetic_revision reward.components.aesthetic=2.75 \
+#   /reward=hpsv3_http +reward=aesthetic reward.components.aesthetic=2.75 \
 #     reward.kwargs.aesthetic.model_revision=9fdffc58afc957d1a03a25b10dba0329ab15c2a3
 reward:
   components:

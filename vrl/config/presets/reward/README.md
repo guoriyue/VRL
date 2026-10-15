@@ -157,7 +157,8 @@ Aesthetic Predictor V2.5 head. Install `uv sync --extra reward`; the upstream
 `aesthetic-predictor-v2-5` package and bundled head are AGPL-3.0 (see the asset
 license and source attribution in `vrl/rewards/assets/`). The encoder downloads
 from Hugging Face on first use. `model_revision` pins both encoder and processor;
-`/reward/aesthetic_revision` exposes it explicitly. The head is bundled and hashed.
+`/reward/aesthetic` declares it as `null` (repository default). The head is bundled
+and hashed.
 
 The public reward name and score key remain `aesthetic`. It ignores the prompt,
 scores an image directly, and averages up to three frames for video; it does not

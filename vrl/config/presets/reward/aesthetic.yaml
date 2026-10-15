@@ -7,3 +7,6 @@ reward:
       # Optional CPU downgrade under the resource-resolved device ceiling.
       device: null
       model_name: google/siglip-so400m-patch14-384
+      # Optional Hub revision pinning the SigLIP encoder and processor; the
+      # V2.5 head is bundled with VRL. null follows the repository default.
+      model_revision: null

@@ -7,8 +7,8 @@
 # the pilot as immutable capacity/resume evidence.
 defaults:
   - /experiment/sana/online_grpo_aesthetic_fullparam
-  - /reward/aesthetic_revision
-  - /reward/pickscore_revision
+  - /reward/aesthetic
+  - /reward/pickscore
   - _self_
 
 trainer:

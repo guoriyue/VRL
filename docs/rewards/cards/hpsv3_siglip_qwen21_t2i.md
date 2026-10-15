@@ -4,7 +4,7 @@
 - **Axis**: overall visual appeal.
 - **Composition**: two single-reward presets, HPSv3 in process (needs a GPU) or as the operator service
   (`reward/hpsv3_http`, `vrl/config/reward_service/hpsv3.yaml`), plus pinned SigLIP:
-  `/reward=hpsv3_http +reward=aesthetic_revision reward.components.aesthetic=2.75
+  `/reward=hpsv3_http +reward=aesthetic reward.components.aesthetic=2.75
   reward.kwargs.aesthetic.model_revision=9fdffc58afc957d1a03a25b10dba0329ab15c2a3`
   (in process: `/reward=hpsv3 reward.kwargs.hpsv3.worker_config.local_files_only=true
   distributed.resources.reward.device=gpu`).
