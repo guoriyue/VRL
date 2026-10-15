@@ -28,7 +28,10 @@ py_library(
     name = "support",
     srcs = TEST_TREE,
     data = TEST_FIXTURE_FILES,
-    deps = ["//:vrl"],
+    deps = [
+        "//:reward",
+        "//:vrl",
+    ],
 )
 
 py_library(
@@ -79,12 +82,18 @@ vrl_pytest(
     )
     for lane, extra_data in [
         ("algorithms", []),
+        ("architecture", ["//:.rayignore"]),
         ("data", []),
+        # e2e's CPU half: case-config parsing; the real-weight steps carry the
+        # e2e marker and run in e2e_real_checkpoint_tests.
+        ("e2e", []),
         ("generation", []),
         ("math", []),
         ("models", []),
         ("nn", []),
+        ("quality", []),
         ("ray", []),
+        ("reward", []),
         ("rewards", []),
         ("rollouts", []),
         ("scripts", []),
@@ -138,12 +147,13 @@ vrl_pytest(
     tags = GPU_TAGS + ["external"],
 )
 
-# Local Ray cluster smoke tests: real raylet + actors started from the
-# Bazel-managed interpreter, so rollout workers resolve the same closure.
+# Every slow_test (mostly local Ray clusters: real raylet + actors started from
+# the Bazel-managed interpreter, so rollout workers resolve the same closure).
+# The CPU lanes above deselect slow_test, so this lane is their only runner.
 vrl_pytest(
     name = "ray_slow_tests",
     size = "enormous",
-    srcs = glob(["ray/**/*.py", "generation/ray/**/*.py", "rollouts/**/*.py"]),
+    srcs = TEST_TREE,
     args = ["-m", "'slow_test and not e2e'"],
     data = ["//manifests:manifests"],
     env = CPU_ENV,

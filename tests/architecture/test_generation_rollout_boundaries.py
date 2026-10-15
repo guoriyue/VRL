@@ -8,6 +8,8 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 VRL_ROOT = ROOT / "vrl"
 _GENERATION_MODEL_IMPORT_FLOOR = (
@@ -125,6 +127,11 @@ def lazy_import():
 
 def test_ray_working_dir_keeps_pinned_chunk_runtime_inputs() -> None:
     """Exercise Ray's real ignore traversal for required vendored runtime files."""
+
+    if not (ROOT / "third_party" / "MAGI-1" / "inference").is_dir():
+        # The traversal is over the source checkout Ray would package; a Bazel
+        # runfiles tree carries only the vendored subset, not the MAGI-1 tree.
+        pytest.skip("needs a source checkout with the MAGI-1 submodule")
 
     import logging
 

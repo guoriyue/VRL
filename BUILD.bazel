@@ -1,18 +1,26 @@
 load("@vrl_pypi//:requirements.bzl", "all_requirements")
 load("@vrl_pypi_videoeval//:requirements.bzl", videoeval_requirements = "all_requirements")
 load("@vrl_pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 load("//tools/python:defs.bzl", "vrl_library")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["pyproject.toml", "uv.lock"])
+exports_files([".rayignore", "pyproject.toml", "uv.lock"])
 
 # The VRL package against the main uv.lock profile (model runtime + rewards).
 # Hubs are generated from the lock, so nothing here repeats a version.
 vrl_library(
     name = "vrl",
     requirements = all_requirements,
+)
+
+# The offline reward toolkit (`python -m reward`): analysis and labelling on
+# top of vrl's reward scoring. Its tests live in tests/reward.
+py_library(
+    name = "reward",
+    srcs = glob(["reward/**/*.py"]),
+    deps = [":vrl"],
 )
 
 # The same sources against the vLLM stack (memory parking, paged attention).
