@@ -5,6 +5,13 @@ model:
   path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   revision: 0fad780a534b6463e45facd96134c9f345acfa5b
 
+  # Wan 2.1's text length and native frame rate. Generation already used 512
+  # tokens when this was unset (the model's fallback) and never reads fps;
+  # eval scripts read both from here to encode prompts and write videos.
+  executor:
+    max_sequence_length: 512
+    fps: 16
+
   memory:
     vae_decode:
       tiling: true

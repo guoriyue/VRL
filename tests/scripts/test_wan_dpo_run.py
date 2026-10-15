@@ -147,8 +147,12 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     family: str,
 ) -> None:
     cfg = _tiny_dpo_run(tmp_path, family=family)
+    # Drop the keys the other family's schema does not accept, so the DPO
+    # family gate is what rejects the run.
     if family == "sd3_5":
         del cfg.sampling.num_frames
+    else:
+        del cfg.model.executor
     dataset_calls = _install_local_pickapic(monkeypatch)
     built = _spy_wan_from_build(monkeypatch)
 
