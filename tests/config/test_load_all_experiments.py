@@ -6,6 +6,7 @@ instead of parametrizing the same assertion into dozens of collected tests.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from vrl.config.loading import (
 from vrl.config.schema import RewardConfig, parse_config
 from vrl.config.validation import require_training_config
 from vrl.ray.resources import ResourcePlan
+from vrl.trainers.data import prompts
 
 
 def _validate_reward_parking(reward, resources) -> None:
@@ -264,9 +266,22 @@ def test_all_experiments_load_and_validate() -> None:
         assert {key: typed_payload[key] for key in raw_model} == raw_model
 
 
-def test_all_online_experiments_pass_static_launch_preflight() -> None:
-    """Every active online recipe has a valid schedule and reward topology, and
-    ships no rollout precision split by accident.
+class _ManifestRead(Exception):
+    """The online prompt loader accepted the data section and went to read files."""
+
+
+def _stop_at_manifest_read(*_args, **_kwargs):
+    raise _ManifestRead
+
+
+def test_all_online_experiments_pass_static_launch_preflight(monkeypatch) -> None:
+    """Every active online recipe has a valid schedule and reward topology, a
+    data section the online prompt loader accepts, and ships no rollout
+    precision split by accident.
+
+    The prompt loader runs for real up to its first file read (several
+    manifests live outside the repository), so its loader dispatch is the one
+    judging the data section.
 
     Unpinned roles share the trainer GPU, so a recipe needs exactly the ordinals
     its pinned ``devices`` name (one synthetic device when nothing is pinned:
@@ -278,6 +293,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
         devices = node.get("devices", "auto")
         return [] if devices == "auto" else [int(device) for device in devices]
 
+    monkeypatch.setattr(prompts, "load_prompt_dataset_index", _stop_at_manifest_read)
+    monkeypatch.setattr(prompts.ImageCaptionPromptDataset, "from_section", _stop_at_manifest_read)
     failures = []
     for name in _experiment_names():
         cfg = _load_experiment_for_static_validation(name)
@@ -299,9 +316,12 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
 
         try:
             built = BuiltConfigs.from_cfg(cfg)
-            resources = ResourcePlan.from_root(parse_config(cfg))
+            root = parse_config(cfg)
+            resources = ResourcePlan.from_root(root)
             resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
             _validate_reward_parking(built.reward, resources)
+            with contextlib.suppress(_ManifestRead):
+                prompts.load_prompt_examples_from_config(root.data)
         except Exception as error:  # report the full active surface in one failure
             failures.append(f"{name}: {type(error).__name__}: {error}")
             continue

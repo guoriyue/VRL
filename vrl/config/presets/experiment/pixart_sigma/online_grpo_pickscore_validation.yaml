@@ -7,7 +7,7 @@ defaults:
   - /model/pixart_sigma/xl_512
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
-  - /dataset/pickapic_v2
+  - /dataset/pickscore_sfw
   - /reward/pickscore
 
 
