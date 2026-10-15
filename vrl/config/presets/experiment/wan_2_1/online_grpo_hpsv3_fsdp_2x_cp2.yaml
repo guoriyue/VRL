@@ -10,22 +10,15 @@
 #   torchrun --standalone --nproc_per_node=2 -m vrl.scripts.train \
 #     --config experiment/wan_2_1/online_grpo_hpsv3_fsdp_2x_cp2 \
 #     trainer.output_dir=outputs/wan_hpsv3_flash_grpo/cp2_smoke
+#
+# The CP topology is /base/distributed/training_fsdp_cp2; its precision_policy
+# none keeps fp32 master storage with bf16 autocast compute, so the
+# context-parallel attention recompute sees the dtypes the forward saw (see
+# vrl/trainers/context_parallel.py). Accepted on the 2-GPU gate.
 defaults:
   - /experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s
-
-distributed:
-  training:
-    gpus_per_node: 2
-    fsdp:
-      mesh: [dp_shard, cp]
-      # Trainable parameters keep their fp32 master storage and compute runs in
-      # bf16 under the trainer's autocast; the context-parallel attention
-      # recompute then sees the dtypes the forward saw (see
-      # vrl/trainers/context_parallel.py). Accepted on the 2-GPU gate.
-      precision_policy: none
-      context_parallel:
-        ulysses_degree: 2
-        ring_degree: 1
+  - /base/distributed/training_fsdp_cp2
+  - _self_
 
 trainer:
   output_dir: outputs/wan_hpsv3_flash_grpo/cp2_smoke
