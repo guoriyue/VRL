@@ -87,6 +87,27 @@ def test_declared_exclude_is_honored() -> None:
         apply_rollout_optimizations(model, _build(quantization="fp8"))
 
 
+def test_lora_root_is_quantized_under_the_default_exclude() -> None:
+    """``get_peft_model`` nests the policy under ``base_model.model``.
+
+    ``base_model`` contains the ``_mod`` modulation exclude, so a pass that read
+    the wrapped paths would match nothing on every LoRA family.
+    """
+
+    from peft import LoraConfig, get_peft_model
+
+    from vrl.nn.quantization import DEFAULT_EXCLUDE
+
+    model = _Policy("transformer")
+    model.quantization_exclude = DEFAULT_EXCLUDE
+    core = model.policy_cores["transformer"]
+    model._cores["transformer"] = get_peft_model(core, LoraConfig(r=2, target_modules=["net"]))
+
+    apply_rollout_optimizations(model, _build(quantization="fp8"))
+
+    assert isinstance(core.ff.net.base_layer, QuantizedLinear)
+
+
 def test_no_optimization_requested_touches_nothing() -> None:
     """A plain bf16 rollout runs no pass and needs no declaration."""
 

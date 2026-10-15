@@ -184,13 +184,18 @@ class QuantizationPass:
             policy_detail = f"recipe={recipe}, profile={scheme.default_target_profile}"
         else:
             policy_detail = f"profile={scheme.default_target_profile}"
+        from peft import PeftModel
+
         # Paths are prefixed by root so the log names WHICH expert changed on a
-        # multi-root family.
-        swapped = [
-            f"{root_name}.{path}"
-            for root_name, root in model.policy_cores.items()
-            for path in scheme.swap_linears(root, **swap_kwargs)
-        ]
+        # multi-root family. A LoRA root is walked from the model PEFT wraps, so
+        # the exclude list reads model structure: under the ``base_model.model``
+        # container every path would contain ``_mod`` and nothing would swap.
+        swapped: list[str] = []
+        for root_name, root in model.policy_cores.items():
+            structure = root.get_base_model() if isinstance(root, PeftModel) else root
+            swapped += [
+                f"{root_name}.{path}" for path in scheme.swap_linears(structure, **swap_kwargs)
+            ]
         if not swapped:
             raise RuntimeError(
                 f"precision.rollout.quantization.format={format_name!r} but the swap "
