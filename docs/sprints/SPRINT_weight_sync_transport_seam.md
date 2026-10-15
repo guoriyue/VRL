@@ -7,7 +7,7 @@
 
 状态：**implementing（用户已要求实现传输选择）；默认传输仍由真实测量决定。**
 真实 full-parameter 多 GPU 作业的性能验收尚未完成，LoRA-only 测试不能替代。
-2026-09-09 按当前代码和 [Miles v0.1 研究](../../research/miles_v01_2609_08368.md)
+2026-09-09 按当前代码和 [Miles v0.1 研究](../research/miles_v01_2609_08368.md)
 重写旧的“全参默认 NCCL”计划；新默认必须由真实测量决定。
 
 ## 现状与唯一 owner
@@ -42,7 +42,7 @@ Miles 论文 §4 的借鉴是准备与传输分开，以及内容验证。
    参数族需要一起 requantize 时，不可任意按字节切开。记录实际 bucket 峰值，
    不照搬 Miles 512MB/benchmark 1GB。
 4. 每 worker 所有 bucket 就绪才安装/发布版本；部分失败不得让新版本进入 admission。
-   与 [真实内容验证](../planned/SPRINT_miles_weight_delivery_verification.md) 共用验收。
+   与 [真实内容验证](parked/SPRINT_miles_weight_delivery_verification.md) 共用验收。
 5. 仅在双端都跨多节点、有可达 RDMA 且 broadcast 被证实为瓶颈后评估 P2P。
    Miles 报告单节点 P2P 可慢约 70%，不设置“节点越少也越快”的默认。
 6. 若没有直连 fabric、已有共享存储且 delta 的压缩/补丁耗时值得，再单独实现
@@ -125,7 +125,7 @@ The existing weight-delivery CLI now routes target snapshots through the product
 sync owner and consumes the resolved bucket setting. Its v2 report labels the
 transport and complete sync/verification wall times. Two-receiver real-Ray CPU
 checks include missing-bucket rejection, not just direct actor installation.
-See the [acceptance details and limits](../planned/SPRINT_miles_weight_delivery_verification.md).
+See the [acceptance details and limits](parked/SPRINT_miles_weight_delivery_verification.md).
 This closes a CLI coverage gap; warm full-parameter measurements, GPU/fabric
 comparisons and end-to-end training improvements remain unproven.
 
@@ -135,7 +135,7 @@ The configured 64 MiB bucket path passed exact poisoned-state recovery and two
 installs on two real SD3.5 CPU rollout models, each receiving all 908 trainable
 parameters (4,486,343,040 bytes). The default snapshot comparison on the same
 CPU topology was terminated by Ray's host-memory monitor and published no report.
-[Commands, results and limits](../../research/weight_delivery_sd3_5_fullparam_cpu_20260909.md)
+[Commands, results and limits](../research/weight_delivery_sd3_5_fullparam_cpu_20260909.md)
 record both outcomes. This closes real full-parameter bucket byte acceptance for
 two CPU replicas; it does not establish GPU/fabric performance or a controlled
 peak-memory improvement. The default remains unchanged.

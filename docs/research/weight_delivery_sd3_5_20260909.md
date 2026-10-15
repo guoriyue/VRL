@@ -48,4 +48,4 @@ was added. Multi-worker/rank and forward equivalence acceptance remain open.
 A subsequent CLI repair initializes the source RNG through `OnlineRunConfig`
 and records its seed/deterministic setting. That does not retroactively seed
 this historical run or change its byte-acceptance result; see the
-[follow-up validation](../sprints/planned/SPRINT_miles_weight_delivery_verification.md).
+[follow-up validation](../sprints/parked/SPRINT_miles_weight_delivery_verification.md).

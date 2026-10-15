@@ -148,7 +148,7 @@ dataclass 的放置规则：
 7. [Family model config ownership](SPRINT_family_model_config_ownership.md)
    承接 `SPRINT_config_as_signatures.md` deferred P3/P4；在 shared config resolution 稳定后迁移。
 
-现有 [Continuous stage contracts and baseline](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)
+现有 [Continuous stage contracts and baseline](../SPRINT_continuous_stage_contracts_and_baseline.md)
 仍是独立 program 的首个 Sprint。它新增 metrics 前，应先复用 Sprint 3 的 typed metrics row，避免
 继续同步手写 header/dict/format list；不需要把 continuous ownership state并入本 program。
 

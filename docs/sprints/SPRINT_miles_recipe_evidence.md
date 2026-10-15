@@ -6,7 +6,7 @@
 
 日期：2026-09-09。VRL 基线 `76b4fa228`。本文件是待执行计划，不代表功能已实现。
 论文、upstream pin、完整功能清单和已知限制见
-[研究总表](../../research/miles_v01_2609_08368.md)。
+[研究总表](../research/miles_v01_2609_08368.md)。
 Miles 论文 v1 与当前 main 的差异必须保留，不能混成同一份复现证据。
 
 ## 问题与现状
@@ -73,7 +73,7 @@ manifest/report 内容 hash、Git/dirty-diff、软件版本、GPU/driver 和数�
 双进程 Gloo 的 primary IO 成功/失败传播、启动证据失败后的清理，以及配置解析/hash、
 manifest 内容变化、resume 不覆盖和发布冲突测试。一个警告来自 PyTorch TF32 旧接口提示。
 
-使用及证据范围见 [说明](../../training_examples/RUN_EVIDENCE.md)。
+使用及证据范围见 [说明](../training_examples/RUN_EVIDENCE.md)。
 尚待：运行结束后的 metrics/checkpoint/eval 证据封存与校验、历史 recipe 盘点、真实重复短曲线、
 确定性/统计性比较和 GPU CI 接线。当前快照不是完整训练复现报告。
 
@@ -155,7 +155,7 @@ regeneration and rescoring. These are CPU fixtures, not real learning evidence.
 
 ## 2026-09-09: Repository evidence inventory
 
-The dated [inventory](../../training_examples/RECIPE_EVIDENCE_INVENTORY.md) and JSON
+The dated [inventory](../training_examples/RECIPE_EVIDENCE_INVENTORY.md) and JSON
 snapshot enumerate all 75 experiment YAMLs, 12 real-checkpoint cases (including
 all overrides), and 35 existing real-cover labels. 73 presets compose without
 extra inputs; two Anima templates intentionally require composition. None of the
@@ -289,7 +289,7 @@ concurrent allocations. This is an open investigation, not a proven worker leak.
 
 ## 2026-09-09: Correct the memory ownership measurement
 
-The [independent CUDA reproduction](../../research/parking_process_ownership_20260909.md)
+The [independent CUDA reproduction](../research/parking_process_ownership_20260909.md)
 confirmed that another process's allocation can make the old device-wide parking
 check fail after the owner has fully released its CuMem physical pages. Generation
 and local reward parking now query process-attributed NVML memory on the CUDA GPU

@@ -2240,7 +2240,7 @@ reward/agent editing work, explicitly including sequential editing and dense tex
 such as manga. Subsequent work prioritizes usable reward and editing interfaces;
 the existing frozen GPU queue continues, but new synthetic training is not added
 merely to occupy the minimum duration. The expanded, requirement-based work plan
-is `docs/sprints/planned/SPRINT_production_visual_editing_and_text.md`.
+is `docs/sprints/SPRINT_production_visual_editing_and_text.md`.
 
 Source inspection found the legacy image OCR substring shortcut unsuitable for
 region-bound dialogue. A separate `text_regions` model and standard reward adapter

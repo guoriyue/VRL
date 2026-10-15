@@ -86,7 +86,7 @@
 update 开头调用（`_update_timesteps` 按 `sde_window` 读每组的窗口）。流式
 累积（`prompts_per_collection>0` 且多个 collection）下只能看到当前 collection，
 分母就是该 collection；忠实复现走全批路径。原有的
-`online_flash_grpo_kling_video_reward` 预设不受影响（它仍是流式），但归一化
+`online_flash_grpo_kling_video_reward` 预设（2026-10-14 已删除，由下文的 hpsv3 reference 配方取代）当时不受影响（它仍是流式），但归一化
 范围变成"每个 collection"而不是"每个 microbatch"。
 
 ## 3. 配方 `experiment/wan_2_1/online_flash_grpo_hpsv3_reference_4x_l40s`

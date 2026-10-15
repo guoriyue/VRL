@@ -4,7 +4,7 @@
 
 - [Stage contracts](../SPRINT_continuous_stage_contracts_and_baseline.md)、
   [generation/reward pump](SPRINT_continuous_generation_reward_pump.md)、
-  [versioned lookahead](SPRINT_continuous_versioned_lookahead.md)、
+  [versioned lookahead](../SPRINT_continuous_versioned_lookahead.md)、
   [reward batching](SPRINT_unified_reward_adaptive_batching.md)、
   [capacity calibration](SPRINT_continuous_stage_capacity_calibration.md)、
   [adaptive backpressure](SPRINT_continuous_adaptive_backpressure.md) 和

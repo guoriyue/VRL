@@ -6,7 +6,7 @@
 
 日期：2026-09-09。VRL 基线 `76b4fa228`。本文件是待执行计划，不代表功能已实现。
 论文、upstream pin、完整功能清单和已知限制见
-[研究总表](../../research/miles_v01_2609_08368.md)。
+[研究总表](../research/miles_v01_2609_08368.md)。
 Miles 论文 v1 与当前 main 的差异必须保留，不能混成同一份复现证据。
 
 ## 问题与源代码证据
@@ -116,7 +116,7 @@ ALL_CAPS business vocabulary or family support table was introduced.
 
 ## 2026-09-09: Real SD3.5 selective-precision candidate
 
-[Execution and module-level experiments](../../research/sd3_5_execution_precision_20260909.md)
+[Execution and module-level experiments](../research/sd3_5_execution_precision_20260909.md)
 preserve FP32 adapters and execute eager/compiled forward and backward on a real
 fixed transition. Eager batch error persists with original adapter dtypes and
 backward; FP32 CFG recombination alone does not remove it. Differences appear in

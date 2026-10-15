@@ -131,7 +131,7 @@ trajectory and reward-curve gates before promoting NVFP4 out of experimental.
 
 ## 2026-09-09：Miles 量化配方的适用范围
 
-[论文审阅与源代码 pin](../research/miles_v01_2609_08368.md)，§3.1、§5.3、§6。
+[论文审阅与源代码 pin](../../research/miles_v01_2609_08368.md)，§3.1、§5.3、§6。
 Miles LLM recipe 不支持 BF16 trainer + NVFP4 rollout；这是其实现/验证边界，
 不能覆盖本 sprint 已声明的 corrected split-precision 目标，也不能证明该目标已稳定。
 

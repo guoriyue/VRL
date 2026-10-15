@@ -4,7 +4,7 @@
 共享生成阶段、split pump 与 batch-aware consumer 已有独立提交。
 暂保留原路径，待真实验收后再移动。
 
-父 program：[Continuous three-stage pipeline](../planned/SPRINT_continuous_three_stage_pipeline_program.md)
+父 program：[Continuous three-stage pipeline](planned/SPRINT_continuous_three_stage_pipeline_program.md)
 
 ## 0. 结论先行
 

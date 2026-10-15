@@ -5,7 +5,7 @@
 父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
 
 前置：无。现有
-[Continuous stage contracts and baseline](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)
+[Continuous stage contracts and baseline](../SPRINT_continuous_stage_contracts_and_baseline.md)
 在新增 telemetry columns前依赖本 Sprint。
 
 ## 0. 结论先行
@@ -218,4 +218,4 @@ digest 用例。
 - `vrl/trainers/checkpointing.py`
 - `vrl/scripts/supervise.py`
 - `tests/scripts/test_supervise.py`
-- `docs/sprints/planned/SPRINT_continuous_stage_contracts_and_baseline.md`
+- `docs/sprints/SPRINT_continuous_stage_contracts_and_baseline.md`

@@ -2,7 +2,7 @@
 
 状态：**parked（2026-07-21）**。触发条件：
 
-1. [Versioned lookahead](SPRINT_continuous_versioned_lookahead.md) 已完成；并且
+1. [Versioned lookahead](../SPRINT_continuous_versioned_lookahead.md) 已完成；并且
 2. stage telemetry 证明 reward inference 或 reward queue wait 是可见流水线瓶颈。
 
 父 program：[Continuous three-stage pipeline](../planned/SPRINT_continuous_three_stage_pipeline_program.md)

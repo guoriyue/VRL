@@ -6,7 +6,7 @@
 
 Configuration migration (2026-09-04): historical model/reward/dataset experiment
 names and commands below record past runs. The combination-only Anima presets
-have been retired in favor of [runtime composition](../CONFIGURATION.md).
+have been retired in favor of [runtime composition](../../CONFIGURATION.md).
 Use each retained run's `resolved_config.yaml` for exact reproduction; current
 neutral defaults are not substitutes for the original experiment settings.
 
