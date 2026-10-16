@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Literal
 
 DataLoaderName = Literal[
+    "layered_scenes",
     "pickapic_preference",
     "prompt_manifest",
     "prompt_image_manifest",

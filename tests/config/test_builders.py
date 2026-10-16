@@ -171,8 +171,21 @@ def test_typed_root_is_a_strategy_builder_input() -> None:
     assert strategy._find_unused_parameters is True
 
 
-def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
-    """The offline-DPO allow-list is hand-maintained; this is what keeps it honest.
+@pytest.mark.parametrize(
+    ("algorithm", "recipe", "overrides"),
+    [
+        ("vrl.algorithms.dpo:DiffusionDPO", "experiment/wan_2_1/offline_dpo_pickapic", []),
+        (
+            "vrl.algorithms.sft:DiffusionSFT",
+            "experiment/qwen_image_layered/offline_sft_layered_scenes",
+            ["data.manifest=scenes", "model.lora.path=adapter"],
+        ),
+    ],
+)
+def test_every_allow_listed_offline_actor_field_has_a_reader(
+    algorithm: str, recipe: str, overrides: list[str]
+) -> None:
+    """The offline allow-lists are hand-maintained; this is what keeps them honest.
 
     The cross-section rules reject any ``actor`` key the user sets that is not
     in the algorithm's ``consumed_sections``, so the list *is*
@@ -187,12 +200,13 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     is the check.
     """
 
-    from vrl.algorithms.dpo import DiffusionDPO
     from vrl.config.schema import ActorSection, parse_config
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
+    from vrl.scripts.families.qwen_image_layered.train_sft import place_trainable_roots
+    from vrl.trainers.offline import OfflineTrainerConfig
+    from vrl.utils.config import import_from_path
 
-    recipe = "experiment/wan_2_1/offline_dpo_pickapic"
-    root = parse_config(load_config(recipe))
+    algorithm_cls = import_from_path(algorithm)
+    root = parse_config(load_config(recipe, overrides=overrides))
     assert root.actor is not None
     read: set[str] = set()
 
@@ -202,17 +216,22 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
             return getattr(root.actor, name)
 
     recording_root = SimpleNamespace(actor=_RecordingActor())
-    OfflineDPOTrainerConfig.from_root(recording_root)
+    OfflineTrainerConfig.from_root(recording_root)
     # The checkpointing mode is the section's own reading of its knob; run
     # that reader against the recording actor so the field access is seen.
     ActorSection.gradient_checkpointing_mode.fget(recording_root.actor)
+    if "stream_frozen_blocks" in dict(algorithm_cls.consumed_sections)["actor"]:
+        # The SFT recipe's placement step is the reader of its streaming knob.
+        place_trainable_roots(
+            SimpleNamespace(trainable_modules={}), recording_root.actor, device="cpu"
+        )
 
-    consumed = dict(DiffusionDPO.consumed_sections or ())
+    consumed = dict(algorithm_cls.consumed_sections or ())
     unread = sorted(consumed["actor"] - read)
     assert unread == [], (
-        f"actor field(s) {unread} are accepted by the offline-DPO surface but no "
+        f"actor field(s) {unread} are accepted by the {algorithm_cls.__name__} surface but no "
         "resolver on the recipe reads them; drop them from "
-        "DiffusionDPO.consumed_sections or wire a reader"
+        f"{algorithm_cls.__name__}.consumed_sections or wire a reader"
     )
 
 

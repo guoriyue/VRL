@@ -1,0 +1,33 @@
+# Offline supervised flow-matching recipe.
+defaults:
+  - /base/algorithm/sft
+
+# SFT has the synchronous offline trainer surface. Do not inherit the online
+# actor / trainer presets: EMA, PPO epochs, rollout orchestration, and
+# total_epochs have no consumers here.
+precision:
+  float32_precision: tf32
+  training:
+    dtype: ???
+
+actor:
+  optim:
+    lr: ???
+  gradient_accumulation_steps: ???
+  prediction_type: ???
+  scale_lr: ???
+  train_batch_size: ???
+  use_adafactor: ???
+
+trainer:
+  entrypoint: ???
+  output_dir: ???
+  max_train_steps: ???
+  checkpointing_steps: ???
+  log_interval: ???
+
+distributed:
+  resources:
+    rollout:
+      # Offline SFT trains from cached targets: no generation fleet.
+      num_engines: 0

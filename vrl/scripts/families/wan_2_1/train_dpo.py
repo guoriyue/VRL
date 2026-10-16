@@ -125,7 +125,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     from vrl.config.builders import BuiltConfigs
     from vrl.ray.resources import ResourcePlan
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
+    from vrl.trainers.offline import OfflineTrainerConfig
 
     built = BuiltConfigs.from_cfg(cfg)
     family_entry = built.family
@@ -172,7 +172,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     precision = built.precision
     algorithm = DiffusionDPO(dpo_config)
-    trainer_cfg = OfflineDPOTrainerConfig.from_root(built.root)
+    trainer_cfg = OfflineTrainerConfig.from_root(built.root)
     assert built.root.actor is not None  # the builder required actor.train_batch_size
     train_batch_size = int(built.root.actor.train_batch_size)
     resume_checkpoint = (

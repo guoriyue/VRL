@@ -18,6 +18,7 @@ _KINDS: dict[str, tuple[str, str, str]] = {
     "flow_dppo": ("vrl.algorithms.grpo.continuous", "FlowDPPOConfig", "FlowDPPO"),
     "grpo_guard": ("vrl.algorithms.grpo.continuous", "GRPOGuardConfig", "GRPOGuard"),
     "diffusion_dpo": ("vrl.algorithms.dpo", "DiffusionDPOConfig", "DiffusionDPO"),
+    "diffusion_sft": ("vrl.algorithms.sft", "DiffusionSFTConfig", "DiffusionSFT"),
     "diffusion_nft": ("vrl.algorithms.diffusion_nft", "DiffusionNFTConfig", "DiffusionNFT"),
     "v_grpo": ("vrl.algorithms.v_grpo", "VGRPOConfig", "VGRPO"),
 }

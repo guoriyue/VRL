@@ -35,6 +35,13 @@ def _validate_reward_parking(reward, resources) -> None:
         reward.validate_memory_parking(resources.reward_torch_device())
 
 
+def _is_offline(kind: str) -> bool:
+    from vrl.algorithms.base import OfflineAlgorithm
+    from vrl.config.algorithm import algorithm_class
+
+    return issubclass(algorithm_class(kind), OfflineAlgorithm)
+
+
 def _experiment_names() -> list[str]:
     return [
         name.removeprefix("experiment/").removesuffix(".yaml")
@@ -241,7 +248,7 @@ def test_all_experiments_load_and_validate() -> None:
         assert "trainer" in cfg, f"{name} missing trainer.*"
         assert "algorithm" in cfg, f"{name} missing algorithm.*"
         assert "data" in cfg, f"{name} missing data.* source"
-        if str(cfg.algorithm.kind) != "diffusion_dpo":
+        if not _is_offline(str(cfg.algorithm.kind)):
             assert "reward" in cfg, f"{name} missing reward.* source"
         assert "path" in cfg.model, f"{name} missing model.path"
         assert "entrypoint" in cfg.trainer, f"{name} missing trainer.entrypoint"
@@ -274,7 +281,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
     failures = []
     for name in _experiment_names():
         cfg = _load_experiment_for_static_validation(name)
-        if str(cfg.algorithm.kind) == "diffusion_dpo":
+        if _is_offline(str(cfg.algorithm.kind)):
             continue
 
         if OmegaConf.select(cfg, "distributed.resources") is None:

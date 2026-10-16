@@ -1,12 +1,11 @@
 """Offline Diffusion-DPO trainer.
 
 Generic over diffusion model family: the caller supplies the forward adapter,
-the encoders, and the scheduler, so nothing here names a family. What IS built
-in is the noise/target convention, one branch of ``_inject_noise`` per
-``prediction_type``:
-
-  * ``epsilon`` / ``v_prediction`` (``DDPMScheduler.add_noise``)
-  * ``flow_matching`` velocity (``scheduler.scale_noise``, or a sigma lookup)
+the encoders, and the scheduler, so nothing here names a family. The
+optimizer, the timestep draw and the noise/target convention per
+``prediction_type`` come from ``OfflineTrainer``; what is DPO's own is the
+winner-then-loser batch, the twin policy/reference forwards and the pairwise
+loss.
 
 For Wan video models, image-only datasets (Pick-a-Pic) are handled by the
 caller's ``encode_pixels`` replicating each image along the temporal dim
@@ -22,98 +21,13 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 
-from vrl.models.precision import (
-    apply_float32_precision,
-    model_autocast,
-)
+from vrl.models.precision import model_autocast
 from vrl.trainers.data.preferences import PreferenceBatch
-from vrl.utils.validation import require_int
+from vrl.trainers.offline.common import OfflineTrainer
+from vrl.trainers.offline.config import OfflineTrainerConfig
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPO
-    from vrl.config.schema import RootConfig
-
-
-@dataclass(slots=True)
-class OfflineDPOTrainerConfig:
-    """Configuration for the offline DPO training loop."""
-
-    # --- optimizer ---
-    # The caller resolves lr scaling (e.g. by effective batch size) before
-    # constructing this config; the trainer applies ``lr`` as-is.
-    lr: float = 1e-8
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_weight_decay: float = 1e-2
-    adam_epsilon: float = 1e-8
-    use_adafactor: bool = False
-    max_grad_norm: float = 1.0
-    gradient_accumulation_steps: int = 1
-
-    # --- noise / schedule ---
-    prediction_type: str = "flow_matching"  # "epsilon" | "v_prediction" | "flow_matching"
-
-    def __post_init__(self) -> None:
-        require_int(
-            self.gradient_accumulation_steps,
-            path="gradient_accumulation_steps",
-            minimum=1,
-        )
-
-    @classmethod
-    def from_root(cls, root: RootConfig) -> OfflineDPOTrainerConfig:
-        """Project the public actor section into the offline trainer config."""
-        from vrl.trainers.core.types import OptimConfig
-
-        actor = root.actor
-
-        def required(name: str) -> Any:
-            value = None if actor is None else getattr(actor, name)
-            if value is None:
-                raise ValueError(f"config missing required field: actor.{name}")
-            return value
-
-        train_batch_size = required("train_batch_size")
-        gradient_accumulation_steps = required("gradient_accumulation_steps")
-        optim: OptimConfig = required("optim")
-        if optim.optim_8bit:
-            raise ValueError(
-                "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
-                "use AdamW/Adafactor without 8-bit optimizer state",
-            )
-        use_adafactor = required("use_adafactor")
-        if use_adafactor:
-            # An AdamW-only knob moved off its default would be silently ignored
-            # under Adafactor; refuse rather than train with a no-op setting.
-            defaults = OptimConfig(lr=optim.lr)
-            adam_only_keys = sorted(
-                key
-                for key in ("adam_beta1", "adam_beta2", "eps")
-                if getattr(optim, key) != getattr(defaults, key)
-            )
-            if adam_only_keys:
-                paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
-                raise ValueError(
-                    f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
-                )
-
-        scale_lr = required("scale_lr")
-        effective_batch_size = train_batch_size * gradient_accumulation_steps
-        lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
-        max_grad_norm = actor.max_norm if actor is not None else None
-        if max_grad_norm is None:
-            max_grad_norm = cls().max_grad_norm
-        return cls(
-            lr=lr,
-            adam_beta1=float(optim.adam_beta1),
-            adam_beta2=float(optim.adam_beta2),
-            adam_weight_decay=float(optim.weight_decay),
-            adam_epsilon=float(optim.eps),
-            max_grad_norm=float(max_grad_norm),
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            prediction_type=required("prediction_type"),
-            use_adafactor=use_adafactor,
-        )
 
 
 @dataclass(slots=True)
@@ -147,11 +61,8 @@ ForwardFn = Callable[..., torch.Tensor]
 # ---------------------------------------------------------------------------
 
 
-class OfflineDPOTrainer:
+class OfflineDPOTrainer(OfflineTrainer):
     """Offline DPO trainer over preference pairs.
-
-    The trainer is **synchronous** — DPO has no rollout collection so we
-    avoid the OnlineTrainer's async machinery.
 
     Caller responsibilities:
       * Build the policy ``model`` (typically a LoRA-wrapped backbone).
@@ -179,111 +90,20 @@ class OfflineDPOTrainer:
         noise_scheduler: Any,
         encode_pixels: Callable[[torch.Tensor], torch.Tensor],
         encode_text: Callable[[list[str]], torch.Tensor],
-        config: OfflineDPOTrainerConfig | None = None,
+        config: OfflineTrainerConfig | None = None,
         device: torch.device | str = "cuda",
     ) -> None:
-        self.model = model
+        super().__init__(model, noise_scheduler, config=config, device=device)
         self.algorithm = algorithm
         self.ref_model = ref_model
         self.forward_fn = forward_fn
-        self.noise_scheduler = noise_scheduler
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-        self.precision = model.precision
-        self.config = config or OfflineDPOTrainerConfig()
-        self.device = torch.device(device) if isinstance(device, str) else device
-        apply_float32_precision(self.precision.float32_precision)
-        self.global_step = 0
-        self._gradient_accumulation_micro_step = 0
 
         if self.ref_model is not None:
             self.ref_model.eval()
             for p in self.ref_model.parameters():
                 p.requires_grad_(False)
-
-        trainable = [p for p in model.parameters() if p.requires_grad]
-        if not trainable:
-            raise RuntimeError("model has no trainable parameters — wire up LoRA / unfreeze first")
-        cfg = self.config
-        if cfg.use_adafactor:
-            try:
-                from transformers.optimization import Adafactor
-            except ImportError as exc:
-                raise ImportError(
-                    "Install transformers for Adafactor: pip install transformers"
-                ) from exc
-            self._optimizer = Adafactor(
-                trainable,
-                lr=cfg.lr,
-                scale_parameter=False,
-                relative_step=False,
-                warmup_init=False,
-                weight_decay=cfg.adam_weight_decay,
-            )
-        else:
-            self._optimizer = torch.optim.AdamW(
-                trainable,
-                lr=cfg.lr,
-                betas=(cfg.adam_beta1, cfg.adam_beta2),
-                weight_decay=cfg.adam_weight_decay,
-                eps=cfg.adam_epsilon,
-            )
-
-    # ------------------------------------------------------------------
-    # Noise injection — branch on prediction_type
-    # ------------------------------------------------------------------
-
-    def _sample_timestep_indices(self, bsz: int) -> torch.Tensor:
-        # Resolve the timestep range explicitly. Silently using
-        # ``num_train_timesteps`` when ``scheduler.timesteps`` is empty
-        # would mask the common bug of forgetting to call
-        # ``scheduler.set_timesteps(...)`` before training, which can
-        # silently change the sampling distribution.
-        ts = getattr(self.noise_scheduler, "timesteps", None)
-        if ts is None or len(ts) == 0:
-            raise RuntimeError(
-                "noise_scheduler.timesteps is empty/missing. "
-                "Call scheduler.set_timesteps(num_inference_steps) "
-                "before training."
-            )
-        lo, hi = 0, len(ts)
-        return torch.randint(lo, hi, (bsz,), device=self.device)
-
-    def _inject_noise(
-        self,
-        latents: torch.Tensor,
-        noise: torch.Tensor,
-        timesteps: torch.Tensor,
-        *,
-        timestep_indices: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Returns (noisy_latents, target).
-
-        For epsilon prediction:    target = noise
-        For flow-matching:         target = noise - latents (velocity)
-        """
-        pt = self.config.prediction_type
-        if pt == "epsilon":
-            noisy = self.noise_scheduler.add_noise(latents, noise, timesteps)
-            return noisy, noise
-        if pt == "v_prediction":
-            noisy = self.noise_scheduler.add_noise(latents, noise, timesteps)
-            target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
-            return noisy, target
-        if pt == "flow_matching":
-            # Flow-matching schedulers expose ``scale_noise(sample, timestep, noise)``.
-            # Forward process: x_t = (1 - sigma) * x_0 + sigma * noise.
-            if hasattr(self.noise_scheduler, "scale_noise"):
-                noisy = self.noise_scheduler.scale_noise(latents, timesteps, noise)
-            else:
-                # The sampled table index also identifies its sigma exactly.
-                sigmas = self.noise_scheduler.sigmas.to(latents.device)
-                view = (-1,) + (1,) * (latents.ndim - 1)
-                sigma = sigmas[timestep_indices].view(*view)
-                noisy = (1.0 - sigma) * latents + sigma * noise
-            target = noise - latents
-            return noisy, target
-        raise ValueError(f"unknown prediction_type: {pt}")
 
     # ------------------------------------------------------------------
     # One training step
@@ -291,7 +111,6 @@ class OfflineDPOTrainer:
 
     def step(self, batch: PreferenceBatch) -> DPOStepMetrics:
         """Train on one preference microbatch; update at the accumulation boundary."""
-        cfg = self.config
         self.model.train()
 
         bsz_pair = batch.pixel_values.shape[0]
@@ -363,18 +182,7 @@ class OfflineDPOTrainer:
             loss = loss + sft_weight * sft_loss_val
 
         # 6. Backward + step (with optional accumulation)
-        loss_scaled = loss / cfg.gradient_accumulation_steps
-        loss_scaled.backward()
-
-        grad_norm = 0.0
-        if self._mark_gradient_accumulation_step():
-            if cfg.max_grad_norm > 0:
-                gn = nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
-                grad_norm = float(gn)
-            self._optimizer.step()
-            self._optimizer.zero_grad(set_to_none=True)
-
-        self.global_step += 1
+        grad_norm = self._optimizer_update(loss)
 
         return DPOStepMetrics(
             loss=float(loss.detach()),
@@ -419,34 +227,5 @@ class OfflineDPOTrainer:
             "cannot compute reference prediction"
         )
 
-    def _mark_gradient_accumulation_step(self) -> bool:
-        accumulation_steps = self.config.gradient_accumulation_steps
-        self._gradient_accumulation_micro_step += 1
-        if self._gradient_accumulation_micro_step < accumulation_steps:
-            return False
-        self._gradient_accumulation_micro_step = 0
-        return True
 
-    def state_dict(self) -> dict[str, Any]:
-        """Return resumable trainer state."""
-
-        return {
-            "global_step": self.global_step,
-            "optimizer": self._optimizer.state_dict(),
-        }
-
-    def load_state_dict(self, state: dict[str, Any]) -> None:
-        """Restore resumable trainer state."""
-
-        if not isinstance(state, dict):
-            raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
-        global_step = require_int(
-            state.get("global_step", 0), path="trainer_state.global_step", minimum=0
-        )
-        if "optimizer" not in state:
-            raise ValueError("checkpoint missing optimizer state")
-        self._optimizer.load_state_dict(state["optimizer"])
-        # Neither accumulated gradients nor a partial accumulation window resume.
-        self._optimizer.zero_grad(set_to_none=True)
-        self.global_step = global_step
-        self._gradient_accumulation_micro_step = 0
+__all__ = ["DPOStepMetrics", "ForwardFn", "OfflineDPOTrainer"]

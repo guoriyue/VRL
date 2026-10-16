@@ -16,7 +16,7 @@ import torch
 from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.trainers.data.preferences import PreferenceBatch
-from vrl.trainers.offline import OfflineDPOTrainer, OfflineDPOTrainerConfig
+from vrl.trainers.offline import OfflineDPOTrainer, OfflineTrainerConfig
 
 PRECISION = RolePrecision(
     dtype="fp32",
@@ -57,7 +57,7 @@ def _make_trainer(
         timesteps=scheduler_timesteps,
         config=SimpleNamespace(num_train_timesteps=1000),
     )
-    cfg = OfflineDPOTrainerConfig(
+    cfg = OfflineTrainerConfig(
         prediction_type="epsilon",
     )
     model = torch.nn.Linear(4, 4)
@@ -136,7 +136,7 @@ def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
 def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
     model = torch.nn.Linear(1, 1)
     model.precision = PRECISION
-    cfg = OfflineDPOTrainerConfig(
+    cfg = OfflineTrainerConfig(
         lr=0.02,
         adam_beta1=0.6,
         adam_beta2=0.7,
@@ -173,10 +173,10 @@ def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
 
 
 def test_offline_dpo_applies_float32_policy(monkeypatch) -> None:
-    import vrl.trainers.offline.dpo as dpo_module
+    import vrl.trainers.offline.common as common_module
 
     applied: list[str] = []
-    monkeypatch.setattr(dpo_module, "apply_float32_precision", applied.append)
+    monkeypatch.setattr(common_module, "apply_float32_precision", applied.append)
 
     # Not the "ieee" default: the call must carry the model's role precision.
     _make_trainer(torch.arange(20), float32_precision="tf32")
@@ -263,7 +263,7 @@ def test_step_metrics_report_the_optimized_loss(
         clip_calls.append(float(limit))
         return torch.tensor(2.5)
 
-    monkeypatch.setattr(dpo_module.nn.utils, "clip_grad_norm_", fake_clip_grad_norm)
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", fake_clip_grad_norm)
     model.precision = PRECISION
     trainer = OfflineDPOTrainer(
         model=model,
@@ -273,7 +273,7 @@ def test_step_metrics_report_the_optimized_loss(
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],
         encode_text=lambda captions: torch.zeros(len(captions), 1),
-        config=OfflineDPOTrainerConfig(
+        config=OfflineTrainerConfig(
             prediction_type="epsilon",
             lr=0.0,
             max_grad_norm=max_grad_norm,
@@ -327,7 +327,7 @@ def test_step_preserves_caption_pairing(invalid) -> None:
         encode_text=lambda captions: torch.tensor(
             [[10.0], [20.0]] if invalid != "text" else [[10.0]] * 4,
         ),
-        config=OfflineDPOTrainerConfig(prediction_type="epsilon", lr=0.0),
+        config=OfflineTrainerConfig(prediction_type="epsilon", lr=0.0),
         device="cpu",
     )
     batch = PreferenceBatch(
@@ -398,7 +398,7 @@ def test_step_uses_schedule_values_and_exact_sigma_indices(
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],
         encode_text=lambda captions: torch.zeros(len(captions), 1),
-        config=OfflineDPOTrainerConfig(
+        config=OfflineTrainerConfig(
             prediction_type=prediction_type,
             lr=0.0,
         ),
@@ -461,7 +461,7 @@ def test_real_scheduler_noise_uses_sampled_table_position(kind):
 @pytest.mark.parametrize("steps", [0, True])
 def test_offline_config_rejects_invalid_accumulation_steps(steps):
     with pytest.raises(ValueError, match="gradient_accumulation_steps"):
-        OfflineDPOTrainerConfig(gradient_accumulation_steps=steps)
+        OfflineTrainerConfig(gradient_accumulation_steps=steps)
 
 
 def test_resume_clears_uncheckpointed_accumulated_gradients():

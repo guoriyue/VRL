@@ -1,0 +1,4 @@
+# Supervised flow matching on cached clean latents (offline, no rollout).
+algorithm:
+  kind: diffusion_sft
+  timestep_index_range: null   # [low, high) of the scheduler table; null = the whole table

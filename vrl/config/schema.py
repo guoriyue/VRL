@@ -155,6 +155,7 @@ class AlgorithmConfig(ConfigBase):
         "grpo_guard",
         "diffusion_dpo",
         "diffusion_nft",
+        "diffusion_sft",
         "v_grpo",
     ]
     # The runtime dataclass selected by ``kind`` (e.g. GRPOConfig), built from
@@ -241,6 +242,12 @@ class DataConfig(ConfigBase):
     # (algorithm.sft_weight > 0): {target image/video -> VAE latents} written by
     # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
+    # Cached layered scenes (loader ``layered_scenes``): ``manifest`` names the
+    # dataset roots ({root: scene count}), ``token_weights`` the weight map and
+    # ``spare_layers_max`` how many transparent spare layers a draw may append.
+    # reader: vrl/scripts/families/qwen_image_layered/train_sft.py
+    token_weights: Literal["weighted", "control"] | None = None
+    spare_layers_max: StrictInt | None = None
     max_train_samples: StrictInt | None = None
     task_type: str | None = None
     artifact_data_root: str | None = None
@@ -302,6 +309,15 @@ class DataConfig(ConfigBase):
                 if getattr(preprocessing, field) is None:
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
+
+        if self.loader == "layered_scenes":
+            if not self.manifest:
+                raise ValueError("config missing required field: data.manifest")
+            for field in ("split", "token_weights", "spare_layers_max"):
+                if getattr(self, field) is None:
+                    raise ValueError(f"config missing required field: data.{field}")
+            if self.spare_layers_max < 0:
+                raise ValueError("data.spare_layers_max must be >= 0")
 
         if self.loader == "pickapic_preference":
             for field in ("dataset_name", "split", "cache_dir"):
@@ -478,10 +494,14 @@ class ActorSection(ConfigBase):
             "use off | full | full_cpu | selective (or a bool: true=full, false=off)",
         )
 
-    # Offline DPO counts actual training batches per optimizer update.
+    # The offline trainers count actual training batches per optimizer update.
     gradient_accumulation_steps: StrictInt | None = None
-    # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
+    # offline entrypoints (vrl/scripts/families/*/train_dpo.py, train_sft.py)
     prediction_type: str | None = None
+    # Keep each frozen transformer block on the host and materialize it on the
+    # device per call (``vrl.models.host_streaming``): a bf16 ~20B policy trains
+    # on one 32 GB card. reader: the single-process offline SFT recipe.
+    stream_frozen_blocks: StrictBool | None = None
     scale_lr: StrictBool | None = None
     train_batch_size: StrictInt | None = None
     use_adafactor: StrictBool | None = None

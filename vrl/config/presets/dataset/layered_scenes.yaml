@@ -1,0 +1,14 @@
+# Cached layered scenes (vrl/trainers/data/layered_scenes.py), written by
+# vrl/scripts/denoise/encode_layered_scenes.py. ``manifest`` is a dataset root
+# or {root: scene count}; every root holds <split>/<scene>/cache.pt and
+# empty_frame.pt. Used by the Qwen-Image-Layered SFT recipe.
+data:
+  loader: layered_scenes
+  manifest: data/layered_scenes/dataset_v3
+  split: train
+  token_weights: weighted       # weighted | control (all ones)
+  spare_layers_max: 2           # append 0..N transparent spare layers per draw
+  sampler:
+    shuffle: true
+    drop_last: false
+    dataloader_num_workers: 0

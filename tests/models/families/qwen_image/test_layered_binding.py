@@ -247,3 +247,47 @@ def test_prepare_sampling_packs_layers_plus_one_frames_and_records_decode_geomet
     assert state.layers == _LAYERS and state.timesteps.shape == (4,)
     assert (model._decode_height, model._decode_width, model._decode_layers) == (32, 32, _LAYERS)
     assert not state.do_cfg
+
+
+def test_predict_velocity_is_the_conditional_forward_step_at_one_timestep() -> None:
+    transformer = build_tiny_transformer("qwen_image", use_additional_t_cond=True)
+    scheduler = FlowMatchEulerDiscreteScheduler()
+    scheduler.set_timesteps(3)
+    model = _model(transformer)
+    state = _state(scheduler, cfg=False)
+
+    expected = model.forward_step(state, 1)["noise_pred"]
+    shared = model.predict_velocity(
+        state.latents,
+        scheduler.timesteps[1],
+        condition_latents=state.condition_latents,
+        prompt_embeds=state.prompt_embeds,
+        prompt_embeds_mask=state.prompt_embeds_mask,
+        layers=_LAYERS,
+        height=32,
+        width=32,
+    )
+    per_row = model.predict_velocity(
+        state.latents,
+        scheduler.timesteps[1].expand(2),
+        condition_latents=state.condition_latents,
+        prompt_embeds=state.prompt_embeds,
+        prompt_embeds_mask=state.prompt_embeds_mask,
+        layers=_LAYERS,
+        height=32,
+        width=32,
+    )
+
+    torch.testing.assert_close(shared, expected)
+    torch.testing.assert_close(per_row, expected)
+    with pytest.raises(ValueError, match="timestep batch dim"):
+        model.predict_velocity(
+            state.latents,
+            scheduler.timesteps[:3],
+            condition_latents=state.condition_latents,
+            prompt_embeds=state.prompt_embeds,
+            prompt_embeds_mask=state.prompt_embeds_mask,
+            layers=_LAYERS,
+            height=32,
+            width=32,
+        )

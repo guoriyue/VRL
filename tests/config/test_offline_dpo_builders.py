@@ -1,6 +1,6 @@
-"""Offline DPO trainer config bridges only the knobs the trainer consumes.
+"""The offline trainer config bridges only the knobs the trainers consume.
 
-These are theorems of ``vrl.trainers.offline.OfflineDPOTrainerConfig.from_root``
+These are theorems of ``vrl.trainers.offline.OfflineTrainerConfig.from_root``
 over the shipped ``experiment/wan_2_1/offline_dpo_pickapic`` recipe.
 """
 
@@ -10,7 +10,7 @@ import pytest
 
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.trainers.offline import OfflineDPOTrainerConfig
+from vrl.trainers.offline import OfflineTrainerConfig
 
 
 def _resolved_trainer_config(overrides: list[str] | None = None):
@@ -18,7 +18,7 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
         "experiment/wan_2_1/offline_dpo_pickapic",
         overrides=overrides,
     )
-    return OfflineDPOTrainerConfig.from_root(parse_config(cfg))
+    return OfflineTrainerConfig.from_root(parse_config(cfg))
 
 
 def test_offline_dpo_bridges_every_supported_adam_knob() -> None:

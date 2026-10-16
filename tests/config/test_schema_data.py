@@ -156,3 +156,38 @@ def test_unknown_sampler_type_raises() -> None:
             preprocessing={},
             sampler={"type": "round_robin"},
         )
+
+
+# ── Cached layered scenes ─────────────────────────────────────────────────────
+
+
+def _layered_scenes(**overrides: object) -> DataConfig:
+    values: dict[str, object] = {
+        "loader": "layered_scenes",
+        "manifest": {"/data/v3": 1000, "/data/v1": None},
+        "split": "train",
+        "token_weights": "weighted",
+        "spare_layers_max": 2,
+    }
+    values.update(overrides)
+    return DataConfig(**values)
+
+
+def test_layered_scenes_takes_roots_with_optional_scene_counts() -> None:
+    data = _layered_scenes()
+
+    assert data.loader == "layered_scenes"
+    assert data.token_weights == "weighted" and data.spare_layers_max == 2
+
+
+@pytest.mark.parametrize("field", ["split", "token_weights", "spare_layers_max"])
+def test_layered_scenes_requires_its_fields(field: str) -> None:
+    with pytest.raises(ValueError, match=rf"data\.{field}"):
+        _layered_scenes(**{field: None})
+
+
+def test_layered_scenes_rejects_a_negative_spare_budget_and_unknown_weights() -> None:
+    with pytest.raises(ValueError, match=r"spare_layers_max"):
+        _layered_scenes(spare_layers_max=-1)
+    with pytest.raises(ValueError, match=r"token_weights"):
+        _layered_scenes(token_weights="uniform")

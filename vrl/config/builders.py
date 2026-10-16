@@ -205,6 +205,8 @@ class BuiltConfigs:
     def from_cfg(cls, cfg: DictConfig) -> BuiltConfigs:
         """Bundle typed configs for downstream training scripts."""
 
+        from vrl.algorithms.base import OfflineAlgorithm
+        from vrl.config.algorithm import algorithm_class
         from vrl.trainers.online.config import TrainerConfig
 
         root, precision = require_training_config(cfg)
@@ -213,10 +215,10 @@ class BuiltConfigs:
         if root.algorithm is None:
             raise ValueError("config missing `algorithm` section")
         algorithm = root.algorithm.hyperparameters
-        is_offline_dpo = root.algorithm.kind == "diffusion_dpo"
-        trainer = None if is_offline_dpo else TrainerConfig.from_root(root)
+        is_offline = issubclass(algorithm_class(root.algorithm.kind), OfflineAlgorithm)
+        trainer = None if is_offline else TrainerConfig.from_root(root)
         reward = RewardRuntimeConfig.from_section(root.reward) if root.reward is not None else None
-        if not is_offline_dpo:
+        if not is_offline:
             if reward is None:
                 raise ValueError("online recipe requires a reward section")
             # Copy the facts an objective reads from other sections into its

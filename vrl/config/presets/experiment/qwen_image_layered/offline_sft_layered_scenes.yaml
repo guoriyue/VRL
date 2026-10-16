@@ -1,0 +1,68 @@
+# Qwen-Image-Layered + supervised flow matching on rendered layered scenes.
+#
+# The supervised stage of the layering work (docs/research/layering_scene_family):
+# a LoRA from the official Stable-Layers adapter learns one layer per object with
+# occluded parts completed where the scene makes them inferable. One GPU; a
+# 48 GB card holds the bf16 transformer, a 32 GB card streams its frozen blocks
+# from the host (actor.stream_frozen_blocks=true, ~4x slower).
+#
+# Inputs, set at launch:
+#   data.manifest     cached scene root(s), from encode_layered_scenes
+#   model.lora.path   PEFT directory of the starting adapter (the official
+#                     Stable-Layers weights; docs/research/layering_scene_family)
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/qwen_image_layered/offline_sft_layered_scenes \
+#     data.manifest=/data/layering/dataset_v3 model.lora.path=/data/layering/stable_layers_peft \
+#     trainer.output_dir=outputs/layered_sft/weighted trainer.seed=20261011
+defaults:
+  - /recipe/offline/diffusion_sft
+  - /model/qwen_image_layered/base
+  - /dataset/layered_scenes
+  - _self_
+
+precision:
+  training:
+    dtype: bf16
+    # The LoRA leaves are fp32 and PEFT casts per layer; no outer autocast, so
+    # the forward matches the layered release's training numerics.
+    outer_autocast: false
+
+# The schedule the layered release samples with: 50 linear sigmas shifted by
+# the 640x640 token count. Training draws its noise level from the first 48.
+sampling:
+  width: 640
+  height: 640
+  num_steps: 50
+  guidance_scale: 1.0
+  layers: 4
+
+algorithm:
+  timestep_index_range: [0, 48]
+
+trainer:
+  entrypoint: vrl.scripts.families.qwen_image_layered.train_sft:train_qwen_image_layered_sft
+  output_dir: outputs/layered_sft
+  seed: 20261011
+  max_train_steps: 2000
+  checkpointing_steps: 500
+  log_interval: 25
+
+actor:
+  optim:
+    lr: 1.0e-4
+    weight_decay: 0.0
+  scale_lr: false
+  gradient_accumulation_steps: 1
+  train_batch_size: 1              # scenes differ in layer count, so one scene per step
+  use_adafactor: false
+  prediction_type: flow_matching
+  gradient_checkpointing: full
+  stream_frozen_blocks: false
+
+model:
+  use_lora: true
+  lora:
+    path: data/layered_scenes/stable_layers_peft
+    parameter_dtype: float32

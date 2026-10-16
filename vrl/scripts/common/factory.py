@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.algorithms.base import OnlineAlgorithm
+from vrl.algorithms.base import OfflineAlgorithm, OnlineAlgorithm
+from vrl.config.algorithm import algorithm_class
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
@@ -40,9 +41,9 @@ class AlgorithmEvaluatorPair:
         if algorithm_section is None:
             raise ValueError("online recipe requires an algorithm section")
         kind = algorithm_section.kind
-        if kind == "diffusion_dpo":
+        if issubclass(algorithm_class(kind), OfflineAlgorithm):
             raise ValueError(
-                "diffusion_dpo is an offline recipe and is not supported by common online recipe",
+                f"{kind} is an offline recipe and is not supported by common online recipe",
             )
         reward = built.reward
         if reward is None:
@@ -62,8 +63,6 @@ class AlgorithmEvaluatorPair:
             # trainer's random timestep selection + multi-reward); flow_dppo /
             # grpo_guard are trust-region variants whose loss reads the rollout
             # proposal mean (config rules require it to be stored).
-            from vrl.config.algorithm import algorithm_class
-
             is_chunk_autoregressive = family_entry.generation_regime == "chunk_autoregressive"
             denoise = (
                 RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()

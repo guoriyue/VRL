@@ -124,6 +124,48 @@ class QwenImageLayeredModel(QwenImageModel):
         # is per token, so slicing after it equals the pipeline's slice-then-combine.
         return {"noise_pred": noise_pred[:, :target_tokens]}
 
+    def predict_velocity(
+        self,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        *,
+        condition_latents: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        prompt_embeds_mask: torch.Tensor | None,
+        layers: int,
+        height: int,
+        width: int,
+        vae_scale_factor: int = 8,
+    ) -> torch.Tensor:
+        """One conditional forward at ``timestep``: the supervised training prediction.
+
+        Builds the state ``forward_step`` runs, so training, rollout and replay
+        share one transformer call. ``latents`` are the packed ``layers + 1``
+        frames; ``timestep`` is a scalar or one value per batch row on the
+        scheduler's 0-1000 scale. ``vae_scale_factor`` is the video VAE's
+        spatial factor behind ``packed_token_count``.
+        """
+        bsz = latents.shape[0]
+        timesteps = expand_batch_timestep(timestep.reshape(-1) if timestep.ndim else timestep, bsz)
+        state = QwenImageLayeredSamplingState(
+            latents=latents,
+            timesteps=timesteps.unsqueeze(0),
+            scheduler=None,
+            prompt_embeds=prompt_embeds,
+            prompt_embeds_mask=prompt_embeds_mask,
+            negative_prompt_embeds=None,
+            negative_prompt_embeds_mask=None,
+            guidance_scale=1.0,
+            do_cfg=False,
+            guidance_embeds=self._guidance_embeds,
+            height=int(height),
+            width=int(width),
+            vae_scale_factor=int(vae_scale_factor),
+            condition_latents=condition_latents,
+            layers=int(layers),
+        )
+        return self.forward_step(state, 0)["noise_pred"]
+
     def restore_eval_state(
         self,
         replay_tensors: dict[str, Any],
