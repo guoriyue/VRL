@@ -294,28 +294,3 @@ def test_time_intervals_preserve_integer_nanoseconds():
     assert first.duration == 5
     assert first.overlap(second) == 3
     assert first.intervals == ((start, start + 5),)
-
-
-def test_phase_timer_accumulates_repeated_phases_and_records_each_event() -> None:
-    from vrl.utils.profiling import PhaseTimer
-
-    timer = PhaseTimer(enabled=True)
-    for _ in range(2):
-        with timer.time("rollout"):
-            pass
-    with timer.time("train"):
-        pass
-
-    assert set(timer.times) == {"rollout", "train"}
-    assert [name for name, _, _ in timer.events] == ["rollout", "rollout", "train"]
-    assert all(start <= end for _, start, end in timer.events)
-
-
-def test_disabled_phase_timer_records_nothing() -> None:
-    from vrl.utils.profiling import PhaseTimer
-
-    timer = PhaseTimer()
-    with timer.time("rollout"):
-        pass
-
-    assert not timer.times and not timer.events

@@ -91,3 +91,19 @@ def test_add_phases_accumulates_mapping() -> None:
     s.add_phases({"a": 1.0, "b": 2.0})
     assert s.phase_seconds == {"a": 1.0, "b": 2.0}
     assert RolloutStats().phase_seconds == {}
+
+
+def test_profiled_phase_records_its_wall_clock_interval_and_merge_carries_it() -> None:
+    s = RolloutStats()
+    with s.phase("evaluate"):
+        pass
+    with s.phase("backward", profile=True):
+        pass
+    merged = RolloutStats()
+    merged.merge(s)
+
+    assert set(s.phase_seconds) == {"evaluate", "backward"}
+    assert [name for name, _, _ in s.phase_events] == ["backward"]
+    assert all(start <= end for _, start, end in s.phase_events)
+    assert merged.phase_events == s.phase_events
+    assert merged.take_phase_events() == s.phase_events and merged.phase_events == []

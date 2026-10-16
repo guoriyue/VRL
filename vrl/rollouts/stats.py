@@ -46,6 +46,9 @@ class RolloutStats:
     reward_queue_wait_ms: float | None = None
     reward_inference_ms: float | None = None
     reward_extra_ms: dict[str, float] = field(default_factory=dict)
+    # ``(name, wall start, wall end)`` of every profiled phase, for the
+    # trainer's phase_events.jsonl; taken and cleared when written.
+    phase_events: list[tuple[str, float, float]] = field(default_factory=list, repr=False)
     _reward_latency_samples_ms: list[float] = field(
         default_factory=list,
         repr=False,
@@ -63,18 +66,33 @@ class RolloutStats:
             self.add_phase(name, seconds)
 
     @contextlib.contextmanager
-    def phase(self, name: str) -> Iterator[None]:
+    def phase(self, name: str, *, profile: bool = False) -> Iterator[None]:
         """Time the enclosed block into phase ``name``.
 
         Recorded in a ``finally`` so a failing phase still reports the wall
-        clock it burned before raising.
+        clock it burned before raising. ``profile`` is the trainer's GPU-phase
+        mode: CUDA is synchronized on both ends so asynchronous kernels are
+        counted, and the phase's wall-clock interval lands in ``phase_events``.
         """
 
+        if profile:
+            _synchronize_cuda()
         start = time.perf_counter()
+        wall_start = time.time()
         try:
             yield
         finally:
+            if profile:
+                _synchronize_cuda()
             self.add_phase(name, time.perf_counter() - start)
+            if profile:
+                self.phase_events.append((name, wall_start, time.time()))
+
+    def take_phase_events(self) -> list[tuple[str, float, float]]:
+        """Hand over the recorded phase intervals and forget them."""
+
+        events, self.phase_events = self.phase_events, []
+        return events
 
     def add_counter(self, name: str, value: float = 1.0) -> None:
         """Accumulate a unitless count without treating it as phase time."""
@@ -108,6 +126,7 @@ class RolloutStats:
         """Fold another accumulator into this one without losing concurrent calls."""
 
         self.add_phases(other.phase_seconds)
+        self.phase_events.extend(other.phase_events)
         for name, value in other.counters.items():
             self.add_counter(name, value)
         self.observe_gauges(other.gauges)
@@ -175,6 +194,15 @@ class RolloutStats:
         for name, milliseconds in self.reward_extra_ms.items():
             out[f"reward.{name[:-3]}_s"] = float(milliseconds) / 1000.0
         return out
+
+
+def _synchronize_cuda() -> None:
+    """Wait for the card's queued kernels, when there is a card."""
+
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 
 def _sum_optional(left: float | None, right: float | None) -> float | None:
