@@ -530,12 +530,11 @@ def test_prepare_training_batches_folds_reward_timing_into_stats(monkeypatch, tm
     assert reward.batch_sizes == [2]
     assert len(batches) == 1
     assert batches[0].rewards.tolist() == [1.0, 2.0]
-    assert stats.as_metrics_dict()["reward.latency_s"] == 0.012
-    assert stats.reward_queue_wait_ms == 3.0
-    assert stats.reward_inference_ms == 9.0
-    assert stats.reward_extra_ms == {"artifact_validation_ms": 2.0}
-    assert stats.as_metrics_dict()["reward.queue_wait_s"] == 0.003
-    assert stats.as_metrics_dict()["reward.artifact_validation_s"] == 0.002
+    metrics = stats.as_metrics_dict()
+    assert metrics["reward.latency_s"] == 0.012
+    assert metrics["reward.queue_wait_s"] == 0.003
+    assert metrics["reward.inference_s"] == 0.009
+    assert metrics["reward.artifact_validation_s"] == 0.002
 
 
 def test_reward_output_is_independent_of_trajectory_storage_dtype(monkeypatch, tmp_path) -> None:

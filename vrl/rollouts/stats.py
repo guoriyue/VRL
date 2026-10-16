@@ -34,25 +34,16 @@ from dataclasses import dataclass, field
 class RolloutStats:
     """Typed per-request stats that travel with a rollout item/iteration.
 
-    ``phase_seconds`` accumulates namespaced wall-clock phase timings.
-    Reward-inference timings are folded in as typed millisecond fields so the
-    already-typed ``RewardInferenceResult`` numbers stop being a separate,
-    disconnected channel.
+    ``phase_seconds`` accumulates namespaced wall-clock phase timings; a
+    reward call's millisecond timings enter it as ``reward.<name>_s`` phases.
     """
 
     phase_seconds: dict[str, float] = field(default_factory=dict)
     counters: dict[str, float] = field(default_factory=dict)
     gauges: dict[str, float] = field(default_factory=dict)
-    reward_queue_wait_ms: float | None = None
-    reward_inference_ms: float | None = None
-    reward_extra_ms: dict[str, float] = field(default_factory=dict)
     # ``(name, wall start, wall end)`` of every profiled phase, for the
     # trainer's phase_events.jsonl; taken and cleared when written.
     phase_events: list[tuple[str, float, float]] = field(default_factory=list, repr=False)
-    _reward_latency_samples_ms: list[float] = field(
-        default_factory=list,
-        repr=False,
-    )
 
     def add_phase(self, name: str, seconds: float) -> None:
         """Accumulate ``seconds`` under phase ``name`` (sums on repeat)."""
@@ -130,70 +121,26 @@ class RolloutStats:
         for name, value in other.counters.items():
             self.add_counter(name, value)
         self.observe_gauges(other.gauges)
-        self.reward_queue_wait_ms = _sum_optional(
-            self.reward_queue_wait_ms,
-            other.reward_queue_wait_ms,
-        )
-        self.reward_inference_ms = _sum_optional(
-            self.reward_inference_ms,
-            other.reward_inference_ms,
-        )
-        self._reward_latency_samples_ms.extend(other._reward_latency_samples_ms)
-        for name, milliseconds in other.reward_extra_ms.items():
-            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + float(
-                milliseconds,
-            )
 
-    def fold_reward_timing(
-        self,
-        *,
-        latency_ms: float | None = None,
-        queue_wait_ms: float | None = None,
-        inference_ms: float | None = None,
-        extra_ms: Mapping[str, float] | None = None,
-    ) -> None:
-        """Accumulate one reward call's timings (primitives, no reward import).
+    def fold_reward_timing(self, timing_ms: Mapping[str, float]) -> None:
+        """Accumulate one reward call's ``*_ms`` timings as ``reward.<name>_s`` phases.
 
         ``RewardOutput`` already validated every value as finite and
-        non-negative, and the collector passes only non-standard ``*_ms``
-        names in ``extra_ms``.
+        non-negative; a key that does not end in ``_ms`` is not a timing and
+        is ignored.
         """
 
-        extra = dict(extra_ms or {})
-        if any(value is not None for value in (latency_ms, queue_wait_ms, inference_ms)) or extra:
-            self.add_counter("reward.call_count")
-        if latency_ms is not None:
-            self._reward_latency_samples_ms.append(float(latency_ms))
-        self.reward_queue_wait_ms = _sum_optional(self.reward_queue_wait_ms, queue_wait_ms)
-        self.reward_inference_ms = _sum_optional(self.reward_inference_ms, inference_ms)
-        for name, milliseconds in extra.items():
-            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + float(milliseconds)
+        timings = {name: value for name, value in timing_ms.items() if name.endswith("_ms")}
+        if not timings:
+            return
+        self.add_counter("reward.call_count")
+        for name, milliseconds in timings.items():
+            self.add_phase(f"reward.{name[:-3]}_s", float(milliseconds) / 1000.0)
 
     def as_metrics_dict(self) -> dict[str, float]:
-        """Flat metric view combining durations, counters and peak gauges.
+        """Flat metric view combining durations, counters and peak gauges."""
 
-        Reward millisecond fields surface as ``reward.<name>_s`` so existing
-        metric consumers see them alongside the wall-clock phases without
-        a second mechanism.
-        """
-
-        out = dict(self.phase_seconds)
-        out.update(self.counters)
-        out.update(self.gauges)
-        for key, ms in (
-            ("reward.queue_wait_s", self.reward_queue_wait_ms),
-            ("reward.inference_s", self.reward_inference_ms),
-        ):
-            if ms is not None:
-                out[key] = float(ms) / 1000.0
-        if self._reward_latency_samples_ms:
-            ordered = sorted(self._reward_latency_samples_ms)
-            out["reward.latency_s"] = sum(ordered) / 1000.0
-            out["reward.latency_p50_s"] = ordered[math.ceil(0.50 * len(ordered)) - 1] / 1000.0
-            out["reward.latency_p95_s"] = ordered[math.ceil(0.95 * len(ordered)) - 1] / 1000.0
-        for name, milliseconds in self.reward_extra_ms.items():
-            out[f"reward.{name[:-3]}_s"] = float(milliseconds) / 1000.0
-        return out
+        return {**self.phase_seconds, **self.counters, **self.gauges}
 
 
 def _synchronize_cuda() -> None:
@@ -203,12 +150,6 @@ def _synchronize_cuda() -> None:
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
-
-
-def _sum_optional(left: float | None, right: float | None) -> float | None:
-    if right is None:
-        return left
-    return float(right) if left is None else float(left) + float(right)
 
 
 __all__ = ["RolloutStats"]

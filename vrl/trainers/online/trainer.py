@@ -1499,10 +1499,11 @@ class OnlineTrainer:
 
         if not phase_times:
             return
+        # Trainer phases only: collection and reward-call timings overlap them.
         percentage_phases = {
             name: seconds
             for name, seconds in stats.phase_seconds.items()
-            if not name.startswith("collect.")
+            if not name.startswith(("collect.", "reward."))
         }
         total = sum(percentage_phases.values())
         if total <= 0:

@@ -457,11 +457,9 @@ class ContinuousRolloutProducer:
             "continuous.reward_service_s",
             stats.phase_seconds.get("collect.reward_wall", 0.0),
         )
-        if stats.reward_queue_wait_ms is not None:
-            stats.observe_gauge(
-                "continuous.reward_queue_wait_s",
-                float(stats.reward_queue_wait_ms) / 1000.0,
-            )
+        queue_wait = stats.phase_seconds.get("reward.queue_wait_s")
+        if queue_wait is not None:
+            stats.observe_gauge("continuous.reward_queue_wait_s", queue_wait)
         prompt_batch.results[slot] = ScoredRollout(
             batch=stored,
             completed_at=time.monotonic(),

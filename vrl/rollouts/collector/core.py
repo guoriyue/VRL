@@ -645,19 +645,7 @@ class RolloutCollector:
         for group in generated_groups:
             unscored = group.unscored
             stats.add_phases(unscored.phases)
-            reward_timing_ms = unscored.reward_timing_ms
-            if reward_timing_ms:
-                standard_keys = {"latency_ms", "queue_wait_ms", "inference_ms"}
-                stats.fold_reward_timing(
-                    latency_ms=reward_timing_ms.get("latency_ms"),
-                    queue_wait_ms=reward_timing_ms.get("queue_wait_ms"),
-                    inference_ms=reward_timing_ms.get("inference_ms"),
-                    extra_ms={
-                        name: value
-                        for name, value in reward_timing_ms.items()
-                        if name not in standard_keys and name.endswith("_ms")
-                    },
-                )
+            stats.fold_reward_timing(unscored.reward_timing_ms)
 
         all_batches: list[RolloutBatch] = []
         for batch, group in zip(batches, generated_groups, strict=True):
