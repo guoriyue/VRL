@@ -178,12 +178,12 @@ def test_spool_cleanup_on_failure(monkeypatch, tmp_path, stage):
             raise RuntimeError("injected collection failure")
         return await real_next_iteration(prompts, **kwargs)
 
-    def backward(*args, **kwargs):
+    def replay(*args, **kwargs):
         assert len(calls) == 2
         raise RuntimeError("injected replay failure")
 
     monkeypatch.setattr(trainer.rollout_schedule, "next_iteration", next_iteration)
-    monkeypatch.setattr(trainer, "backward_on_training_batch", backward)
+    monkeypatch.setattr(trainer, "_run_replay_pass", replay)
 
     with pytest.raises(RuntimeError, match="injected"):
         asyncio.run(_run_streaming_optimizer_update(trainer, ["a", "b"]))

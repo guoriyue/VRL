@@ -327,8 +327,17 @@ def _run_replay_loop_rank(
         probe.watch(trainer, "_backward", "backward")
         batch = asyncio.run(trainer.collect_training_batch(["a cat"]))
         sample_count = sum(int(b.rewards.shape[0]) for b in batch.batches)
-        trainer.begin_optimizer_update()
-        trainer.backward_on_training_batch(batch, total_groups=1)
+        agg = _ReplayMetrics()
+        trainer.model.train()
+        trainer._run_replay_pass(
+            batch.batches,
+            batch.advantages,
+            total_groups=1,
+            train_indices=trainer._train_replay_indices(batch.batches[0]),
+            agg=agg,
+            capture_initial_replay=True,
+            timer=batch.timer,
+        )
         backward_losses = [
             float(args[0].detach()) for event, args in probe.calls if event == "backward"
         ]
@@ -338,7 +347,7 @@ def _run_replay_loop_rank(
                 sample_count,
                 probe.events.count("evaluate"),
                 len(backward_losses),
-                len(trainer._update_agg_metrics.losses),
+                len(agg.losses),
                 sum(1 for value in backward_losses if value == 0.0),
             )
         )

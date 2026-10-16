@@ -9,7 +9,7 @@ import itertools
 import json
 import logging
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -104,11 +104,13 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
 class TrainingBatch:
     """The data half of one step: filtered rollouts + advantages + diagnostics.
 
-    ``collect_training_batch`` produces it and ``train_on_rollout_batch`` consumes
+    ``collect_training_batch`` produces it and ``train_on_collections`` consumes
     it; everything the train half reads — the filtered batches/advantages, the
     pre-filter reward/advantage diagnostics, and the shared timer/iteration whose
     timings both halves accumulate into — travels in here. The split is the seam
-    a future rank split would collect/train across.
+    a future rank split would collect/train across. ``sample_count`` is the
+    collected (pre-filter) sample count, the weight of this collection's
+    diagnostics in an update that spans several.
     """
 
     iteration: Any
@@ -117,12 +119,63 @@ class TrainingBatch:
     advantages: list[torch.Tensor]
     group_size: float
     trained_prompt_num: int
+    sample_count: int
     adv_zero_rate: float
     adv_saturation: float
     pre_filter_reward_mean: float
     pre_filter_reward_std: float
     pre_filter_adv_mean: float
     reward_components: dict[str, list[float]]
+
+
+async def _one_collection(batch: TrainingBatch) -> AsyncIterator[TrainingBatch]:
+    """A full batch as the single collection of its update."""
+
+    yield batch
+
+
+@dataclass(slots=True)
+class _UpdateDiagnostics:
+    """Sample-weighted pre-filter diagnostics over an update's collections.
+
+    One collection reduces to its own numbers; several (streaming) reduce to
+    the sample-weighted mean, so the metric row describes every collected
+    sample rather than the last collection.
+    """
+
+    weight: float = 0.0
+    reward_mean: float = 0.0
+    reward_std: float = 0.0
+    advantage_mean: float = 0.0
+    adv_zero_rate: float = 0.0
+    adv_saturation: float = 0.0
+    group_size: float = 0.0
+    trained_prompt_num: int = 0
+    reward_components: dict[str, list[float]] = field(default_factory=dict)
+
+    def add(self, batch: TrainingBatch) -> None:
+        weight = float(max(1, batch.sample_count))
+        self.weight += weight
+        self.reward_mean += batch.pre_filter_reward_mean * weight
+        self.reward_std += batch.pre_filter_reward_std * weight
+        self.advantage_mean += batch.pre_filter_adv_mean * weight
+        self.adv_zero_rate += batch.adv_zero_rate * weight
+        self.adv_saturation += batch.adv_saturation * weight
+        if batch.group_size:
+            self.group_size = float(batch.group_size)
+        self.trained_prompt_num += int(batch.trained_prompt_num)
+        for name, values in batch.reward_components.items():
+            self.reward_components.setdefault(name, []).extend(values)
+
+    def mean(self, total: float) -> float:
+        return total / self.weight if self.weight > 0 else 0.0
+
+    def component_means(self) -> dict[str, float]:
+        return {
+            name: sum(values) / len(values)
+            for name, values in self.reward_components.items()
+            if values
+        }
 
 
 @dataclass(slots=True)
@@ -509,7 +562,6 @@ class OnlineTrainer:
         # Recheck rollout/replay parity in each process; a checkpoint's previous
         # pass does not cover changes to kernels, compilation, or batch geometry.
         self._replay_parity_passed = False
-        self._update_phase_timers: list[PhaseTimer] = []
         self._rollout_runtime = RolloutRuntimeCoordinator(
             collector=self.collector,
             strategy=self._strategy,
@@ -769,7 +821,7 @@ class OnlineTrainer:
             worker_name="online_trainer",
         ):
             batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
-            return await self.train_on_rollout_batch(batch)
+            return await self.train_on_collections(_one_collection(batch))
 
     @staticmethod
     def merge_reward_scores(
@@ -914,6 +966,7 @@ class OnlineTrainer:
             advantages=filtered_advs,
             group_size=group_size,
             trained_prompt_num=trained_prompt_num,
+            sample_count=int(all_rewards.numel()),
             adv_zero_rate=adv_zero_rate,
             adv_saturation=adv_saturation,
             pre_filter_reward_mean=pre_filter_reward_mean,
@@ -1135,16 +1188,6 @@ class OnlineTrainer:
     # accumulation). The legacy full-batch path keeps train_on_rollout_batch.
     # ------------------------------------------------------------------
 
-    def begin_optimizer_update(self) -> None:
-        """Start one streaming optimizer update: reset grads + metric accumulator."""
-        self._update_optimizer = self._ensure_optimizer()
-        self._update_ema = self._ensure_ema()
-        self._update_phase_timers.clear()
-        self.model.train()
-        self._update_agg_metrics = _ReplayMetrics()
-        self._update_had_training_work = False
-        self._update_optimizer.zero_grad(set_to_none=True)
-
     def _run_replay_pass(
         self,
         batches: list[RolloutBatch],
@@ -1282,299 +1325,209 @@ class OnlineTrainer:
                 chunk_advs.append(adv[selector.to(adv.device)])
         return chunks
 
-    def backward_on_training_batch(
+    async def train_on_collections(
         self,
-        batch: TrainingBatch,
+        collections: AsyncIterable[TrainingBatch],
         *,
-        total_groups: int,
-    ) -> None:
-        """Evaluate + loss + backward for ONE collected microbatch; no optimizer step.
-
-        ``total_groups`` is the global prompt-group count across the whole
-        optimizer update (= prompts_per_batch); loss divides by
-        ``total_groups * num_replay_units`` so the accumulated gradient over
-        all microbatches equals the legacy full-batch path.
-        """
-
-        cfg = self.config
-        if cfg.profile:
-            self._update_phase_timers.append(batch.timer)
-        # Unanimous skip across ranks: a backward fires cross-rank collectives, so
-        # one rank skipping an empty microbatch while another runs it deadlocks
-        # (see all_ranks_true). Called once per microbatch on every rank, in
-        # lockstep with the fixed gradient-accumulation count, so this collective
-        # is balanced.
-        if not self._strategy.collectives.all_true(bool(batch.batches)):
-            return
-        self._update_had_training_work = True
-        train_indices = self._train_replay_indices(batch.batches[0])
-        self._run_replay_pass(
-            batch.batches,
-            batch.advantages,
-            total_groups=int(total_groups),
-            train_indices=train_indices,
-            agg=self._update_agg_metrics,
-            capture_initial_replay=True,
-            timer=batch.timer,
-        )
-
-    async def finish_optimizer_update(
-        self,
-        *,
-        stats: RolloutStats,
-        reward_mean: float,
-        reward_std: float,
-        adv_mean: float,
-        adv_zero_rate: float,
-        adv_saturation: float,
-        group_size: float,
-        trained_prompt_num: int,
-        reward_components: dict[str, float],
+        total_groups: int | None = None,
     ) -> TrainStepMetrics:
-        """Clip + optimizer.step + EMA/algorithm hook (once) and build the one update's metrics.
+        """One optimizer update over the collections of one target batch — the train half.
 
-        ``stats`` is the caller-aggregated typed accumulator across the update's
-        microbatches. The streaming recipe owns aggregation so each microbatch's
-        tensors are released before this runs.
-        """
-        optimizer = self._update_optimizer
-        agg = self._update_agg_metrics
-        sync_stats = RolloutStats()
-        optimizer_timer = PhaseTimer(enabled=self.config.profile)
-        if self._update_had_training_work:
-            with optimizer_timer.time("optim_step"):
-                local_initial, local_weight = agg.initial_replay_snapshot()
-                initial_replay = self._validate_first_update_parity(
-                    local_initial,
-                    local_weight=local_weight,
-                )
-                grad_norm, stepped = self._clip_and_step(optimizer)
-            agg.grad_norms.append(grad_norm)
-            if stepped:
-                self.algorithm.after_optimizer_step(self.state.global_step)
-                self._ema_after_optimizer_step()
-            self.state.global_step += 1
-            if stepped:
-                sync_stats = await self.rollout_schedule.after_train_step()
-        else:
-            # No replay evaluations ran, so report the same zero-stats snapshot
-            # the non-streaming path uses; build() and the metrics CSV require
-            # a non-None InitialReplayStats.
-            initial_replay = InitialReplayStats()
-            agg.grad_norms.append(0.0)
-            logger.info(
-                "step %d: every streamed microbatch was filtered; skipping "
-                "optimizer and rollout weight sync",
-                self.state.step,
-            )
+        A full batch arrives as one collection; streaming hands them over one at
+        a time, each released before the next is collected, so host RAM holds one
+        collection of rollout/replay tensors. Every collection's replay/backward
+        accumulates into one gradient and the update steps once; ``ppo_epochs``
+        and ``optimizer_steps_per_batch`` instead replay a collection several
+        times with an optimizer step per pass, which needs the whole batch in
+        hand (``TrainerConfig`` rejects them under streaming).
 
-        metric_step = self.state.step
-        self.state.step += 1
-        stats.add_phases(optimizer_timer.times)
-        stats.merge(sync_stats)
-        phase_times = stats.as_metrics_dict()
-        if self.config.profile:
-            if phase_times:
-                percentage_phases = {
-                    name: seconds
-                    for name, seconds in stats.phase_seconds.items()
-                    if not name.startswith("collect.")
-                }
-                total = sum(percentage_phases.values())
-                if total <= 0:
-                    total = 0.0
-                    percentage_phases = {}
-                parts = " | ".join(
-                    (
-                        f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
-                        if name in percentage_phases
-                        else f"{name}={value:.3f}"
-                    )
-                    for name, value in phase_times.items()
-                )
-                logger.info("phase_times[step=%d] total=%.3fs | %s", metric_step, total, parts)
-                path = Path(self._rollout_stats_path)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True)
-                        + "\n"
-                    )
-            for timer in (*self._update_phase_timers, optimizer_timer):
-                self._write_phase_events(timer, step=metric_step)
-            self._update_phase_timers.clear()
-        metrics = agg.build(
-            reward_mean=reward_mean,
-            reward_std=reward_std,
-            reward_components=reward_components,
-            advantage_mean=adv_mean,
-            adv_saturation=adv_saturation,
-            adv_zero_rate=adv_zero_rate,
-            group_size=group_size,
-            trained_prompt_num=trained_prompt_num,
-            phase_times=phase_times,
-            initial_replay=initial_replay,
-        )
-        return metrics
-
-    async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
-        """Train on a collected batch — the compute half of one step.
-
-        The schedule's post-update weight publication is asynchronous even though
-        replay evaluation, backward, and the optimizer step are synchronous.
+        ``total_groups`` is the loss normalizer when the update's prompt-group
+        count is known up front (streaming: ``prompts_per_batch``); ``None``
+        normalizes each pass by its own surviving groups, as a full batch does.
+        The replay-parity gate runs on the first pass of the update, before its
+        first optimizer step. The schedule's post-update weight publication is
+        asynchronous even though replay, backward and the optimizer step are
+        synchronous.
         """
 
         cfg = self.config
         optimizer = self._ensure_optimizer()
         self._ensure_ema()
-        iteration = batch.iteration
-        timer = batch.timer
-        filtered_batches = batch.batches
-        filtered_advs = batch.advantages
-        group_size = batch.group_size
-        trained_prompt_num = batch.trained_prompt_num
-        adv_zero_rate = batch.adv_zero_rate
-        adv_saturation = batch.adv_saturation
-        pre_filter_reward_mean = batch.pre_filter_reward_mean
-        pre_filter_reward_std = batch.pre_filter_reward_std
-        pre_filter_adv_mean = batch.pre_filter_adv_mean
-        reward_components = {
-            name: sum(values) / len(values)
-            for name, values in batch.reward_components.items()
-            if values
-        }
-
-        # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
-        agg_metrics = _ReplayMetrics()
+        optimizer.zero_grad(set_to_none=True)
+        step_per_pass = cfg.ppo_epochs > 1 or cfg.batch_config.optimizer_steps_per_batch > 1
+        agg = _ReplayMetrics()
+        diagnostics = _UpdateDiagnostics()
+        stats = RolloutStats()
+        timers: list[PhaseTimer] = []
+        initial_replay: InitialReplayStats | None = None
+        policy_updated = False
+        had_work = False
 
-        # If every batch was filtered out (all dead), skip training this step.
-        # Unanimous across ranks (see all_ranks_true): a backward fires
-        # cross-rank collectives, so the skip must be agreed or the ranks that did
-        # vs. did not run backward deadlock. Called once per step on every rank.
-        if not self._strategy.collectives.all_true(bool(filtered_batches)):
+        def clip_and_step(timer: PhaseTimer) -> None:
+            nonlocal initial_replay, policy_updated
+            with timer.time("optim_step"):
+                if initial_replay is None:
+                    local_initial, local_weight = agg.initial_replay_snapshot()
+                    initial_replay = self._validate_first_update_parity(
+                        local_initial,
+                        local_weight=local_weight,
+                    )
+                grad_norm, stepped = self._clip_and_step(optimizer)
+            agg.grad_norms.append(grad_norm)
+            # A scaler-skipped step (inf/nan grads) left the weights unchanged —
+            # do not fold a non-update into EMA or the algorithm adapter.
+            if stepped:
+                policy_updated = True
+                self.algorithm.after_optimizer_step(self.state.global_step)
+                self._ema_after_optimizer_step()
+            self.state.global_step += 1
+
+        async for batch in collections:
+            diagnostics.add(batch)
+            timers.append(batch.timer)
+            # Unanimous skip across ranks: a backward fires cross-rank collectives,
+            # so one rank skipping an empty collection while another runs it
+            # deadlocks (see all_ranks_true). Called once per collection on every
+            # rank, in lockstep with the fixed collection count, so this
+            # collective is balanced.
+            if self._strategy.collectives.all_true(bool(batch.batches)):
+                had_work = True
+                self._replay_collection(
+                    batch,
+                    total_groups=total_groups,
+                    agg=agg,
+                    step_per_pass=step_per_pass,
+                    clip_and_step=clip_and_step,
+                    initial_replay_pending=lambda: initial_replay is None,
+                )
+            else:
+                logger.info(
+                    "step %d: collection filtered (zero advantages) on this or a peer "
+                    "rank; skipping its backward",
+                    self.state.step,
+                )
+            # collect.* phase timings arrive inside iteration.stats: each collect
+            # call owns its timings, and the schedule/consumer aggregates them per
+            # iteration. The trainer phases (timer) merge on top into one typed
+            # accumulator, emitted per step.
+            stats.merge(self._step_stats(batch.iteration, batch.timer))
+            # Release this collection's rollout/replay tensors before the next is
+            # collected.
+            del batch
+
+        optimizer_timer = PhaseTimer(enabled=cfg.profile)
+        if not had_work:
+            # No replay evaluation ran: a zero-stats snapshot keeps the metrics
+            # row serializable, and nothing is published to the rollout.
+            initial_replay = InitialReplayStats()
+            agg.grad_norms.append(0.0)
             logger.info(
-                "step %d: all batches filtered (zero advantages) on this or a peer "
-                "rank; skipping backward",
+                "step %d: every collection was filtered (zero advantages); skipping "
+                "optimizer and rollout weight sync",
                 self.state.step,
             )
-            # Early exit — still advance state + return metrics with zeros.
-            self.state.step += 1
-            return TrainStepMetrics(
-                loss=0.0,
-                policy_loss=0.0,
-                kl_penalty=0.0,
-                reward_mean=pre_filter_reward_mean,
-                reward_std=pre_filter_reward_std,
-                reward_components=reward_components,
-                advantage_mean=pre_filter_adv_mean,
-                grad_norm=0.0,
-                adv_saturation=adv_saturation,
-                adv_zero_rate=adv_zero_rate,
-                group_size=group_size,
-                trained_prompt_num=trained_prompt_num,
-                phase_times=self._step_stats(iteration, timer).as_metrics_dict(),
-            )
+        elif not step_per_pass:
+            clip_and_step(optimizer_timer)
+        assert initial_replay is not None
 
-        # Replay schedule — step evaluators use the configured denoise subset;
-        # trajectory evaluators perform one causal pass over all policy axes.
-        # Trajectory schemas are consistent across batches, so inspect the first batch.
-        train_indices = self._train_replay_indices(filtered_batches[0])
-
-        initial_replay = InitialReplayStats()
-        policy_updated = False
-        for _ppo_epoch in range(cfg.ppo_epochs):
-            # ``train_on_rollout_batch`` receives one already-collected optimizer
-            # target batch. Streaming accumulation is owned by the recipe and
-            # calls begin/backward/finish instead; interpreting the same count
-            # again here would turn one target batch into several optimizer steps.
-            # ``optimizer_steps_per_batch`` deals the batch's samples into that
-            # many disjoint updates, each with its own optimizer step.
-            chunks = self._optimizer_step_chunks(filtered_batches, filtered_advs)
-            for chunk_index, (chunk_batches, chunk_advs) in enumerate(chunks):
-                capture_initial_replay = _ppo_epoch == 0 and chunk_index == 0
-                self._run_replay_pass(
-                    chunk_batches,
-                    chunk_advs,
-                    total_groups=len(chunk_batches),
-                    train_indices=train_indices,
-                    agg=agg_metrics,
-                    capture_initial_replay=capture_initial_replay,
-                    timer=timer,
-                )
-
-                with timer.time("optim_step"):
-                    if capture_initial_replay:
-                        local_initial, local_weight = agg_metrics.initial_replay_snapshot()
-                        initial_replay = self._validate_first_update_parity(
-                            local_initial,
-                            local_weight=local_weight,
-                        )
-                    _gn, _stepped = self._clip_and_step(optimizer)
-                    agg_metrics.grad_norms.append(_gn)
-
-                # A scaler-skipped step (inf/nan grads) left the weights unchanged —
-                # do not fold a non-update into EMA or the algorithm adapter.
-                if _stepped:
-                    policy_updated = True
-                    self.algorithm.after_optimizer_step(self.state.global_step)
-                    self._ema_after_optimizer_step()
-
-                self.state.global_step += 1
-
-        # collect.* phase timings arrive inside iteration.stats: each collect
-        # call owns its timings (no shared collector state), and the
-        # schedule/consumer aggregates them per iteration. The trainer phases
-        # (timer) merge on top into one typed accumulator, emitted per step.
-        step_stats = self._step_stats(iteration, timer)
         metric_step = self.state.step
-
-        # Update state
         self.state.step += 1
-
         if policy_updated:
-            step_stats.merge(await self.rollout_schedule.after_train_step())
-        phase_times = step_stats.as_metrics_dict()
-        if cfg.profile and phase_times:
-            percentage_phases = {
-                name: seconds
-                for name, seconds in step_stats.phase_seconds.items()
-                if not name.startswith("collect.")
-            }
-            total = sum(percentage_phases.values())
-            if total <= 0:
-                total = 0.0
-                percentage_phases = {}
-            parts = " | ".join(
-                (
-                    f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
-                    if name in percentage_phases
-                    else f"{name}={value:.3f}"
-                )
-                for name, value in phase_times.items()
-            )
-            logger.info("phase_times[step=%d] total=%.3fs | %s", metric_step, total, parts)
-            path = Path(self._rollout_stats_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True) + "\n"
-                )
-            self._write_phase_events(timer, step=metric_step)
-
-        metrics = agg_metrics.build(
-            reward_mean=pre_filter_reward_mean,
-            reward_std=pre_filter_reward_std,
-            reward_components=reward_components,
-            advantage_mean=pre_filter_adv_mean,
-            adv_saturation=adv_saturation,
-            adv_zero_rate=adv_zero_rate,
-            group_size=group_size,
-            trained_prompt_num=trained_prompt_num,
+            stats.merge(await self.rollout_schedule.after_train_step())
+        stats.add_phases(optimizer_timer.times)
+        phase_times = stats.as_metrics_dict()
+        if cfg.profile:
+            self._log_phase_times(metric_step, stats, phase_times)
+            for timer in (*timers, optimizer_timer):
+                self._write_phase_events(timer, step=metric_step)
+        return agg.build(
+            reward_mean=diagnostics.mean(diagnostics.reward_mean),
+            reward_std=diagnostics.mean(diagnostics.reward_std),
+            reward_components=diagnostics.component_means(),
+            advantage_mean=diagnostics.mean(diagnostics.advantage_mean),
+            adv_saturation=diagnostics.mean(diagnostics.adv_saturation),
+            adv_zero_rate=diagnostics.mean(diagnostics.adv_zero_rate),
+            group_size=diagnostics.group_size,
+            trained_prompt_num=diagnostics.trained_prompt_num,
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        return metrics
+
+    def _replay_collection(
+        self,
+        batch: TrainingBatch,
+        *,
+        total_groups: int | None,
+        agg: _ReplayMetrics,
+        step_per_pass: bool,
+        clip_and_step: Any,
+        initial_replay_pending: Any,
+    ) -> None:
+        """Replay and backward one collection: every PPO epoch and optimizer chunk of it.
+
+        A method rather than loop body so the chunk references die with the
+        frame and the collection can be released before the next is collected.
+        """
+
+        # Replay schedule — step evaluators use the configured denoise subset;
+        # trajectory evaluators perform one causal pass over all policy axes.
+        # Trajectory schemas are consistent across batches, so inspect the first.
+        train_indices = self._train_replay_indices(batch.batches[0])
+        for _ppo_epoch in range(self.config.ppo_epochs):
+            # ``optimizer_steps_per_batch`` deals the collection's samples into
+            # that many disjoint updates, each with its own optimizer step.
+            for chunk_batches, chunk_advs in self._optimizer_step_chunks(
+                batch.batches, batch.advantages
+            ):
+                self._run_replay_pass(
+                    chunk_batches,
+                    chunk_advs,
+                    total_groups=len(chunk_batches) if total_groups is None else int(total_groups),
+                    train_indices=train_indices,
+                    agg=agg,
+                    capture_initial_replay=initial_replay_pending(),
+                    timer=batch.timer,
+                )
+                if step_per_pass:
+                    clip_and_step(batch.timer)
+
+    async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
+        """Train on one collected batch: ``train_on_collections`` over that one collection."""
+
+        return await self.train_on_collections(_one_collection(batch))
+
+    def _log_phase_times(
+        self, metric_step: int, stats: RolloutStats, phase_times: dict[str, float]
+    ) -> None:
+        """Log the update's phase split and append it to rollout_stats.jsonl."""
+
+        if not phase_times:
+            return
+        percentage_phases = {
+            name: seconds
+            for name, seconds in stats.phase_seconds.items()
+            if not name.startswith("collect.")
+        }
+        total = sum(percentage_phases.values())
+        if total <= 0:
+            total = 0.0
+            percentage_phases = {}
+        parts = " | ".join(
+            (
+                f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
+                if name in percentage_phases
+                else f"{name}={value:.3f}"
+            )
+            for name, value in phase_times.items()
+        )
+        logger.info("phase_times[step=%d] total=%.3fs | %s", metric_step, total, parts)
+        path = Path(self._rollout_stats_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True) + "\n"
+            )
 
     def _step_stats(self, iteration: Any, timer: PhaseTimer) -> RolloutStats:
         """Typed per-step stats: the iteration's accumulator + trainer phases."""

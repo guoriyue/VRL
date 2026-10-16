@@ -563,10 +563,11 @@ async def _run_streaming_optimizer_update(
     Splits the ``prompts_per_batch`` prompts into collection batches and runs
     collect -> backward -> RELEASE for each before the next, so host RAM holds
     ~one collection batch of rollout/replay tensors instead of the whole target batch
-    (the memory fix that lets bigger models train on limited GPUs). One
-    optimizer.step / EMA / weight-sync / metric row per update; gradients
-    accumulate across collection batches with a global loss scale, so the update is
-    gradient-equivalent to the legacy full-batch path.
+    (the memory fix that lets bigger models train on limited GPUs). The trainer's
+    ``train_on_collections`` owns the update: one optimizer.step / EMA /
+    weight-sync / metric row, gradients accumulated across collection batches
+    with the global loss scale ``prompts_per_batch``, so the update is
+    gradient-equivalent to training on the whole batch at once.
 
     When ``host_memory_budget_fraction`` > 0, the first collected collection batch is
     checked against the host-RAM budget and the run fails fast if it is already
@@ -587,35 +588,27 @@ async def _run_streaming_optimizer_update(
             trainer, example_batch, next_example_batch=next_example_batch
         )
 
-    trainer.begin_optimizer_update()
-
-    update_stats = RolloutStats()
-    reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
-    weight_total = 0
-    trained_prompt_num = 0
-    group_size = float(batch_config.n_samples_per_prompt)
-    reward_component_values: dict[str, list[float]] = {}
-    for collection_index, collection_batch in enumerate(collection_batches):
-        if collection_index + 1 < len(collection_batches):
-            next_prompts = collection_batches[collection_index + 1]
-        elif next_example_batch:
-            next_prompts = next_example_batch[:collection_size]
-        else:
-            next_prompts = None
-        if _prepared is None:
-            batch = await trainer.collect_training_batch(
-                collection_batch, next_prompts=next_prompts
-            )
-        else:
-            iteration, advantages, reward_stats = next(_prepared)
-            batch = await trainer.collect_training_batch(
-                collection_batch,
-                _iteration=iteration,
-                _advantages=advantages,
-                _reward_stats=reward_stats,
-            )
-            del iteration, advantages
-        try:
+    async def collections():
+        for collection_index, collection_batch in enumerate(collection_batches):
+            if collection_index + 1 < len(collection_batches):
+                next_prompts = collection_batches[collection_index + 1]
+            elif next_example_batch:
+                next_prompts = next_example_batch[:collection_size]
+            else:
+                next_prompts = None
+            if _prepared is None:
+                batch = await trainer.collect_training_batch(
+                    collection_batch, next_prompts=next_prompts
+                )
+            else:
+                iteration, advantages, reward_stats = next(_prepared)
+                batch = await trainer.collect_training_batch(
+                    collection_batch,
+                    _iteration=iteration,
+                    _advantages=advantages,
+                    _reward_stats=reward_stats,
+                )
+                del iteration, advantages
             # Host-RAM fail-fast on the first collection batch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
             if batch_config.host_memory_budget_fraction > 0.0 and collection_index == 0:
@@ -624,44 +617,12 @@ async def _run_streaming_optimizer_update(
                     collection_prompts=len(collection_batch),
                     n_samples_per_prompt=batch_config.n_samples_per_prompt,
                 )
-            trainer.backward_on_training_batch(batch, total_groups=total_groups)
-            # Sample-count-weighted aggregation of this collection batch's pre-filter stats
-            # so the one metric row reflects ALL samples, not the last collection batch.
-            weight = max(1, len(collection_batch) * batch_config.n_samples_per_prompt)
-            reward_mean_w += batch.pre_filter_reward_mean * weight
-            reward_std_w += batch.pre_filter_reward_std * weight
-            adv_mean_w += batch.pre_filter_adv_mean * weight
-            adv_zero_w += batch.adv_zero_rate * weight
-            adv_sat_w += batch.adv_saturation * weight
-            weight_total += weight
-            trained_prompt_num += int(batch.trained_prompt_num)
-            if batch.group_size:
-                group_size = float(batch.group_size)
-            for name, values in getattr(batch, "reward_components", {}).items():
-                reward_component_values.setdefault(name, []).extend(values)
-            update_stats.merge(trainer._step_stats(batch.iteration, batch.timer))
-        finally:
-            # Release this collection batch's rollout/replay tensors before the next,
-            # including exception paths where traceback locals can otherwise keep
-            # large batches alive longer than needed.
+            yield batch
+            # The trainer released its reference after training on it; drop ours
+            # before the next collection so the two never coexist in host RAM.
             del batch
 
-    weight_total = max(1, weight_total)
-    return await trainer.finish_optimizer_update(
-        stats=update_stats,
-        reward_mean=reward_mean_w / weight_total,
-        reward_std=reward_std_w / weight_total,
-        adv_mean=adv_mean_w / weight_total,
-        adv_zero_rate=adv_zero_w / weight_total,
-        adv_saturation=adv_sat_w / weight_total,
-        group_size=group_size,
-        trained_prompt_num=trained_prompt_num,
-        reward_components={
-            name: sum(values) / len(values)
-            for name, values in reward_component_values.items()
-            if values
-        },
-    )
+    return await trainer.train_on_collections(collections(), total_groups=total_groups)
 
 
 @dataclass(slots=True)

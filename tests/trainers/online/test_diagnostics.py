@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -155,9 +156,9 @@ class TestDiagnostics:
     ) -> None:
         """A fully filtered first update skips the gate instead of failing it.
 
-        Streaming reaches finish_optimizer_update with zero pass-zero
-        evaluations when every rank's first collection is dropped by the
-        zero-advantage filter; distributed all-dummy ranks hit the same shape.
+        Streaming reaches the optimizer step with zero pass-zero evaluations
+        when every rank's first collection is dropped by the zero-advantage
+        filter; distributed all-dummy ranks hit the same shape.
         An empty snapshot must be neutral, not a parity failure.
         """
 
@@ -195,38 +196,29 @@ class TestDiagnostics:
     def test_fully_filtered_update_still_serializes_metrics_row(
         self, monkeypatch, tmp_path
     ) -> None:
-        """A no-work streaming update must produce a CSV-serializable row.
+        """A no-work update must produce a CSV-serializable row.
 
-        When every streamed microbatch is filtered (e.g. the reward signal is
-        exhausted and all groups have zero advantage), finish_optimizer_update
-        skips the optimizer but the recipe still writes a metrics row; the
-        step result must carry a real InitialReplayStats, not None.
+        When every collection is filtered (e.g. the reward signal is exhausted
+        and all groups have zero advantage), the update skips the optimizer but
+        the recipe still writes a metrics row; the step result must carry a real
+        InitialReplayStats, not None.
         """
 
         from vrl.trainers.metrics_io import OnlineMetricRow
-        from vrl.trainers.online.trainer import RolloutStats
 
-        trainer = _trainer(monkeypatch, tmp_path).trainer
+        tb = _trainer(monkeypatch, tmp_path)
+        trainer = tb.trainer
+        batch = asyncio.run(trainer.collect_training_batch(["a cat"]))
+        filtered = replace(batch, batches=[], advantages=[])
 
-        trainer.begin_optimizer_update()
-        metrics = asyncio.run(
-            trainer.finish_optimizer_update(
-                stats=RolloutStats(),
-                reward_mean=0.0,
-                reward_std=0.0,
-                adv_mean=0.0,
-                adv_zero_rate=1.0,
-                adv_saturation=0.0,
-                group_size=2.0,
-                trained_prompt_num=0,
-                reward_components={"nsfw_safety": 0.0},
-            ),
-        )
+        metrics = asyncio.run(trainer.train_on_rollout_batch(filtered))
 
         assert isinstance(metrics.initial_replay, InitialReplayStats)
         assert trainer._replay_parity_passed is False
-        row = OnlineMetricRow.from_step_metrics(0, metrics, ("nsfw_safety",))
+        row = OnlineMetricRow.from_step_metrics(0, metrics, tuple(metrics.reward_components))
         assert row.pre_update_clip_fraction == 0.0
+        assert metrics.grad_norm == 0.0
+        assert trainer.state.step == 1
         assert trainer.state.global_step == 0
 
     def test_streaming_finish_enforces_parity_before_optimizer(
