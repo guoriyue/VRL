@@ -5,13 +5,10 @@ collect -> evaluate -> advantage -> loss -> backward -> step.
 
 from __future__ import annotations
 
-import contextlib
 import itertools
 import json
 import logging
 import math
-import time
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +47,7 @@ from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, TrainableStateGetter
+from vrl.utils.profiling import PhaseTimer
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -90,40 +88,6 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 # Phase profiler
 # ---------------------------------------------------------------------------
-
-
-class PhaseTimer:
-    """Accumulating phase timer with optional CUDA sync.
-
-    Each ``time(name)`` call returns a context manager whose wall time is
-    added to ``self.times[name]``. When CUDA is available,
-    ``torch.cuda.synchronize()`` is called on both ends so async GPU kernels
-    are captured.
-    """
-
-    def __init__(self, *, enabled: bool = False) -> None:
-        self.enabled = enabled
-        self.sync = torch.cuda.is_available()
-        self.times: dict[str, float] = defaultdict(float)
-        self.events: list[tuple[str, float, float]] = []
-
-    @contextlib.contextmanager
-    def time(self, name: str):
-        if not self.enabled:
-            yield
-            return
-        if self.sync:
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        wall0 = time.time()
-        try:
-            yield
-        finally:
-            if self.sync:
-                torch.cuda.synchronize()
-            t1 = time.perf_counter()
-            self.times[name] += t1 - t0
-            self.events.append((name, wall0, time.time()))
 
 
 # ---------------------------------------------------------------------------

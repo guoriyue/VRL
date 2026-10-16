@@ -6,6 +6,8 @@ Two layers, kept deliberately separate (see
 * ``profile_range`` — stage annotation. Names a code block so it shows up as a
   range in the torch profiler trace and, when NVTX is on, in nsys/ncu. It does
   NOT collect anything by itself; it only labels.
+* ``PhaseTimer`` — wall-time accumulation per named phase (CUDA-synchronized
+  when a card is present), for the trainer's step timings.
 * ``capture_torch_trace`` — trace collection. Opens ``torch.profiler.profile``
   around one step, exports the TensorBoard trace, writes a human summary, and
   writes ``profile_manifest.json`` recording what was actually captured.
@@ -21,6 +23,8 @@ from __future__ import annotations
 import contextlib
 import os
 import socket
+import time
+from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -185,6 +189,46 @@ class ProfilerActivitySelection:
             missing=tuple(missing),
             torch_activities=tuple(torch_activities),
         )
+
+
+class PhaseTimer:
+    """Accumulating phase timer with optional CUDA sync (wall time, not a trace).
+
+    Each ``time(name)`` call returns a context manager whose wall time is
+    added to ``self.times[name]``. When CUDA is available,
+    ``torch.cuda.synchronize()`` is called on both ends so async GPU kernels
+    are captured.
+    """
+
+    def __init__(self, *, enabled: bool = False) -> None:
+        import torch
+
+        self.enabled = enabled
+        self.sync = torch.cuda.is_available()
+        self.times: dict[str, float] = defaultdict(float)
+        self.events: list[tuple[str, float, float]] = []
+
+    @contextlib.contextmanager
+    def time(self, name: str):
+        if not self.enabled:
+            yield
+            return
+        if self.sync:
+            import torch
+
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        wall0 = time.time()
+        try:
+            yield
+        finally:
+            if self.sync:
+                import torch
+
+                torch.cuda.synchronize()
+            t1 = time.perf_counter()
+            self.times[name] += t1 - t0
+            self.events.append((name, wall0, time.time()))
 
 
 def nvtx_enabled() -> bool:
@@ -423,6 +467,7 @@ def _write_manifest(
 
 
 __all__ = [
+    "PhaseTimer",
     "ProfilerActivitySelection",
     "TimeIntervals",
     "TorchProfilerConfig",
