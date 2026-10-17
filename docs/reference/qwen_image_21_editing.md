@@ -53,30 +53,14 @@ score `target_text`; preservation and extraction quality need their own rewards.
 
 ## Reproducible probe
 
-The lock pins a diffusers commit containing Qwen-Image-2.1 and its compatible
-Transformers dependency. Synchronize an environment from the lock:
-
-```bash
-uv sync --frozen --group test --group lint --extra cosmos
-python -m vrl.scripts.generation.qwen_image_21_edit_probe \
-  --source /path/to/bookshop.png --reference /path/to/leaf.png \
-  --out outputs/qwen21_edits --resolution 512 --reference-resolution 512 \
-  --steps 20 --compare-reference --check-lora-backward
-```
-
-Set `HF_HUB_OFFLINE=1` to require locally cached weights. `--device cpu` runs
-without GPU memory. It saves three VRL
-outputs, optional official outputs, and `report.json` with transparency and
-replay checks. Official comparison starts the upstream pipeline from the VRL
-loop's first observation and disables KV caching on both paths. Small precision
-differences remain, including the initial latent's rounding to the VAE dtype.
-The optional backward check attaches a fresh rank-4 LoRA, generates a two-step
-SDE trajectory with two references, checks replay log-probability parity, and
-verifies finite gradients and an actual optimizer update. It does not save or
-change any existing policy checkpoint.
-
-The image probe uses deterministic native Euler; RL's SDE sampling is a separate
-distribution and should not be presented as an equivalent configuration.
+The validation below ran `vrl.scripts.generation.qwen_image_21_edit_probe`
+(removed on 2026-10-16; recover it from commit `47f276be7`). It saved native
+outputs, optional official outputs started from the native loop's first
+observation, and a report of transparency and replay checks; its optional
+backward check attached a fresh rank-4 LoRA to a two-step SDE trajectory with
+two references and verified replay parity, finite gradients and an optimizer
+update. The image comparison used deterministic native Euler; RL's SDE sampling
+is a separate distribution.
 
 References are encoded once per sample batch and expanded across that prompt's
 samples. Only target-image latents are updated, stored as actions, and scored
@@ -86,8 +70,8 @@ transformer KV cache remains disabled because LoRA updates change prefix keys
 and values.
 
 The generic fixed-grid `image_checkpoint_eval` script remains text-only and
-rejects reference-conditioned manifests; use the edit probe or generation
-requests for editing. Full-scene decomposition into an editable layer stack is
+rejects reference-conditioned manifests; use generation requests for
+editing. Full-scene decomposition into an editable layer stack is
 not implemented by these operations.
 
 ## Validation recorded on 2026-09-20

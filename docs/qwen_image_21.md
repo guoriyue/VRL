@@ -18,38 +18,14 @@ PNG output preserves alpha. Ordinary RGB reward models view RGBA composited over
 white; transparent layers need their own alpha-aware checks. A successful RGBA
 output alone does not establish correct layer decomposition.
 
-## Local integration probe
+## Integration check
 
-```bash
-HF_HUB_OFFLINE=1 .venv/bin/python -m vrl.scripts.generation.qwen_image_21_edit_probe \
-  --source /path/to/bookshop.png --reference /path/to/leaf.png \
-  --out outputs/qwen_image_21/probe \
-  --resolution 512 --reference-resolution 512 --steps 20 \
-  --compare-reference --check-lora-backward
-```
-
-The fixed probe prompts expect a bookshop sign and a leaf. Native Euler comparison
-starts the upstream pipeline from the VRL loop's first observation (rounded to the
-VAE dtype) and shares its VAE preprocessing precision. The separate SDE probe checks likelihood replay, finite gradients, and
-one LoRA optimizer update. It does not train on task reward or demonstrate an RL
-improvement. Full online training and agentic control require their own validation.
-
-For an existing edit dataset, use `--manifest /absolute/path/to/tasks.jsonl` in
-place of `--source`/`--reference`. The probe defaults to `--output-mode rgba`;
-select `--output-mode rgb` for ordinary local-edit candidates. RGB is the decoded
-RGBA composited over white, as in the family runtime, and emits three-channel
-PNGs without alpha statistics. Official comparison applies the same composite
-before recording `official_rgb_mae_255`; native latent replay is checked in both
-modes. `--seed-mode independent` derives each sample seed from the base seed,
-prompt and reference content, allowing reproducible source-paired comparisons.
-For a rectangular canvas, set both `--width` and `--height`, for example
-`--width 320 --height 480`. Dimensions must be positive multiples of 32. Without
-these options, `--resolution` remains the square output size. Reference encoding
-keeps its separate `--reference-resolution` budget. The native and official paths
-receive the same output canvas, which is checked against the decoded tensor.
-The optional LoRA backward probe remains a separate fixed 256x256 smoke test.
-
-See `docs/reports/visual_rl_engine_20260922/PROGRESS.md` for actual measurements.
+The native editing path was verified against the upstream pipeline (shared first
+latent, RGB/RGBA output, replay log-probability parity, one LoRA backward step)
+with a one-off probe, `vrl.scripts.generation.qwen_image_21_edit_probe`; the
+results are in `docs/reference/qwen_image_21_editing.md` and
+`docs/reports/visual_rl_engine_20260922/PROGRESS.md`. The probe was removed
+on 2026-10-16; recover it from commit `47f276be7` to rerun the comparison.
 
 ## Bundled experiments
 
