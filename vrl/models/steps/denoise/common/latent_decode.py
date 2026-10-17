@@ -47,7 +47,7 @@ class VaeDecodeMixin:
     survives, and the class raises ``TypeError`` at instantiation.
 
     Families whose decode is more than scale + shift keep their own override:
-    flux/qwen_image unpack packed latents first, and cosmos/wan/echo/causvid
+    flux/qwen_image unpack packed latents first, and cosmos/wan/causvid
     decode outside a diffusers image processor entirely.
     """
 

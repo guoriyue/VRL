@@ -165,7 +165,6 @@ classDiagram
     DenoiseBatchExecutorBase <|-- CosmosPredict25BatchExecutor
     DenoiseBatchExecutorBase <|-- Cosmos3BatchExecutor
     DenoiseBatchExecutorBase <|-- MiniMaxH3BatchExecutor
-    DenoiseBatchExecutorBase <|-- EchoBatchExecutor
     MiniMaxH3BatchExecutor <|-- VDNH3BatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- Magi1BatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- CausVidBatchExecutor
@@ -173,7 +172,7 @@ classDiagram
 
 | Binding | Base / generic | Gatherer | Data types | Families |
 |---|---|---|---|---|
-| `full_sequence` | `DenoiseBatchExecutorBase`; families with no custom per-batch logic get `GenericDenoiseBatchExecutor` via the registry default | `DenoiseBatchGatherer` | `DenoiseSamplingParams` (parsed per request by `DenoiseBatchExecutorBase.parse_sampling_params`), `DenoiseBatchResult`, `ReferenceConditionedBatches` (mixin for reference-image conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, qwen-image 2.1, minimax h3 / vdn h3, echo; every other diffusion family (sana, flux, sd3.5, qwen-image, …) uses the generic executor via the registry default |
+| `full_sequence` | `DenoiseBatchExecutorBase`; families with no custom per-batch logic get `GenericDenoiseBatchExecutor` via the registry default | `DenoiseBatchGatherer` | `DenoiseSamplingParams` (parsed per request by `DenoiseBatchExecutorBase.parse_sampling_params`), `DenoiseBatchResult`, `ReferenceConditionedBatches` (mixin for reference-image conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, qwen-image 2.1, minimax h3 / vdn h3; every other diffusion family (sana, flux, sd3.5, qwen-image, …) uses the generic executor via the registry default |
 | `chunk_autoregressive` | `ChunkAutoregressiveDenoiseExecutorBase` | `ChunkAutoregressiveDenoiseGatherer` | `ChunkAutoregressiveDenoiseResult` | magi-1, causvid. Here "chunk" means a **temporal chunk** of the video (causal-chunk generation) — a different concept from sample batches. |
 
 Below the executors, `steps/denoise/` holds the family-neutral inner loop

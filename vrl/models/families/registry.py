@@ -693,20 +693,6 @@ _register_model_family(
     ),
 )
 
-_register_model_family(
-    _full_sequence_entry(
-        family="echo",
-        task="t2v",
-        model_section_cls="vrl.models.families.echo.config:EchoModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:EchoSamplingSection",
-        executor_cls="vrl.models.families.echo.runtime:EchoBatchExecutor",
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.echo.model:EchoPipelineModel",
-            replay_cls="vrl.models.families.echo.model:EchoModel",
-        ),
-    ),
-)
-
 
 def get_model_family_entry(family: str) -> ModelFamilyEntry:
     """Return the canonical model-family entry for ``family``."""

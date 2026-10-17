@@ -67,7 +67,6 @@ positioning and roadmap.
 | **Wan2.2** | image -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2.5** | text -> world | full_sequence / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
-| **Echo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
 | **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: needs multi-GPU FSDP; CPU tiny-real parity only; diffusers>=0.40) |
 | **VDN-H3** (VideoDeltaNet on MiniMax-H3) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (hybrid window-softmax + linear attention grafted on the H3 backbone; 8-NFE distilled artifact; vendored submodule; CPU tiny-real only) |
@@ -153,7 +152,7 @@ environment any more.
 ### Vendored submodules
 
 Some model/reward backends are upstream code that ships no Python packaging
-(JoyAI-Echo's `ltx_*`, videophy's `mplug_owl_video`, CausVid, VDN-H3). They
+(videophy's `mplug_owl_video`, CausVid, VDN-H3). They
 live as git submodules under `third_party/`; `//third_party:vendored` puts their
 source roots on the import path of every `vrl` target, so `vrl/` contains no
 `sys.path` injection. See [`third_party/README.md`](third_party/README.md).

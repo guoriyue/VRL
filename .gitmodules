@@ -1,9 +1,6 @@
 [submodule "third_party/videophy"]
 	path = third_party/videophy
 	url = https://github.com/Hritikbansal/videophy
-[submodule "third_party/joyai_echo"]
-	path = third_party/joyai_echo
-	url = https://github.com/jd-opensource/JoyAI-Echo.git
 [submodule "third_party/VMBench"]
 	path = third_party/VMBench
 	url = https://github.com/AMAP-ML/VMBench

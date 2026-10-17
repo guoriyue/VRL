@@ -423,7 +423,7 @@ class DenoiseModelBase(nn.Module, ABC):
 
         Default: ``self.transformer`` is the only handle. Classes that keep a
         second reference to the same module — the diffusers pipeline base,
-        Echo's LTX wrapper, CausVid's backend — override to keep both in sync.
+        CausVid's backend — override to keep both in sync.
         """
 
         self.transformer = transformer
@@ -451,7 +451,7 @@ class DenoiseModelBase(nn.Module, ABC):
         Anything that replaces a root rather than mutating it in place goes
         through here: ``torch.compile`` on the rollout side, FSDP/DDP wrapping on
         the trainer side. A family that keeps a second reference to the same
-        module (a diffusers pipeline, Echo's LTX wrapper) must update both, or
+        module (a diffusers pipeline) must update both, or
         sampling silently keeps using the unwrapped copy.
 
         ``name`` is a key of ``policy_cores`` or ``trainable_modules``. Those are
@@ -688,8 +688,7 @@ class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
     components, and ``from_build`` — the pipeline load plus the freeze and
     placement of the VAE and prompt encoders. A family overrides only where it
     genuinely differs (FLUX's dual-encoder discovery, SANA's scheduler swap).
-    Families not backed by a diffusers pipeline (Echo's LTX wrapper, CausVid's
-    backend) build on ``DenoisePipelineModelBase`` directly.
+    Families not backed by a diffusers pipeline (CausVid's backend) build on ``DenoisePipelineModelBase`` directly.
     """
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:

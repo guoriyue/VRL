@@ -97,12 +97,6 @@ class TextEncodedVideoSamplingSection(VideoSamplingSection):
     max_sequence_length: Any = None
 
 
-class EchoSamplingSection(VideoSamplingSection):
-    """Echo DMD sampling, whose checkpoint has guidance baked in."""
-
-    guidance_scale: Literal[1.0] | None = None
-
-
 class MiniMaxH3SamplingSection(TextEncodedVideoSamplingSection):
     """MiniMax-H3 sampling: guidance-distilled, ``max_sequence_length`` bounds the
     text rows of its packed sequence (``fps`` is fixed at 24 by the checkpoint)."""
@@ -122,7 +116,6 @@ class MagiSamplingSection(SamplingSection):
 
 __all__ = [
     "DenoiseImageSamplingSection",
-    "EchoSamplingSection",
     "MagiSamplingSection",
     "MiniMaxH3SamplingSection",
     "QwenImage21SamplingSection",

@@ -9,9 +9,6 @@ py_library(
     name = "vendored",
     srcs = glob(
         [
-            "joyai_echo/ltx-core/src/ltx_core/**/*.py",
-            "joyai_echo/ltx-pipelines/src/ltx_pipelines/**/*.py",
-            "joyai_echo/ltx-distillation/src/ltx_distillation/**/*.py",
             "videophy/videocon/training/pipeline_video/mplug_owl_video/**/*.py",
             "CausVid/causvid/**/*.py",
             "vdn-minimax-h3/src/**/*.py",
@@ -20,8 +17,6 @@ py_library(
     ),
     data = glob(
         [
-            "joyai_echo/ltx-core/src/ltx_core/**/*.yaml",
-            "joyai_echo/ltx-core/src/ltx_core/**/*.json",
             "CausVid/causvid/**/*.yaml",
             "CausVid/causvid/**/*.json",
             "vdn-minimax-h3/src/**/*.yaml",
@@ -30,9 +25,6 @@ py_library(
         allow_empty = True,
     ),
     imports = [
-        "joyai_echo/ltx-core/src",
-        "joyai_echo/ltx-pipelines/src",
-        "joyai_echo/ltx-distillation/src",
         "videophy/videocon/training/pipeline_video",
         "CausVid",
         "vdn-minimax-h3",

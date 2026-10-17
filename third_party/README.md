@@ -6,7 +6,7 @@ Vendored upstream code that ships **no Python packaging**, so it cannot be
 ## Convention
 
 A vendored dependency is **a git submodule** — the upstream source, pinned to a
-commit (see `../.gitmodules`). E.g. `joyai_echo/`, `videophy/`.
+commit (see `../.gitmodules`). E.g. `videophy/`.
 
 `//third_party:vendored` (`third_party/BUILD.bazel`) lists every submodule's
 un-packaged source root under `imports`, which puts them on the import path of
@@ -17,7 +17,6 @@ every `vrl` Bazel target; the main repo (`vrl/`) needs no `sys.path` injection.
 
 | submodule        | exposes                                                       |
 | ---------------- | ------------------------------------------------------------ |
-| `joyai_echo`     | `ltx_core`, `ltx_pipelines`, `ltx_distillation`              |
 | `videophy`       | `mplug_owl_video`                                            |
 | `VMBench`        | _(not imported — run via CLI)_ motion-eval benchmark; fold scores in with `--merge-json` |
 | `DynamicEval`    | _(not imported — run via CLI)_ dynamic-scene eval; fold scores in with `--merge-json` |

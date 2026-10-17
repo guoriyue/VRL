@@ -46,17 +46,6 @@ def test_family_without_text_length_rejects_max_sequence_length() -> None:
     assert type(parsed.sampling) is VideoSamplingSection
 
 
-def test_echo_accepts_only_baked_guidance_value() -> None:
-    valid = minimal_grpo_cfg(model={"family": "echo"})
-    valid.sampling = {"guidance_scale": 1.0}
-    assert parse_config(valid).sampling.guidance_scale == 1.0
-
-    invalid = minimal_grpo_cfg(model={"family": "echo"})
-    invalid.sampling = {"guidance_scale": 4.5}
-    with pytest.raises(ValueError, match=r"unknown sampling\.guidance_scale=4\.5"):
-        parse_config(invalid)
-
-
 @pytest.mark.parametrize(
     ("family", "field", "value"),
     [

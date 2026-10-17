@@ -177,7 +177,7 @@ resolved config + 运行日志为准，preset 文件链不可作数。
 
 即 §1–§2 的实测基准。判定：**不新写 kernel**；P1 compile + P2 NVFP4 即全部收益。
 
-### 5.2 视频扩散（wan_2_1/cosmos V2W/causvid/magi_1/echo）
+### 5.2 视频扩散（wan_2_1/cosmos V2W/causvid/magi_1）
 
 SDE 逐元素数学的账在视频上重算一遍，结论不变：
 

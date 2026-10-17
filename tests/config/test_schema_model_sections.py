@@ -25,13 +25,13 @@ from vrl.models.families.causvid.config import CausVidModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
     CosmosPredict25ModelSection,
 )
-from vrl.models.families.echo.config import EchoModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.names import _FAMILY_BY_ALIAS
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
 )
+from vrl.models.families.vdn_h3.config import VDNH3ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
@@ -162,16 +162,6 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
 @pytest.mark.parametrize(
     ("family", "section_cls", "payload"),
     [
-        (
-            "echo",
-            EchoModelSection,
-            {
-                "gemma_path": "google/gemma-3-12b-it",
-                "gemma_revision": "revision",
-                "video_height": 256,
-                "video_width": 256,
-            },
-        ),
         (
             "causvid",
             CausVidModelSection,
@@ -400,18 +390,18 @@ def test_local_model_sources_become_absolute_and_hub_ids_stay(tmp_path, monkeypa
     repo id as written."""
 
     home = tmp_path / "home"
-    (home / "models" / "echo").mkdir(parents=True)
-    (home / "gemma").mkdir()
+    (home / "models" / "h3").mkdir(parents=True)
+    (home / "vdn").mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(home)
 
-    local = EchoModelSection.model_validate(
-        {"family": "echo", "path": "~/models/echo", "gemma_path": "gemma"}
+    local = VDNH3ModelSection.model_validate(
+        {"family": "vdn_h3", "path": "~/models/h3", "vdn_checkpoint": "vdn"}
     )
-    assert local.path == str((home / "models" / "echo").resolve())
-    assert local.gemma_path == str((home / "gemma").resolve())
+    assert local.path == str((home / "models" / "h3").resolve())
+    assert local.vdn_checkpoint == str((home / "vdn").resolve())
 
-    hub = EchoModelSection.model_validate(
-        {"family": "echo", "path": "org/echo-model", "gemma_path": "google/gemma-3-12b"}
+    hub = VDNH3ModelSection.model_validate(
+        {"family": "vdn_h3", "path": "org/h3-model", "vdn_checkpoint": "org/vdn-h3"}
     )
-    assert (hub.path, hub.gemma_path) == ("org/echo-model", "google/gemma-3-12b")
+    assert (hub.path, hub.vdn_checkpoint) == ("org/h3-model", "org/vdn-h3")

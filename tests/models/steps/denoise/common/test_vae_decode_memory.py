@@ -232,7 +232,6 @@ def test_configured_section_without_target_fails() -> None:
     ("family", "model_module_name", "model_class_name"),
     [
         ("causvid", "vrl.models.families.causvid.model", "CausVidPipelineModel"),
-        ("echo", "vrl.models.families.echo.model", "EchoPipelineModel"),
     ],
 )
 def test_targetless_in_process_runtime_rejects_direct_model_build_memory(

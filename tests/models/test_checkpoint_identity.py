@@ -252,16 +252,16 @@ def test_local_identity_omits_root_path_and_caches_duplicate_source(
 
     identity = resolve_checkpoint_model_identity(
         _build(
-            family="echo",
+            family="vdn_h3",
             path=str(model),
             revision="ignored-for-local-content",
-            gemma_path=str(model),
-            gemma_revision=None,
+            vdn_checkpoint=str(model),
+            vdn_revision=None,
         ),
     )
 
     assert calls == [model.resolve()]
-    assert identity["sources"]["main"] == identity["sources"]["gemma"]
+    assert identity["sources"]["main"] == identity["sources"]["vdn"]
     assert identity["sources"]["main"]["kind"] == "local-tree"
     assert identity["sources"]["main"]["bytes"] == 7
     assert identity["sources"]["main"]["files"] == 1
@@ -379,28 +379,6 @@ def test_causvid_local_checkpoint_file_ignores_unused_member(
     }
     assert "ignored/model.pt" not in repr(identity)
     assert "location-only" not in repr(identity)
-
-
-def test_echo_construction_dimensions_change_identity() -> None:
-    shared = {
-        "family": "echo",
-        "gemma_path": "example/gemma",
-        "gemma_revision": _OTHER_COMMIT,
-    }
-    omitted = resolve_checkpoint_model_identity(_build(**shared))
-    explicit_defaults = resolve_checkpoint_model_identity(
-        _build(**shared, video_height=512, video_width=768),
-    )
-    changed = resolve_checkpoint_model_identity(
-        _build(**shared, video_height=256, video_width=256),
-    )
-
-    assert omitted == explicit_defaults
-    assert omitted["build"]["video_height"] == 512
-    assert omitted["build"]["video_width"] == 768
-    assert changed["build"]["video_height"] == 256
-    assert changed["build"]["video_width"] == 256
-    assert changed != omitted
 
 
 @pytest.mark.parametrize(

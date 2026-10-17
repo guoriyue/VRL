@@ -554,7 +554,7 @@ class GenericDenoiseBatchExecutor(DenoiseBatchExecutorBase):
     dispatches here; the launcher reads that block wholesale into these
     constructor kwargs (family/task come from the registry entry, the worker
     injects family/task from the launch config). Families with real
-    per-batch input preparation (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
+    per-batch input preparation (cosmos predict2/2.5, cosmos3, wan i2v) keep
     their own subclass.
     """
 

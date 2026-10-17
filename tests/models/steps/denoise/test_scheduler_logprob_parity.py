@@ -41,11 +41,6 @@ _BATCH = 2
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduler_configs.json"
 
 
-def _echo_scheduler():
-    diffusers = pytest.importorskip("diffusers")
-    return diffusers.FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
-
-
 def _full_sequence_diffusion_families() -> list[str]:
     """Return families backed by the generic full-sequence SDE evaluator."""
 
@@ -81,16 +76,8 @@ _SCHEDULER_FIXTURES: dict[str, dict[str, object]] = json.loads(
     _FIXTURE_PATH.read_text(),
 )
 
-_MANUAL_SCHEDULERS = {
-    "echo": _echo_scheduler,
-}
-assert set(_full_sequence_diffusion_families()) >= set(_MANUAL_SCHEDULERS)
-
 
 def _scheduler_for(family: str):
-    if family in _MANUAL_SCHEDULERS:
-        return _MANUAL_SCHEDULERS[family]()
-
     diffusers = pytest.importorskip("diffusers")
     config = dict(_SCHEDULER_FIXTURES[family]["config"])
     scheduler_cls = getattr(diffusers, config.pop("_class_name"))
@@ -125,10 +112,7 @@ def _set_timesteps(scheduler) -> None:
 
 def test_scheduler_fixtures_have_complete_pinned_provenance() -> None:
     """Every checkpoint-owned scheduler is pinned and tied to a model YAML."""
-    checkpoint_owned = set(_full_sequence_diffusion_families()) - set(
-        _MANUAL_SCHEDULERS,
-    )
-    assert set(_SCHEDULER_FIXTURES) == checkpoint_owned
+    assert set(_SCHEDULER_FIXTURES) == set(_full_sequence_diffusion_families())
 
     model_repos = _model_repos_by_family()
     for family, fixture in _SCHEDULER_FIXTURES.items():
