@@ -8,7 +8,7 @@
 环境：单卡 RTX 5090（32GB，sm_120/Blackwell）。两侧各用各自 env——naive 跑主环境；vLLM-Omni 跑项目自带的
 `.venvs/vllm-omni`（vllm 0.22.0 + vllm_omni 0.22.0，torch 2.11+cu130）。weights 走本地缓存（offline）。
 
-工具（都在 `vrl/scripts/perf/`）：
+工具（原在 `vrl/scripts/perf/`，2026-10-16 随一次性 perf 脚本一起删除；复跑时从 git 历史 `47f276be7` 取回）：
 - naive：`generation_bottleneck_profile.py`（`--e2e` 端到端 / 默认单步 kernel 画像）。
 - vLLM-Omni：`vllm_omni_diffusion_profile.py`（在 `.venvs/vllm-omni` 里跑）。
 

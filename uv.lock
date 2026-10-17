@@ -6943,7 +6943,7 @@ requires-dist = [
     { name = "vbench", marker = "extra == 'videoeval'", specifier = "==0.1.5" },
     { name = "vllm", marker = "extra == 'ar-vllm'", specifier = ">=0.21.0,<0.22" },
 ]
-provides-extras = ["cosmos", "reward", "reward-service", "data", "detection", "ocr", "ar-vllm", "videoeval", "optim8bit", "perf"]
+provides-extras = ["cosmos", "reward", "reward-service", "data", "detection", "ocr", "ar-vllm", "videoeval", "optim8bit"]
 
 [package.metadata.requires-dev]
 lint = [{ name = "ruff", specifier = ">=0.4.0" }]

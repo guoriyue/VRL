@@ -135,11 +135,6 @@ videoeval = [
 optim8bit = [
     "bitsandbytes>=0.43.0",
 ]
-# GPU performance probes under vrl/scripts/perf. NVML GPM (gpm_sampler.py) reports
-# SM-level counters such as utilization, occupancy, and tensor/DRAM activity. These
-# counters explain execution but do not, by themselves, prove recoverable throughput.
-# Kept as an install-compatible alias; NVML is now required by core parking.
-perf = []
 
 [project.scripts]
 vrl-train = "vrl.scripts.train:main"

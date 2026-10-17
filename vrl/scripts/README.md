@@ -11,7 +11,6 @@
 | `denoise/` | Offline target-latent preparation | Long-term asset generation |
 | `eval/` | Checkpoint evaluation, reward gates, and temporary proof probes | Mixed; see rules below |
 | `generation/` | Generation-path correctness probes without Ray or a trainer | Long-term verification |
-| `perf/` | Hardware, numerical, and scheduling measurements | Long-term diagnostics or temporary measurements |
 
 Run installed training commands through `vrl-train`. Other commands expose their
 CLI with `python -m vrl.scripts.<module> --help`; data preparation is routed through

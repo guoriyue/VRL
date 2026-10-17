@@ -7,13 +7,13 @@ asserts the trace/summary/manifest trust triad. The nvtx tests carry a
 
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 
 import pytest
 import torch
 
-from vrl.scripts.perf.profile_smoke import run_smoke
 from vrl.utils.profiling import (
     ProfilerActivitySelection,
     TimeIntervals,
@@ -34,8 +34,8 @@ _NVTX_DEPTH_IS_UNOBSERVABLE = pytest.mark.real_cover(
         "nvtx range depth is unobservable from inside the process: with no profiler "
         "attached torch.cuda.nvtx.range_push/range_pop both return -2 even when CUDA is "
         "available, so counting the calls is the only way to assert push/pop stay paired. "
-        "The real CUDA emission is driven by vrl/scripts/perf/profile_smoke.py under nsys "
-        "on a GPU box, which is a script, not a test"
+        "The real CUDA emission is visible only to an external collector (nsys with "
+        "VRL_PROFILE=1) on a GPU box"
     ),
     tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
@@ -172,19 +172,34 @@ def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
 
 
 def test_cpu_trace_writes_trace_summary_manifest(tmp_path: Path) -> None:
-    manifest = run_smoke(("cpu",), tmp_path)
+    config = TorchProfilerConfig(
+        enabled=True, activities=("cpu",), output_dir=str(tmp_path / "torch_profiler")
+    )
+    with (
+        capture_torch_trace(
+            config, step=0, device="cpu", worker_name="smoke", trace_subdir="smoke"
+        ),
+        profile_range("test.outer"),
+    ):
+        (torch.ones(64, 64) @ torch.ones(64, 64)).sum().item()
+
+    trace_dir = tmp_path / "torch_profiler" / "smoke"
+    manifest = json.loads((trace_dir / "profile_manifest.json").read_text(encoding="utf-8"))
     assert manifest["effective_activities"] == ["cpu"]
     assert manifest["missing_activities"] == []
     assert manifest["trace_files"]
-    assert manifest["summary_file"]
-
-    trace_dir = tmp_path / "torch_profiler" / "profile_smoke"
-    assert (trace_dir / "profile_manifest.json").is_file()
+    trace_text = ""
+    for name in manifest["trace_files"]:
+        path = trace_dir / name
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt", encoding="utf-8") as handle:
+            trace_text += handle.read()
+    # The stage range name reaches the trace.
+    assert "test.outer" in trace_text
     summary_text = (trace_dir / manifest["summary_file"]).read_text(encoding="utf-8")
     # Summary must warn against summing nested-range percentages.
     assert "not additive wall-time" in summary_text
 
-    # run_smoke returns the manifest parsed from the file it just produced.
     required = {
         "schema_version",
         "requested_activities",
