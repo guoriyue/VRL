@@ -278,7 +278,7 @@ def _build(**overrides: Any) -> ModelBuild:
 
 @pytest.mark.parametrize(
     "family",
-    ["sd3_5", "sana", "cogvideox", "wan_2_1"],
+    ["sd3_5", "sana", "wan_2_1"],
 )
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
@@ -305,7 +305,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         fake_transformer_loader,
     )
     monkeypatch.setattr(_shared_build, "load_flow_match_scheduler", _flow_match_scheduler)
-    # Families with a scheduler_classname (cogvideox) load through the
+    # Families with a scheduler_classname (wan_2_1) load through the
     # classname path instead of the flow-match default.
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
 
@@ -359,62 +359,6 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 
     assert scheduler_classes == ["UniPCMultistepScheduler"]
     assert isinstance(bundle.scheduler, UniPCMultistepScheduler)
-
-
-@pytest.mark.real_cover(
-    "tests/models/steps/denoise/test_scheduler_logprob_parity.py"
-    "::test_family_scheduler_sample_replay_parity",
-    why=(
-        "the transformer is a double and the rebuilt ladder is pinned by class and length only "
-        "(literal timestep values move with the diffusers version); element-wise parity between "
-        "this replay ladder and the rollout's runs on real schedulers in the counterpart"
-    ),
-)
-@pytest.mark.parametrize(
-    ("family", "scheduler_class"),
-    [("mochi", "FlowMatchEulerDiscreteScheduler"), ("pixart_sigma", "DDIMScheduler")],
-)
-def test_replay_builders_standardize_the_loaded_scheduler_onto_the_rollout_ladder(
-    monkeypatch: pytest.MonkeyPatch,
-    family: str,
-    scheduler_class: str,
-) -> None:
-    """``prepare_replay`` replaces the scheduler the loader handed over.
-
-    Mochi ships ``invert_sigmas`` (ascending time) and PixArt ships a DPM-Solver;
-    both replay models rebuild the rollout's own ladder from the shipped config
-    and ``build.num_steps``. The loaded instance must therefore NOT survive.
-    """
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.models.steps.denoise import build as _shared_build
-
-    loaded: list[Any] = []
-
-    def loader(*args: Any, **kwargs: Any) -> Any:
-        scheduler = (
-            _diffusers_scheduler(*args, **kwargs)
-            if len(args) > 1
-            else _flow_match_scheduler(*args, **kwargs)
-        )
-        loaded.append(scheduler)
-        return scheduler
-
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_transformer",
-        lambda *_args, **_kwargs: _TinyTransformer(),
-    )
-    monkeypatch.setattr(_shared_build, "load_flow_match_scheduler", loader)
-    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", loader)
-
-    bundle = get_model_family_entry(family).build_replay(
-        _build(family=family, scheduler_config={"num_steps": 2}), expected_identity=None
-    )
-
-    (shipped,) = loaded
-    assert bundle.scheduler is not shipped
-    assert type(bundle.scheduler).__name__ == scheduler_class
-    assert bundle.scheduler.timesteps.numel() == 2
 
 
 def test_wan_i2v_replay_builder_uses_i2v_replay_model(

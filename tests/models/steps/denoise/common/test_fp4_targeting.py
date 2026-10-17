@@ -11,7 +11,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.nn.quantization.targeting import LinearTargetProfile
 
 
-@pytest.mark.parametrize("name", ["wan", "sd3", "flux", "qwen_image", "lumina2"])
+@pytest.mark.parametrize("name", ["wan", "sd3", "flux", "qwen_image"])
 def test_nvfp4_selects_real_mlp_paths_but_not_attention(name) -> None:
     transformer = build_tiny_transformer(name)
     linear_paths = [

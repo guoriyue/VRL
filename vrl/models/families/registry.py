@@ -26,7 +26,6 @@ GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
 # Lazy public-sampling schema protocol values. Families share a path only when
 # they expose the same real request vocabulary; no per-family empty class is
 # needed merely to make registry entries look unique.
-DENOISE_IMAGE_SAMPLING_SECTION_CLS = "vrl.config.sampling_schema:DenoiseImageSamplingSection"
 TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS = (
     "vrl.config.sampling_schema:TextEncodedImageSamplingSection"
 )
@@ -572,96 +571,6 @@ _register_model_family(
     ),
 )
 
-_register_model_family(
-    _full_sequence_entry(
-        family="lumina2",
-        task="t2i",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.lumina2.model:Lumina2PipelineModel",
-            replay_cls="vrl.models.families.lumina2.model:Lumina2Model",
-            transformer_classname="Lumina2Transformer2DModel",
-        ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_entry(
-        family="hunyuan_video",
-        task="t2v",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoPipelineModel",
-            replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
-            transformer_classname="HunyuanVideoTransformer3DModel",
-        ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_entry(
-        family="mochi",
-        task="t2v",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.mochi.model:MochiPipelineModel",
-            replay_cls="vrl.models.families.mochi.model:MochiModel",
-            transformer_classname="MochiTransformer3DModel",
-        ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_entry(
-        family="hunyuan_image",
-        task="t2i",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=DENOISE_IMAGE_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.hunyuan_image.model:HunyuanImagePipelineModel",
-            replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
-            transformer_classname="HunyuanImageTransformer2DModel",
-        ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_entry(
-        family="pixart_sigma",
-        task="t2i",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaPipelineModel",
-            replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
-            transformer_classname="PixArtTransformer2DModel",
-            # Epsilon DDPM family (sde_type=ddim): load a DDIMScheduler so the
-            # shipped beta config survives into prepare_replay, which rebuilds
-            # the rollout's DDIM ladder via pixart_ddim_scheduler.
-            scheduler_classname="DDIMScheduler",
-        ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_entry(
-        family="cogvideox",
-        task="t2v",
-        model_section_cls="vrl.config.model_schema:ModelSection",
-        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.cogvideox.model:CogVideoXPipelineModel",
-            replay_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
-            transformer_classname="CogVideoXTransformer3DModel",
-            # v-prediction DDPM family: replay recomputes log-probs on the
-            # same ladder the rollout sampled (sde_type=ddim).
-            scheduler_classname="CogVideoXDDIMScheduler",
-        ),
-    ),
-)
 
 _register_model_family(
     _full_sequence_entry(

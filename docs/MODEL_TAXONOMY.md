@@ -34,7 +34,7 @@ solver steps, with each step updating the full output field.
 
 | Profile | Current families |
 |---|---|
-| `full_sequence` | SD3.5, Flux, Qwen-Image, SANA, Lumina2, Hunyuan image/video, Mochi, PixArt-Sigma, CogVideoX, Wan, Cosmos variants, Anima, Echo |
+| `full_sequence` | SD3.5, Flux, Qwen-Image, SANA, Wan, Cosmos variants, Anima, Echo |
 | `chunk_autoregressive` | CausVid (trainable Gaussian re-noise); MAGI-1 (generation-only trajectory) |
 
 ## Chunk-autoregressive support

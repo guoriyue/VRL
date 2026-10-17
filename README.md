@@ -63,12 +63,6 @@ positioning and roadmap.
 | **Qwen-Image** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Qwen-Image-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **SANA** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **Lumina-Image-2** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **HunyuanImage-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **PixArt-Sigma** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **CogVideoX** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **HunyuanVideo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **Mochi-1** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Wan2.1** | text/image -> video | full_sequence / denoise | GRPO, DPO | 🧪 Runnable |
 | **Wan2.2** | image -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |

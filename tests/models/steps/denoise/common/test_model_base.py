@@ -19,7 +19,6 @@ from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.flux.model import FluxPipelineModel
-from vrl.models.families.mochi.model import MochiPipelineModel
 from vrl.models.families.sd3_5.model import SD3_5PipelineModel
 from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 from vrl.models.interfaces import GenerationMemoryPolicy
@@ -142,11 +141,11 @@ class _LoadedPipeline:
 
 def _bare_build(**memory: Any) -> ModelBuild:
     return ModelBuild(
-        model_name_or_path="genmo/mochi-1-preview",
+        model_name_or_path="stabilityai/stable-diffusion-3.5-medium",
         revision=None,
         device="cuda:0",
         parameter_dtype=torch.bfloat16,
-        family="mochi",
+        family="sd3_5",
         precision=RolePrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
         generation_memory=GenerationMemoryPolicy(**memory) if memory else None,
@@ -166,7 +165,7 @@ def _load_pipeline(monkeypatch: Any, pipeline: Any) -> None:
 def test_freeze_pipeline_components_does_not_move_or_cast_modules() -> None:
     pipeline = _LoadedPipeline()
 
-    MochiPipelineModel.freeze_pipeline_components(pipeline)
+    SD3_5PipelineModel.freeze_pipeline_components(pipeline)
 
     assert pipeline.transformer.requires_grad_enabled is None
     assert pipeline.vae.requires_grad_enabled is False
@@ -179,7 +178,7 @@ def test_freeze_pipeline_components_does_not_move_or_cast_modules() -> None:
 def test_place_pipeline_components_does_not_change_gradients() -> None:
     pipeline = _LoadedPipeline()
 
-    cpu_resident = MochiPipelineModel.place_pipeline_components(
+    cpu_resident = SD3_5PipelineModel.place_pipeline_components(
         pipeline,
         _bare_build(cpu_resident=("text_encoder",)),
         prompt_encoder_dtype=torch.float16,
@@ -197,7 +196,7 @@ def test_shared_from_build_places_frozen_components_on_the_compute_device(monkey
     pipeline = _LoadedPipeline()
     _load_pipeline(monkeypatch, pipeline)
 
-    model = MochiPipelineModel.from_build(_bare_build())
+    model = SD3_5PipelineModel.from_build(_bare_build())
 
     assert model.pipeline is pipeline
     assert pipeline.text_encoder.requires_grad_enabled is False
@@ -211,7 +210,7 @@ def test_shared_from_build_keeps_cpu_resident_components_on_the_host(monkeypatch
     pipeline = _LoadedPipeline()
     _load_pipeline(monkeypatch, pipeline)
 
-    model = MochiPipelineModel.from_build(_bare_build(cpu_resident=("text_encoder",)))
+    model = SD3_5PipelineModel.from_build(_bare_build(cpu_resident=("text_encoder",)))
 
     assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
     # The VAE never follows the encoder: fp32 on the compute device.
@@ -223,7 +222,7 @@ def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch
     _load_pipeline(monkeypatch, _LoadedPipeline())
 
     with pytest.raises(ValueError, match="cpu_resident names component"):
-        MochiPipelineModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
+        SD3_5PipelineModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
 
 
 def test_shared_from_build_freezes_every_module_component_but_the_transformer(

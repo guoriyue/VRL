@@ -67,8 +67,8 @@ def combine_cfg(
     """Combine conditional and unconditional branch predictions.
 
     ``base="cond"`` is the Cosmos form ``cond + g * (cond - uncond)``.
-    ``normalize`` reproduces the norm-preserving combine of the Lumina2 and
-    Qwen-Image pipelines: after the linear blend, rescale the result back to
+    ``normalize`` reproduces the norm-preserving combine of the Qwen-Image
+    pipelines: after the linear blend, rescale the result back to
     the conditional branch's norm along the channel axis.
     """
 

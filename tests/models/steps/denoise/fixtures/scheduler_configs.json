@@ -1,28 +1,4 @@
 {
-  "cogvideox": {
-    "config": {
-      "_class_name": "CogVideoXDDIMScheduler",
-      "_diffusers_version": "0.30.0.dev0",
-      "beta_end": 0.012,
-      "beta_schedule": "scaled_linear",
-      "beta_start": 0.00085,
-      "clip_sample": false,
-      "clip_sample_range": 1.0,
-      "num_train_timesteps": 1000,
-      "prediction_type": "v_prediction",
-      "rescale_betas_zero_snr": true,
-      "sample_max_value": 1.0,
-      "set_alpha_to_one": true,
-      "snr_shift_scale": 3.0,
-      "steps_offset": 0,
-      "timestep_spacing": "trailing",
-      "trained_betas": null
-    },
-    "model_repo_id": "THUDM/CogVideoX-2b",
-    "revision": "1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "THUDM/CogVideoX-2b"
-  },
   "cosmos-predict2": {
     "config": {
       "_class_name": "FlowMatchEulerDiscreteScheduler",
@@ -145,74 +121,6 @@
     "scheduler_config_path": "scheduler/scheduler_config.json",
     "scheduler_repo_id": "black-forest-labs/FLUX.1-dev"
   },
-  "hunyuan_image": {
-    "config": {
-      "_class_name": "FlowMatchEulerDiscreteScheduler",
-      "_diffusers_version": "0.36.0.dev0",
-      "base_image_seq_len": 256,
-      "base_shift": 0.5,
-      "invert_sigmas": false,
-      "max_image_seq_len": 4096,
-      "max_shift": 1.15,
-      "num_train_timesteps": 1000,
-      "shift": 5.0,
-      "shift_terminal": null,
-      "stochastic_sampling": false,
-      "time_shift_type": "exponential",
-      "use_beta_sigmas": false,
-      "use_dynamic_shifting": false,
-      "use_exponential_sigmas": false,
-      "use_karras_sigmas": false
-    },
-    "model_repo_id": "hunyuanvideo-community/HunyuanImage-2.1-Diffusers",
-    "revision": "7e7b7a177de58591aeaffca0929f4765003d7ced",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "hunyuanvideo-community/HunyuanImage-2.1-Diffusers"
-  },
-  "hunyuan_video": {
-    "config": {
-      "_class_name": "FlowMatchEulerDiscreteScheduler",
-      "_diffusers_version": "0.32.0.dev0",
-      "base_image_seq_len": 256,
-      "base_shift": 0.5,
-      "invert_sigmas": false,
-      "max_image_seq_len": 4096,
-      "max_shift": 1.15,
-      "num_train_timesteps": 1000,
-      "shift": 7.0,
-      "shift_terminal": null,
-      "use_beta_sigmas": false,
-      "use_dynamic_shifting": false,
-      "use_exponential_sigmas": false,
-      "use_karras_sigmas": false
-    },
-    "model_repo_id": "hunyuanvideo-community/HunyuanVideo",
-    "revision": "e8c2aaa66fe3742a32c11a6766aecbf07c56e773",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "hunyuanvideo-community/HunyuanVideo"
-  },
-  "lumina2": {
-    "config": {
-      "_class_name": "FlowMatchEulerDiscreteScheduler",
-      "_diffusers_version": "0.33.0.dev0",
-      "base_image_seq_len": 256,
-      "base_shift": 0.5,
-      "invert_sigmas": false,
-      "max_image_seq_len": 4096,
-      "max_shift": 1.15,
-      "num_train_timesteps": 1000,
-      "shift": 6.0,
-      "shift_terminal": null,
-      "use_beta_sigmas": false,
-      "use_dynamic_shifting": false,
-      "use_exponential_sigmas": false,
-      "use_karras_sigmas": false
-    },
-    "model_repo_id": "Alpha-VLLM/Lumina-Image-2.0",
-    "revision": "53504abd8178b30685b6c4c7a4cd181ff78b73e9",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "Alpha-VLLM/Lumina-Image-2.0"
-  },
   "minimax_h3": {
     "model_repo_id": "MiniMaxAI/MiniMax-H3",
     "scheduler_repo_id": "MiniMaxAI/MiniMax-H3",
@@ -224,54 +132,6 @@
       "shift": 12.0
     },
     "note": "Video schedule only (shift 12). The audio schedule (audio_scheduler/, shift 3) is a deterministic side stream outside the SDE log-prob path."
-  },
-  "mochi": {
-    "config": {
-      "_class_name": "FlowMatchEulerDiscreteScheduler",
-      "_diffusers_version": "0.32.0.dev0",
-      "base_image_seq_len": 256,
-      "base_shift": 0.5,
-      "invert_sigmas": true,
-      "max_image_seq_len": 4096,
-      "max_shift": 1.15,
-      "num_train_timesteps": 1000,
-      "shift": 1.0,
-      "use_dynamic_shifting": false
-    },
-    "model_repo_id": "genmo/mochi-1-preview",
-    "revision": "14be5fcea23095ed330cb214647916a451e38b6e",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "genmo/mochi-1-preview"
-  },
-  "pixart_sigma": {
-    "config": {
-      "_class_name": "DPMSolverMultistepScheduler",
-      "_diffusers_version": "0.22.0.dev0",
-      "algorithm_type": "dpmsolver++",
-      "beta_end": 0.02,
-      "beta_schedule": "linear",
-      "beta_start": 0.0001,
-      "dynamic_thresholding_ratio": 0.995,
-      "euler_at_final": false,
-      "lower_order_final": true,
-      "num_train_timesteps": 1000,
-      "prediction_type": "epsilon",
-      "sample_max_value": 1.0,
-      "solver_order": 2,
-      "solver_type": "midpoint",
-      "steps_offset": 0,
-      "thresholding": false,
-      "timestep_spacing": "linspace",
-      "trained_betas": null,
-      "use_karras_sigmas": false,
-      "use_lu_lambdas": false,
-      "variance_type": null
-    },
-    "model_repo_id": "PixArt-alpha/PixArt-Sigma-XL-2-512-MS",
-    "note": "The configured 512-MS repository ships transformer weights only; its scheduler declaration comes from the upstream Sigma 1024-MS Diffusers sibling.",
-    "revision": "e102b3591cc82e97071b8b4cb90d834d0c487207",
-    "scheduler_config_path": "scheduler/scheduler_config.json",
-    "scheduler_repo_id": "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
   },
   "qwen_image": {
     "config": {

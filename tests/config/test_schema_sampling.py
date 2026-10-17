@@ -6,7 +6,6 @@ import pytest
 
 from tests.config.helpers import minimal_grpo_cfg
 from vrl.config.sampling_schema import (
-    DenoiseImageSamplingSection,
     TextEncodedImageSamplingSection,
     VideoSamplingSection,
 )
@@ -34,27 +33,17 @@ def test_sampling_section_requires_model_family_for_schema_selection() -> None:
         parse_config(cfg)
 
 
-@pytest.mark.parametrize(
-    ("family", "expected_type"),
-    [
-        ("hunyuan_image", DenoiseImageSamplingSection),
-        ("cosmos-predict2", VideoSamplingSection),
-    ],
-)
-def test_family_without_text_length_rejects_max_sequence_length(
-    family: str,
-    expected_type: type,
-) -> None:
-    cfg = minimal_grpo_cfg(model={"family": family})
+def test_family_without_text_length_rejects_max_sequence_length() -> None:
+    cfg = minimal_grpo_cfg(model={"family": "cosmos-predict2"})
     cfg.sampling = {"max_sequence_length": 512}
 
     with pytest.raises(ValueError, match=r"unknown sampling\.max_sequence_length"):
         parse_config(cfg)
 
     parsed = parse_config(
-        minimal_grpo_cfg(model={"family": family}, sampling={}),
+        minimal_grpo_cfg(model={"family": "cosmos-predict2"}, sampling={}),
     )
-    assert type(parsed.sampling) is expected_type
+    assert type(parsed.sampling) is VideoSamplingSection
 
 
 def test_echo_accepts_only_baked_guidance_value() -> None:

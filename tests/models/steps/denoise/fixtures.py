@@ -64,43 +64,12 @@ TINY_FLUX_POOLED_DIM = 16
 TINY_SANA_LATENT_SHAPE = (2, 4, 8, 8)
 TINY_SANA_CAPTION_DIM = 16
 
-TINY_LUMINA2_LATENT_SHAPE = (2, 4, 8, 8)
-TINY_LUMINA2_CAP_DIM = 16
-
-TINY_HUNYUAN_VIDEO_LATENT_SHAPE = (2, 4, 3, 8, 8)
-TINY_HUNYUAN_VIDEO_TEXT_DIM = 16
-TINY_HUNYUAN_VIDEO_POOLED_DIM = 8
-
-TINY_MOCHI_LATENT_SHAPE = (2, 4, 3, 8, 8)
-TINY_MOCHI_TEXT_DIM = 16
-
-TINY_COGVIDEOX_LATENT_SHAPE = (2, 3, 4, 8, 8)  # [B, F, C, H, W]
-TINY_COGVIDEOX_TEXT_DIM = 16
-TINY_COGVIDEOX_TEXT_LEN = 8
-
 # Qwen-Image feeds PACKED latents [B, seq, C*4] with C=4 -> 16 in_channels.
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 
 TINY_QWEN21_IN_CHANNELS = 8
 TINY_QWEN21_CONTEXT_DIM = 16
-
-_TINY_COGVIDEOX_CONFIG: dict[str, Any] = dict(
-    num_attention_heads=2,
-    attention_head_dim=8,
-    in_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
-    out_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
-    time_embed_dim=8,
-    text_embed_dim=TINY_COGVIDEOX_TEXT_DIM,
-    num_layers=1,
-    sample_width=16,
-    sample_height=16,
-    sample_frames=9,
-    patch_size=2,
-    temporal_compression_ratio=4,
-    max_text_seq_length=TINY_COGVIDEOX_TEXT_LEN,
-    use_rotary_positional_embeddings=False,
-)
 
 _TINY_WAN_CONFIG: dict[str, Any] = dict(
     patch_size=(1, 2, 2),
@@ -196,66 +165,6 @@ _TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
             sample_size=TINY_SANA_LATENT_SHAPE[2],
             patch_size=1,
         ),
-    ),
-    "lumina2": (
-        "Lumina2Transformer2DModel",
-        dict(
-            sample_size=TINY_LUMINA2_LATENT_SHAPE[2],
-            patch_size=2,
-            in_channels=TINY_LUMINA2_LATENT_SHAPE[1],
-            hidden_size=16,
-            num_layers=1,
-            num_refiner_layers=1,
-            num_attention_heads=2,
-            num_kv_heads=2,
-            multiple_of=16,
-            axes_dim_rope=(4, 2, 2),
-            cap_feat_dim=TINY_LUMINA2_CAP_DIM,
-        ),
-    ),
-    "hunyuan_video": (
-        "HunyuanVideoTransformer3DModel",
-        dict(
-            in_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
-            out_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
-            num_attention_heads=2,
-            attention_head_dim=8,
-            num_layers=1,
-            num_single_layers=1,
-            num_refiner_layers=1,
-            patch_size=2,
-            patch_size_t=1,
-            guidance_embeds=True,
-            text_embed_dim=TINY_HUNYUAN_VIDEO_TEXT_DIM,
-            pooled_projection_dim=TINY_HUNYUAN_VIDEO_POOLED_DIM,
-            rope_axes_dim=(2, 4, 2),
-        ),
-    ),
-    "mochi": (
-        "MochiTransformer3DModel",
-        dict(
-            patch_size=2,
-            num_attention_heads=2,
-            attention_head_dim=8,
-            num_layers=1,
-            pooled_projection_dim=16,
-            in_channels=TINY_MOCHI_LATENT_SHAPE[1],
-            text_embed_dim=TINY_MOCHI_TEXT_DIM,
-            time_embed_dim=8,
-            max_sequence_length=16,
-        ),
-    ),
-    # Mirrors the 2b config: learned positional embeddings.
-    "cogvideox": ("CogVideoXTransformer3DModel", _TINY_COGVIDEOX_CONFIG),
-    # Mirrors the 5b config: external rotary embeddings passed into forward.
-    # 3D RoPE splits head_dim across (t, h, w); 16 keeps every split even.
-    "cogvideox_rope": (
-        "CogVideoXTransformer3DModel",
-        {
-            **_TINY_COGVIDEOX_CONFIG,
-            "attention_head_dim": 16,
-            "use_rotary_positional_embeddings": True,
-        },
     ),
     # out_channels(4) * patch_size**2(4) == in_channels(16) so the noise_pred
     # matches the packed latent for the SDE step. axes_dims_rope sums to

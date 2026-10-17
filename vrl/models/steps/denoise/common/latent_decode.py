@@ -37,9 +37,9 @@ class ChunkedLatentDecoder:
 class VaeDecodeMixin:
     """``decode_latents`` for families whose denormalization is scale + shift.
 
-    sd3_5, pixart_sigma, lumina2, hunyuan_image, sana and hunyuan_video carried
-    byte-identical decode bodies; the only real differences were the output
-    layout and whether the VAE ships a ``shift_factor``.
+    sd3_5 and sana carried byte-identical decode bodies; the only real
+    differences were the output layout and whether the VAE ships a
+    ``shift_factor``.
 
     OPT IN BY LISTING THIS MIXIN FIRST in the bases. ``decode_latents`` is an
     ``@abstractmethod`` on ``DenoisePipelineModelBase``, so a mixin placed after
@@ -47,37 +47,29 @@ class VaeDecodeMixin:
     survives, and the class raises ``TypeError`` at instantiation.
 
     Families whose decode is more than scale + shift keep their own override:
-    flux/qwen_image unpack packed latents first, mochi/cogvideox denormalize
-    with per-channel ``latents_mean``/``latents_std``, and cosmos/wan/echo/
-    causvid decode outside a diffusers image processor entirely.
+    flux/qwen_image unpack packed latents first, and cosmos/wan/echo/causvid
+    decode outside a diffusers image processor entirely.
     """
 
-    # hunyuan_video is the only member that decodes 5D latents; everything else
-    # produces images.
-    _decode_output_layout: LatentOutputLayout = "image_bchw"
-
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents through the pipeline VAE and its output processor."""
+        """Decode latents through the pipeline VAE and its image processor."""
 
         pipe = self.pipeline
         vae = pipe.vae
         scaling_factor = vae.config.scaling_factor
-        # Read unconditionally. DC-AE (sana) and the two Hunyuan VAEs ship no
-        # ``shift_factor`` at all, so the default makes the shift a no-op there
-        # — one arithmetic path instead of a per-family branch, and a
-        # checkpoint that ever gains the field is then handled like sd3's.
+        # Read unconditionally. DC-AE (sana) ships no ``shift_factor`` at all,
+        # so the default makes the shift a no-op there — one arithmetic path
+        # instead of a per-family branch, and a checkpoint that ever gains the
+        # field is then handled like sd3's.
         shift_factor = getattr(vae.config, "shift_factor", 0.0) or 0.0
-
-        def postprocess(decoded: torch.Tensor) -> torch.Tensor:
-            if self._decode_output_layout == "video_btchw":
-                return pipe.video_processor.postprocess_video(decoded, output_type="pt")
-            return pipe.image_processor.postprocess(decoded, output_type="pt")
 
         decoder = ChunkedLatentDecoder(
             prepare_latents=lambda batch: batch.to(vae.dtype) / scaling_factor + shift_factor,
             vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
-            postprocess=postprocess,
-            output_layout=self._decode_output_layout,
+            postprocess=lambda decoded: pipe.image_processor.postprocess(
+                decoded, output_type="pt"
+            ),
+            output_layout="image_bchw",
         )
         return decoder(latents)
 

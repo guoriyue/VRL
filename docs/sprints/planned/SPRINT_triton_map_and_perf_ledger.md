@@ -173,11 +173,11 @@ resolved config + 运行日志为准，preset 文件链不可作数。
 
 仓内 21 个 family（`vrl/models/families/`）分三类，Triton 判定按类给：
 
-### 5.1 图像扩散（anima/sd3_5/sana/flux/pixart_sigma/lumina2/qwen_image/hunyuan_image/glm_image 扩散侧）
+### 5.1 图像扩散（sd3_5/sana/flux/qwen_image 扩散侧）
 
 即 §1–§2 的实测基准。判定：**不新写 kernel**；P1 compile + P2 NVFP4 即全部收益。
 
-### 5.2 视频扩散（wan_2_1/cosmos V2W/mochi/hunyuan_video/cogvideox/causvid/magi_1/echo）
+### 5.2 视频扩散（wan_2_1/cosmos V2W/causvid/magi_1/echo）
 
 SDE 逐元素数学的账在视频上重算一遍，结论不变：
 

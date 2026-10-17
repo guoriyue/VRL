@@ -86,11 +86,6 @@ _MANUAL_SCHEDULERS = {
 }
 assert set(_full_sequence_diffusion_families()) >= set(_MANUAL_SCHEDULERS)
 
-# alphas_cumprod-ladder families: their rollout/replay log-probs run through
-# sde_type="ddim", never the flow SDE — the parity invariant is checked there.
-_DDIM_FAMILIES = {"cogvideox", "pixart_sigma"}
-assert set(_full_sequence_diffusion_families()) >= _DDIM_FAMILIES
-
 
 def _scheduler_for(family: str):
     if family in _MANUAL_SCHEDULERS:
@@ -101,35 +96,15 @@ def _scheduler_for(family: str):
     scheduler_cls = getattr(diffusers, config.pop("_class_name"))
     scheduler = scheduler_cls.from_config(config)
 
-    if family == "mochi":
-        # Mochi ships invert_sigmas=true (ascending time), while rollout and
-        # replay standardize onto the descending domain before SDE math.
-        from vrl.models.families.mochi.model import standard_mochi_scheduler
-
-        scheduler = standard_mochi_scheduler(scheduler.config, _NUM_STEPS, "cpu")
-        scheduler._vrl_timesteps_ready = True
-    elif family == "pixart_sigma":
-        # The shipped DPM solver is deterministic; production rebuilds a DDIM
-        # scheduler on the same trained beta ladder for RL log-probs.
-        from vrl.models.families.pixart_sigma.model import pixart_ddim_scheduler
-
-        scheduler = pixart_ddim_scheduler(scheduler.config, _NUM_STEPS, "cpu")
-        scheduler._vrl_timesteps_ready = True
-    elif family in {"hunyuan_image", "hunyuan_video"}:
-        # These pipelines explicitly pass this linear sigma declaration rather
-        # than relying on the scheduler's default timestep construction.
-        sigmas = torch.linspace(1.0, 0.0, _NUM_STEPS + 1)[:-1].numpy()
-        scheduler.set_timesteps(sigmas=sigmas)
-        scheduler._vrl_timesteps_ready = True
     return scheduler
 
 
 def _parity_cases() -> list[object]:
     cases = []
     for family in sorted(_full_sequence_diffusion_families()):
-        sde_types = ("ddim",) if family in _DDIM_FAMILIES else ("flow_grpo", "cps")
         cases.extend(
-            pytest.param(family, sde_type, id=f"{family}-{sde_type}") for sde_type in sde_types
+            pytest.param(family, sde_type, id=f"{family}-{sde_type}")
+            for sde_type in ("flow_grpo", "cps")
         )
     return cases
 
@@ -141,8 +116,6 @@ def _set_timesteps(scheduler) -> None:
     # deterministic, valid sigma table: mu=0 for the exponential time shift,
     # mu=1 for the linear one (qwen_image_layered), where mu=0 collapses every
     # sigma to zero. Fixed-schedule schedulers ignore mu.
-    if getattr(scheduler, "_vrl_timesteps_ready", False):
-        return  # family construction already set its own ladder (mochi)
     if getattr(scheduler.config, "use_dynamic_shifting", False):
         linear = getattr(scheduler.config, "time_shift_type", "exponential") == "linear"
         scheduler.set_timesteps(_NUM_STEPS, mu=1.0 if linear else 0.0)
