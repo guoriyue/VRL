@@ -62,9 +62,9 @@ def test_flow_sde_training_skips_the_last_step_and_other_evaluators_keep_it() ->
     random_pick = _indices(flow, batch, 1.0, "random")
     assert 19 not in random_pick and len(random_pick) == 19
 
-    ddim = bare_trainer(
-        evaluator=DenoiseSDELogProbEvaluator(scheduler=_scheduler(20), sde_type="ddim")
+    cps = bare_trainer(
+        evaluator=DenoiseSDELogProbEvaluator(scheduler=_scheduler(20), sde_type="cps")
     )
-    assert _indices(ddim, batch, 1.0, "strided") == list(range(20))
+    assert _indices(cps, batch, 1.0, "strided") == list(range(20))
     other = bare_trainer(evaluator=None)
     assert _indices(other, batch, 1.0, "strided") == list(range(20))

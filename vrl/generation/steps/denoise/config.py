@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 DenoiseMode = Literal["native", "sde"]
-SdeType = Literal["flow_grpo", "cps", "ddim"]
+SdeType = Literal["flow_grpo", "cps"]
 
 
 @dataclass(frozen=True, slots=True)

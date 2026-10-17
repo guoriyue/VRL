@@ -83,8 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sde-type",
         default="flow_grpo",
-        choices=["flow_grpo", "cps", "ddim"],
-        help="log-prob math family (ddim for alphas-ladder checkpoints)",
+        choices=["flow_grpo", "cps"],
+        help="log-prob math family",
     )
     parser.add_argument(
         "--quantize",

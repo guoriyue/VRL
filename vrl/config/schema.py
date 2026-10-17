@@ -360,11 +360,11 @@ class SdeConfig(ConfigBase):
     guard stays for over-the-wire request dicts. Window fields require integers;
     their bounds are checked against the request schedule.
 
-    ``type`` names the replay/sampling transition distribution (flow_grpo, ddim,
-    or cps); it is orthogonal to ``denoise_mode`` (native/sde), which owns the
+    ``type`` names the replay/sampling transition distribution (flow_grpo or
+    cps); it is orthogonal to ``denoise_mode`` (native/sde), which owns the
     word ``sde``."""
 
-    type: Literal["flow_grpo", "ddim", "cps"]
+    type: Literal["flow_grpo", "cps"]
     # reader: vrl/generation/bindings/full_sequence/layout.py, which
     # owns the range/size checks against num_steps at the request boundary.
     window_size: StrictInt | None = None

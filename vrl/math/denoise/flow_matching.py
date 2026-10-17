@@ -9,7 +9,7 @@ from typing import Any
 
 @dataclass(slots=True)
 class SDEStepResult:
-    """Named outputs shared by flow-matching and DDIM denoising steps."""
+    """Named outputs of one flow-matching SDE step."""
 
     prev_sample: Any
     log_prob: Any
@@ -20,7 +20,7 @@ class SDEStepResult:
     # deviation and sqrt(-dt) are separate flow-domain quantities. Flash-GRPO's temporal
     # gradient rectification reads it: the log-prob gradient magnitude scales as
     # sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma), and the loss weight is
-    # that factor's reciprocal. None on the DDIM path (alphas ladder, no sigma).
+    # that factor's reciprocal.
     sigma: Any | None = None
 
 
@@ -184,26 +184,6 @@ def sde_step_with_logprob(
     ``sqrt_neg_dt`` are flow-domain quantities on every path, which keeps
     ratios, parity checks, and KL comparable across model families.
     """
-    if sde_type == "ddim":
-        # DDPM-family checkpoints (PixArt-Sigma, CogVideoX) live on an
-        # alphas_cumprod ladder, not rectified-flow sigmas; forward to the
-        # DDIM eta-SDE so every call site keeps this one entry point.
-        from vrl.math.denoise.ddim import ddim_step_with_logprob
-
-        return ddim_step_with_logprob(
-            scheduler,
-            model_output,
-            timestep,
-            sample,
-            prev_sample=prev_sample,
-            generator=generator,
-            deterministic=deterministic,
-            return_dt=return_dt,
-            noise_level=noise_level,
-            math_dtype=math_dtype,
-            step_index=step_index,
-        )
-
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
