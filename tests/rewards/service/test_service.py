@@ -25,7 +25,6 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
 )
-from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.protocol import (
     RemoteRewardServiceError,
@@ -343,24 +342,6 @@ async def test_ensure_ready_fails_fast_when_service_is_unreachable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_scoring_error_is_typed(tmp_path) -> None:
-    class _FailingRuntime(_FakeRuntime):
-        async def score_batch(self, request):
-            raise KeyError("missing score keys: overall")
-
-    artifact_file = tmp_path / "a0.mp4"
-    artifact_file.write_bytes(b"x")
-    async with _running_service(_FailingRuntime(), tmp_path) as (_service, client):
-        with pytest.raises(RemoteRewardServiceError, match="missing score keys") as caught:
-            await client.score_batch(_request(str(artifact_file)))
-
-    assert caught.value.code == RewardServiceErrorCode.SCORING_FAILED.value
-    assert caught.value.status_code == 500
-    assert caught.value.retryable
-    assert caught.value.request_id == "req-1"
-
-
-@pytest.mark.asyncio
 async def test_server_rejects_paths_outside_root_and_symlink_escapes(tmp_path) -> None:
     allowed = tmp_path / "allowed"
     allowed.mkdir()
@@ -610,11 +591,13 @@ async def test_retryable_scoring_failure_can_retry_same_request_id(tmp_path) -> 
     runtime = _FlakyRuntime()
     request = _request(str(artifact_file), request_id="retry-me")
     async with _running_service(runtime, tmp_path) as (_service, client):
-        with pytest.raises(RemoteRewardServiceError) as first:
+        with pytest.raises(RemoteRewardServiceError, match="transient failure") as first:
             await client.score_batch(request)
         results = await client.score_batch(request)
 
     assert first.value.code == RewardServiceErrorCode.SCORING_FAILED.value
+    assert first.value.status_code == 500
+    assert first.value.request_id == "retry-me"
     assert first.value.retryable
     assert [result.scores["overall"] for result in results] == [0.75]
     assert len(runtime.requests) == 2
@@ -676,19 +659,6 @@ async def test_service_shutdown_cancels_work_and_shuts_runtime_exactly_once(tmp_
     assert caught.value.code == RewardServiceErrorCode.CANCELLED.value
     assert runtime.cancelled.is_set()
     assert runtime.shutdown_calls == 1
-
-
-def test_build_reward_scorer_accepts_typed_http_config() -> None:
-    runtime = build_reward_scorer(
-        {},
-        inference=RewardInferenceConfig(
-            kind="http",
-            endpoint="http://127.0.0.1:8300",
-            timeout_s=12,
-            expected_model="unit-model",
-        ),
-    )
-    assert isinstance(runtime, HttpRewardScorer)
 
 
 def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) -> None:

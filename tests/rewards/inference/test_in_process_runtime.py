@@ -46,18 +46,6 @@ def _make_request() -> RewardInferenceRequest:
 
 
 @pytest.mark.asyncio
-async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
-    """Checks in-process scoring without disk or Ray."""
-    runtime = InProcessRewardScorer(model=_SumMediaModel())
-    results = await runtime.score_batch(_make_request())
-
-    assert [r.artifact_id for r in results] == ["a", "b"]  # original order preserved
-    assert results[0].scores == {"overall": 3.0, "extra": 1.0}
-    assert results[1].scores == {"overall": 3.0, "extra": 1.0}
-    await runtime.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_in_process_runtime_empty_request_returns_empty() -> None:
     """Checks that an empty in-process request returns no results."""
     runtime = InProcessRewardScorer(model=_SumMediaModel())

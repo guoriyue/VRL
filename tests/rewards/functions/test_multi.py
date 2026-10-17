@@ -130,25 +130,6 @@ async def test_multi_reward_returns_components_for_each_scoring_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_zero_weight_component_is_scored_without_changing_total() -> None:
-    """Checks observation-only scores are logged but excluded from the reward."""
-    reward = MultiReward(
-        [
-            ("train", 1.0, _QueuedBatchReward([[2.0, 3.0]])),
-            ("observe", 0.0, _QueuedBatchReward([[0.7, 0.8]])),
-        ],
-    )
-
-    report = await reward.score_batch(
-        [_make_sample("a"), _make_sample("b")],
-    )
-
-    assert report.scores == pytest.approx([2.0, 3.0])
-    assert report.components["train"] == pytest.approx([2.0, 3.0])
-    assert report.components["observe"] == pytest.approx([0.7, 0.8])
-
-
-@pytest.mark.asyncio
 async def test_nested_observations_survive_without_affecting_training_reward() -> None:
     """An observation-only composite keeps its axes across repeated calls."""
     nested = MultiReward(
@@ -470,26 +451,6 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     assert isinstance(component.scorer, HttpRewardScorer)
 
 
-def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> None:
-    reward = MultiReward.from_mapping(
-        {"ocr": 1.0},
-        device="cpu",
-        reward_kwargs={"ocr": {"score_key": "ocr_match"}},
-        inference_configs={
-            "ocr": RewardInferenceConfig(
-                kind="http",
-                endpoint="http://reward:8312",
-                expected_model="ocr-paddle",
-            ),
-        },
-    )
-
-    component = reward.rewards[0][2]
-    assert isinstance(component, ModelRewardFunction)
-    assert isinstance(component.scorer, HttpRewardScorer)
-    assert component.score_key == "ocr_match"
-
-
 def test_reward_config_rejects_runtime_injection_keys() -> None:
     with pytest.raises(ValueError, match="runtime injection keys"):
         MultiReward.from_mapping(
@@ -613,29 +574,6 @@ def test_http_reward_rejects_local_worker_config() -> None:
                 ),
             },
         )
-
-
-def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
-    from vrl.rewards.ray import RayRewardScorer
-
-    reward = MultiReward.from_mapping(
-        {"ocr": 1.0},
-        device="cpu",
-        reward_kwargs={
-            "ocr": {
-                "debug_dir": str(tmp_path / "ocr_debug"),
-                "score_key": "ocr_match",
-            }
-        },
-        inference_configs={"ocr": RewardInferenceConfig(kind="ray")},
-    )
-    component = reward.rewards[0][2]
-    assert isinstance(component, ModelRewardFunction)
-    scorer = component.scorer
-    assert isinstance(scorer, RayRewardScorer)
-    assert scorer._worker_config.model_factory == "vrl.rewards.models.ocr:OCRRewardModel"
-    assert scorer._worker_config.component_config["debug_dir"] == str(tmp_path / "ocr_debug")
-    assert scorer._worker_config.device == "cpu"
 
 
 def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:

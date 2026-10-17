@@ -33,69 +33,25 @@ def _image() -> Image.Image:
 
 
 @pytest.mark.asyncio
-async def test_wd_tagger_reward_scores_recall_over_wanted_tags() -> None:
-    """Checks tag adherence reward scores recall over wanted tags."""
-    reward = WDTaggerReward(
-        score_key="wd_tagger_recall",
-        threshold=0.35,
-        tagger=lambda images: [{"long_hair": 0.9, "smile": 0.5, "lingerie": 0.1}] * len(images),
-    )
-
-    score = (await reward.score_batch([_sample(_image())])).scores[0]
-
-    assert score == pytest.approx(2.0 / 3.0)
-
-
-@pytest.mark.asyncio
-async def test_wd_tagger_reward_threshold_is_inclusive() -> None:
-    """Checks tag adherence reward threshold is inclusive."""
+async def test_recall_counts_tags_at_or_above_threshold_case_insensitively_per_sample() -> None:
+    """Recall is wanted ∩ detected over wanted: inclusive threshold, lowercase match, extras ignored."""
     reward = WDTaggerReward(
         score_key="wd_tagger_recall",
         threshold=0.5,
-        tagger=lambda images: [{"long_hair": 0.5, "smile": 0.4999, "lingerie": 0.0}] * len(images),
-    )
-
-    score = (await reward.score_batch([_sample(_image())])).scores[0]
-
-    assert score == pytest.approx(1.0 / 3.0)
-
-
-@pytest.mark.asyncio
-async def test_wd_tagger_reward_matches_case_insensitively_and_ignores_extras() -> None:
-    """Checks tag adherence reward matches case insensitively and ignores extras."""
-    reward = WDTaggerReward(
-        threshold=0.35,
-        tagger=lambda images: (
-            [
-                {"Long_Hair": 0.9, "LINGERIE": 0.8, "smile": 0.9, "1girl": 0.99, "solo": 0.97},
-            ]
-            * len(images)
-        ),
-    )
-
-    score = (
-        await reward.score_batch([_sample(_image(), tags=["long_hair", "Lingerie", "SMILE"])])
-    ).scores[0]
-
-    assert score == pytest.approx(1.0)
-
-
-@pytest.mark.asyncio
-async def test_wd_tagger_reward_score_batch_preserves_order() -> None:
-    """Checks tag adherence reward score_batch preserves order."""
-    reward = WDTaggerReward(
-        threshold=0.35,
         tagger=lambda images: [
+            {"Long_Hair": 0.5, "LINGERIE": 0.4999, "smile": 0.0, "1girl": 0.99, "solo": 0.97},
             {"long_hair": 0.9, "lingerie": 0.9, "smile": 0.9},
-            {"long_hair": 0.9, "lingerie": 0.0, "smile": 0.0},
         ],
     )
 
     output = await reward.score_batch(
-        [_sample(_image()), _sample(_image(), sample_id="sample-1")],
+        [
+            _sample(_image(), tags=["long_hair", "Lingerie", "SMILE"]),
+            _sample(_image(), sample_id="sample-1"),
+        ],
     )
 
-    assert output.scores == pytest.approx((1.0, 1.0 / 3.0))
+    assert output.scores == pytest.approx((1.0 / 3.0, 1.0))
 
 
 @pytest.mark.asyncio
@@ -164,25 +120,19 @@ async def test_dense_score_orders_images_the_recall_calls_identical() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dense_score_caps_each_tag_at_the_threshold() -> None:
-    """Confidence beyond the threshold pays nothing, so gradient goes to missing tags."""
-    detected = WDTaggerReward(
-        threshold=0.35,
-        tagger=lambda images: [{"long_hair": 0.4, "smile": 0.4, "lingerie": 0.4}] * len(images),
-    )
-    certain = WDTaggerReward(
-        threshold=0.35,
-        tagger=lambda images: [{"long_hair": 1.0, "smile": 1.0, "lingerie": 1.0}] * len(images),
-    )
-
-    assert (await detected.score_batch([_sample(_image())])).scores[0] == pytest.approx(1.0)
-    assert (await certain.score_batch([_sample(_image())])).scores[0] == pytest.approx(1.0)
-
-
-@pytest.mark.asyncio
-async def test_dense_equals_recall_when_every_tag_is_absent_or_confident() -> None:
-    tagger = lambda images: [{"long_hair": 0.9, "smile": 0.0, "lingerie": 0.0}] * len(images)  # noqa: E731
+async def test_dense_caps_each_tag_at_the_threshold_and_equals_recall_outside_the_gap() -> None:
+    """Confidence beyond the threshold pays nothing; absent-or-confident tags give recall."""
     sample = [_sample(_image())]
+    for level in (0.4, 1.0):
+        certain = WDTaggerReward(
+            threshold=0.35,
+            tagger=lambda images, p=level: (
+                [{"long_hair": p, "smile": p, "lingerie": p}] * len(images)
+            ),
+        )
+        assert (await certain.score_batch(sample)).scores[0] == pytest.approx(1.0)
+
+    tagger = lambda images: [{"long_hair": 0.9, "smile": 0.0, "lingerie": 0.0}] * len(images)  # noqa: E731
     (dense,) = (await WDTaggerReward(threshold=0.35, tagger=tagger).score_batch(sample)).scores
     recall_reward = WDTaggerReward(score_key="wd_tagger_recall", threshold=0.35, tagger=tagger)
     (recall,) = (await recall_reward.score_batch(sample)).scores

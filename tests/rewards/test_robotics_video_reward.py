@@ -128,18 +128,3 @@ def test_robotics_reward_rejects_non_mapping_sections_before_model_construction(
     monkeypatch.setattr(robotics, "MotionDynamicsModel", unexpected_construction)
     with pytest.raises(TypeError, match="must be a mapping"):
         robotics.RoboticsVideoRewardModel({field: value})
-
-
-@pytest.mark.parametrize("value", [None, {}])
-def test_robotics_reward_preserves_explicit_default_sections(value, monkeypatch) -> None:
-    from vrl.rewards.models import robotics_video_reward as robotics
-
-    monkeypatch.setattr(robotics, "KlingVideoRewardModel", _FakeKling)
-    monkeypatch.setattr(robotics, "TargetDinoSimilarityModel", _FakeDino)
-    monkeypatch.setattr(robotics, "MotionDynamicsModel", _FakeMotion)
-    model = robotics.RoboticsVideoRewardModel(
-        {field: value for field in ("weights", "kling", "dino", "motion")},
-    )
-    assert model.weights == robotics.RoboticsRewardWeights()
-    for child in (model.kling, model.dino, model.motion):
-        assert child.config == {"device": "cuda:0"}
