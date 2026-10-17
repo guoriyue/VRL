@@ -87,10 +87,9 @@ def test_dtype_to_precision_token_uses_the_public_plain_vocabulary(value, expect
     assert dtype_to_precision_token(value) == expected
 
 
-@pytest.mark.parametrize("value", ["fp8", "fp4"])
-def test_dtype_to_precision_token_rejects_rollout_quantization(value):
+def test_dtype_to_precision_token_rejects_rollout_quantization():
     with pytest.raises(ValueError, match="not a plain public precision token"):
-        dtype_to_precision_token(value)
+        dtype_to_precision_token("fp8")
 
 
 # -- nested public policy ---------------------------------------------

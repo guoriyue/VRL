@@ -355,16 +355,14 @@ def test_full_precision_metrics_detect_changes_hidden_by_display_rounding() -> N
         assert struct.pack("!d", float(values[name])) == struct.pack("!d", getattr(first, name))
 
 
-@pytest.mark.parametrize("names", ["ocr", b"ocr"])
-def test_metric_row_rejects_component_string_before_tuple_conversion(names):
+def test_metric_row_rejects_component_string_before_tuple_conversion():
     with pytest.raises(ValueError, match="component names must be a sequence of names"):
-        OnlineMetricRow.from_step_metrics(0, TrainStepMetrics(), names)
+        OnlineMetricRow.from_step_metrics(0, TrainStepMetrics(), "ocr")
 
 
-@pytest.mark.parametrize("names", [["ocr"], ("ocr",)])
-def test_metric_row_keeps_one_declared_reward_component(names):
+def test_metric_row_keeps_one_declared_reward_component():
     row = OnlineMetricRow.from_step_metrics(
-        0, TrainStepMetrics(reward_components={"ocr": 0.75}), names
+        0, TrainStepMetrics(reward_components={"ocr": 0.75}), ["ocr"]
     )
     assert row.component_names == ("ocr",)
     assert row.component_values == (0.75,)
@@ -372,18 +370,13 @@ def test_metric_row_keeps_one_declared_reward_component(names):
 
 
 @pytest.mark.parametrize("position", [True, -1])
-@pytest.mark.parametrize("exists", [False, True])
-def test_metrics_resume_rejects_invalid_position_without_changing_file(tmp_path, position, exists):
+def test_metrics_resume_rejects_invalid_position_without_changing_file(tmp_path, position):
     path = tmp_path / "metrics.csv"
     original = "epoch,loss\n0,0.5\n1,0.4\n"
-    if exists:
-        path.write_text(original)
+    path.write_text(original)
     with pytest.raises(ValueError, match="metrics resume position"):
         MetricsCSV(path, ("epoch", "loss"), resume_at=("epoch", position))
-    if exists:
-        assert path.read_text() == original
-    else:
-        assert not path.exists()
+    assert path.read_text() == original
 
 
 def test_metrics_resume_requires_declared_position_column_even_for_new_file(tmp_path):

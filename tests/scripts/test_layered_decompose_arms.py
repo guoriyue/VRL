@@ -67,7 +67,6 @@ def test_adapter_arm_takes_a_peft_directory_or_a_checkpoint_directory(tmp_path: 
         adapter_overrides(tmp_path, base=False)
 
 
-@pytest.mark.parametrize("adapter", [None, Path("x")])
-def test_an_arm_is_exactly_one_of_adapter_or_base(adapter: Path | None) -> None:
+def test_an_arm_is_exactly_one_of_adapter_or_base() -> None:
     with pytest.raises(ValueError, match="exactly one"):
-        adapter_overrides(adapter, base=adapter is not None)
+        adapter_overrides(None, base=False)

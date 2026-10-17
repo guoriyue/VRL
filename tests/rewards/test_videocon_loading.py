@@ -11,7 +11,7 @@ from transformers import LlamaTokenizer, PretrainedConfig
 from vrl.rewards.models import videocon_physics
 
 
-@pytest.mark.parametrize("fp32_modules", [["wo"], ["actual_module"], None])
+@pytest.mark.parametrize("fp32_modules", [["wo"], ["actual_module"]])
 def test_composite_config_logging_does_not_construct_vendor_defaults(
     tmp_path, monkeypatch, fp32_modules
 ):

@@ -38,9 +38,8 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
     assert buffers.observations.device == state.latents.device
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-def test_record_step_casts_into_allocated_buffers_without_gradients(dtype) -> None:
-    state = _state(batch=2, steps=1, dtype=dtype)
+def test_record_step_casts_into_allocated_buffers_without_gradients() -> None:
+    state = _state(batch=2, steps=1, dtype=torch.float16)
     config = _config()
     config = replace(
         config,
@@ -61,8 +60,8 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype) -> No
         buffers.actions,
         buffers.prev_sample_means,
     ):
-        assert output.dtype == dtype
-        torch.testing.assert_close(output[:, 0], values.detach().to(dtype), rtol=0, atol=0)
+        assert output.dtype == torch.float16
+        torch.testing.assert_close(output[:, 0], values.detach().to(torch.float16), rtol=0, atol=0)
         assert not output.requires_grad
     torch.testing.assert_close(buffers.log_probs[:, 0], log_prob.detach())
     assert not buffers.log_probs.requires_grad

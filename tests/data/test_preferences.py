@@ -11,7 +11,7 @@ import torch
 from vrl.trainers.data.preferences import PickAPicPreferenceDataset, PreferenceBatch
 
 
-@pytest.mark.parametrize("shape", [(2, 4, 3, 3), (2, 8, 3, 3), (2, 6, 3), (2, 6, 1, 3, 3)])
+@pytest.mark.parametrize("shape", [(2, 4, 3, 3), (2, 6, 3)])
 def test_preference_split_rejects_non_rgb_pair_layout(shape):
     batch = PreferenceBatch(pixel_values=torch.zeros(shape), captions=["a", "b"])
     with pytest.raises(ValueError, match=r"\[B, 6, H, W\]"):

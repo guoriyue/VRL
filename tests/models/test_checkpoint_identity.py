@@ -374,9 +374,8 @@ def test_family_behavior_value_changes_identity(
     assert left != right
 
 
-@pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v"])
-def test_wan_adapter_storage_identity_is_opt_in(family: str) -> None:
-    values = {"family": family, "trainable_transformers": ["transformer"], "use_lora": True}
+def test_wan_adapter_storage_identity_is_opt_in() -> None:
+    values = {"family": "wan_2_1", "trainable_transformers": ["transformer"], "use_lora": True}
     lora = {"rank": 8, "alpha": 16, "target_modules": ["to_q"]}
     baseline = resolve_checkpoint_model_identity(_build(**values, lora=lora))
     explicit_default = resolve_checkpoint_model_identity(

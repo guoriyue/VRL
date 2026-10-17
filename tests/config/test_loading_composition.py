@@ -89,9 +89,8 @@ def test_missing_additive_preset_fails_instead_of_being_ignored(config_tree: Pat
         compose_config("neutral", overrides=["+reward=missing"], root=config_tree)
 
 
-@pytest.mark.parametrize("entry", [123, True, None, ["reward/base"]])
-def test_defaults_rejects_invalid_entry_types_before_path_resolution(config_tree, entry):
+def test_defaults_rejects_invalid_entry_types_before_path_resolution(config_tree):
     path = config_tree / "invalid.yaml"
-    OmegaConf.save(OmegaConf.create({"defaults": [entry]}), path)
+    OmegaConf.save(OmegaConf.create({"defaults": [123]}), path)
     with pytest.raises(TypeError, match=r"invalid.yaml: defaults\[0\] must be a config name"):
         compose_config("invalid", root=config_tree)

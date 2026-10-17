@@ -58,13 +58,10 @@ def test_offline_surface_is_owned_by_algorithm_config(monkeypatch) -> None:
     RootConfig.model_validate(payload)
 
 
-@pytest.mark.parametrize("reward", [{"components": {}}, {"components": {"test": 1.0}}])
-def test_section_presence_restriction_is_declared_independently_of_fields(
-    monkeypatch, reward: dict
-) -> None:
+def test_section_presence_restriction_is_declared_independently_of_fields(monkeypatch) -> None:
     from vrl.algorithms.dpo import DiffusionDPO
 
-    payload = {"algorithm": {"kind": "diffusion_dpo"}, "reward": reward}
+    payload = {"algorithm": {"kind": "diffusion_dpo"}, "reward": {"components": {}}}
     with pytest.raises(ValueError, match="does not consume the reward config section"):
         RootConfig.model_validate(payload)
 

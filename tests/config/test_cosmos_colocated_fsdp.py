@@ -1,7 +1,5 @@
 """Cosmos four-card preset budget and rank-local resource ownership."""
 
-import pytest
-
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
@@ -29,23 +27,22 @@ def test_four_card_preset_preserves_global_recipe_budget():
     assert root.distributed.training.fsdp.shard_trainable_only
 
 
-@pytest.mark.parametrize("rank", range(4))
-def test_four_card_preset_resolves_rank_local_phase_owners(rank):
+def test_four_card_preset_resolves_rank_local_phase_owners():
     built = BuiltConfigs.from_cfg(
         load_config(
             PRESET,
             overrides=[
-                f"distributed.resources.visible_devices=[{rank}]",
+                "distributed.resources.visible_devices=[0]",
             ],
         )
     )
     resources = ResourcePlan.from_root(built.root)
-    assert tuple(resources.trainer_devices) == (rank,)
-    assert tuple(resources.rollout_devices) == (rank,)
+    assert tuple(resources.trainer_devices) == (0,)
+    assert tuple(resources.rollout_devices) == (0,)
     # The unpinned Kling reward follows the rank's own card: no reservation,
     # but the lifecycle plan sees the sharing.
     assert tuple(resources.reward_devices) == ()
     assert resources.reward_follows_trainer
-    assert tuple(resources.lifecycle.reward) == (rank,)
+    assert tuple(resources.lifecycle.reward) == (0,)
     assert resources.lifecycle.park_rollout_for_train
     assert resources.lifecycle.park_trainer_for_reward

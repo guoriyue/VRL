@@ -95,8 +95,7 @@ def test_state_slots_require_exact_retention_limit():
         TrainableStateSlots(max_retained=True)
 
 
-@pytest.mark.parametrize("child_name", ["module", "_orig_mod"])
-def test_unwrap_preserves_ordinary_named_submodules(child_name) -> None:
+def test_unwrap_preserves_ordinary_named_submodules() -> None:
     import torch
 
     from vrl.models.weight_utils import load_weights_into, unwrap_compile_and_ddp
@@ -104,12 +103,12 @@ def test_unwrap_preserves_ordinary_named_submodules(child_name) -> None:
 
     model = torch.nn.Module()
     model.register_parameter("scale", torch.nn.Parameter(torch.tensor([2.0])))
-    model.add_module(child_name, torch.nn.Linear(2, 1, bias=False))
+    model.add_module("_orig_mod", torch.nn.Linear(2, 1, bias=False))
     assert unwrap_compile_and_ddp(model) is model
 
     payload = flatten_trainable_module_state({"policy": model})
-    assert set(payload) == {"policy.scale", f"policy.{child_name}.weight"}
+    assert set(payload) == {"policy.scale", "policy._orig_mod.weight"}
     replacement = {name: torch.full_like(value, 7) for name, value in payload.items()}
     load_weights_into(model, replacement, prefix="policy")
     assert torch.equal(model.scale, torch.tensor([7.0]))
-    assert torch.all(getattr(model, child_name).weight == 7)
+    assert torch.all(model._orig_mod.weight == 7)

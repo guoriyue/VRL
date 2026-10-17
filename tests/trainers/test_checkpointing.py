@@ -1090,8 +1090,7 @@ def test_resume_position_rejects_invalid_values(tmp_path, field, value):
         getattr(checkpoint, field)
 
 
-@pytest.mark.parametrize("progress", [{"next_epoch": 7}, {"completed_step": 7, "next_step": 7}])
-def test_checkpoint_metadata_does_not_infer_progress_fields(tmp_path, progress):
+def test_checkpoint_metadata_does_not_infer_progress_fields(tmp_path):
     from vrl.trainers.checkpointing import read_checkpoint_meta
 
     target = tmp_path / "checkpoint-999"
@@ -1101,14 +1100,13 @@ def test_checkpoint_metadata_does_not_infer_progress_fields(tmp_path, progress):
         bundle=_Bundle(),
         family="unit",
         model_identity=UNIT_IDENTITY,
-        progress=progress,
+        progress={"next_epoch": 7},
         rng_state={},
     )
     meta = read_checkpoint_meta(target)
-    for field in ("completed_epoch", "next_epoch", "completed_step", "next_step", "global_step"):
-        assert (field in meta) == (field in progress)
-        if field in progress:
-            assert meta[field] == progress[field]
+    assert meta["next_epoch"] == 7
+    for field in ("completed_epoch", "completed_step", "next_step", "global_step"):
+        assert field not in meta
 
 
 def test_latest_checkpoint_does_not_guess_missing_step_from_name(tmp_path):

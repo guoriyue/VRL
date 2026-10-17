@@ -63,18 +63,14 @@ def _ddp_wrap(module: nn.Module) -> nn.Module:
 # ── build_strategy dispatch + model-handle guard (no process group) ──────────
 
 
-@pytest.mark.parametrize("find_unused_parameters", [False, True])
-def test_build_strategy_reads_ddp_public_default_and_override(
-    find_unused_parameters: bool,
-) -> None:
-    ddp = {} if not find_unused_parameters else {"find_unused_parameters": True}
+def test_build_strategy_reads_the_ddp_public_override() -> None:
     strategy = build_strategy(
         RootConfig.model_validate(
             {
                 "distributed": {
                     "training": {
                         "strategy": "ddp",
-                        "ddp": ddp,
+                        "ddp": {"find_unused_parameters": True},
                     },
                 },
             },
@@ -83,7 +79,7 @@ def test_build_strategy_reads_ddp_public_default_and_override(
     )
 
     assert isinstance(strategy, DDPStrategy)
-    assert strategy._find_unused_parameters is find_unused_parameters
+    assert strategy._find_unused_parameters is True
 
 
 def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:

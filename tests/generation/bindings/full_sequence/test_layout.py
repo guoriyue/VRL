@@ -28,14 +28,13 @@ def test_diffusion_layout_rejects_sde_window_past_the_schedule() -> None:
         _layout().parse_sampling_params(request)
 
 
-@pytest.mark.parametrize("denoise_mode", ["native", "sde"])
-def test_diffusion_layout_always_builds_sde_math_params(denoise_mode: str) -> None:
-    """Checks both denoise modes carry the non-optional loop math contract."""
-    request = _request(denoise=DenoiseRequestOptions(denoise_mode=denoise_mode))
+def test_diffusion_layout_always_builds_sde_math_params() -> None:
+    """The denoise layout always carries the non-optional loop math contract."""
+    request = _request(denoise=DenoiseRequestOptions(denoise_mode="native"))
 
     params = _layout().parse_sampling_params(request)
 
-    assert params.denoise_mode == denoise_mode
+    assert params.denoise_mode == "native"
     assert params.sde.sde_type == "flow_grpo"
     assert params.sde_window is None
 

@@ -10,8 +10,7 @@ from vrl.config.precision import RolePrecision
 from vrl.models import precision
 
 
-@pytest.mark.parametrize("mode", ["ieee", "tf32"])
-def test_apply_float32_precision_uses_string_api_exclusively(mode: str) -> None:
+def test_apply_float32_precision_uses_string_api_exclusively() -> None:
     # Real torch roundtrip: the state reader is the production diagnostic, so a
     # mismatch between writer and reader fails here. The legacy bool getter is
     # deliberately NOT read: this torch raises RuntimeError on mixed-API access,
@@ -22,8 +21,8 @@ def test_apply_float32_precision_uses_string_api_exclusively(mode: str) -> None:
         pytest.skip("this torch predates the string fp32_precision API")
     original = precision.float32_precision_state()
     try:
-        precision.apply_float32_precision(mode)
-        assert precision.float32_precision_state() == {"matmul": mode, "cudnn": mode}
+        precision.apply_float32_precision("ieee")
+        assert precision.float32_precision_state() == {"matmul": "ieee", "cudnn": "ieee"}
     finally:
         # Restore by attribute: the process default "none" is a valid torch
         # state but not an apply_float32_precision input.

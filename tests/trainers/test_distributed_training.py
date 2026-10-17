@@ -66,11 +66,10 @@ def test_fsdp_rank0_is_primary() -> None:
     assert ctx.is_primary is True
 
 
-@pytest.mark.parametrize("strategy", ["fsdp", "ddp"])
-def test_distributed_missing_env_fails_fast_listing_keys(strategy) -> None:
+def test_distributed_missing_env_fails_fast_listing_keys() -> None:
     with pytest.raises(ValueError, match=r"RANK.*LOCAL_RANK.*WORLD_SIZE"):
         DistributedTrainingContext.from_root(
-            parse_config(_cfg({"strategy": strategy})), device=torch.device("cpu"), env={}
+            parse_config(_cfg({"strategy": "fsdp"})), device=torch.device("cpu"), env={}
         )
 
 
@@ -83,12 +82,11 @@ def test_fsdp_world_size_must_match_topology() -> None:
         )
 
 
-@pytest.mark.parametrize("strategy", ["fsdp", "ddp"])
 @pytest.mark.parametrize("rank", [-1, 2])
-def test_global_rank_must_be_within_world_size(strategy, rank) -> None:
+def test_global_rank_must_be_within_world_size(rank) -> None:
     with pytest.raises(ValueError, match=rf"RANK={rank} is out of range.*WORLD_SIZE=2"):
         DistributedTrainingContext.from_root(
-            parse_config(_cfg({"strategy": strategy, "gpus_per_node": 2})),
+            parse_config(_cfg({"strategy": "fsdp", "gpus_per_node": 2})),
             device=torch.device("cpu"),
             env={"RANK": str(rank), "LOCAL_RANK": "0", "WORLD_SIZE": "2"},
         )

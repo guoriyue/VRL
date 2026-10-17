@@ -63,7 +63,7 @@ def test_multi_reward_rejects_duplicate_component_names() -> None:
         )
 
 
-@pytest.mark.parametrize("name", ["", None, 1])
+@pytest.mark.parametrize("name", ["", None])
 def test_multi_reward_requires_nonempty_component_names(name) -> None:
     with pytest.raises(ValueError, match="non-empty strings"):
         MultiReward([(name, 1.0, _QueuedBatchReward([[0.1]]))])

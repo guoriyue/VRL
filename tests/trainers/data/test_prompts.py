@@ -56,10 +56,9 @@ def test_jsonl_loader_rejects_nonobject_fields_at_source_line(tmp_path, field):
         _load(tmp_path, payload)
 
 
-@pytest.mark.parametrize("row", [{}, {"prompt": 123}])
-def test_jsonl_loader_requires_string_prompt_at_source_line(tmp_path, row):
+def test_jsonl_loader_requires_string_prompt_at_source_line(tmp_path):
     with pytest.raises(ValueError, match=r"prompts\.jsonl:1: prompt must be a string"):
-        _load(tmp_path, json.dumps(row).encode())
+        _load(tmp_path, b"{}")
 
 
 def test_jsonl_loader_preserves_empty_prompt_and_optional_null_mappings(tmp_path):

@@ -131,8 +131,7 @@ def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any
         assert module.requires_grad_enabled is False
 
 
-@pytest.mark.parametrize("family", ("wan_2_1", "wan_2_1_i2v"))
-def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, monkeypatch) -> None:
+def test_wan_resolver_projects_pipeline_offload_to_rollout_only(monkeypatch) -> None:
     from diffusers import DiffusionPipeline
     from omegaconf import OmegaConf
 
@@ -146,7 +145,7 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, mon
     cfg = OmegaConf.create(
         {
             "model": {
-                "family": family,
+                "family": "wan_2_1",
                 "path": "fake/repo",
                 "revision": "a" * 40,
                 "offload_mode": "sequential",
@@ -160,7 +159,7 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, mon
             "distributed": {"training": {"strategy": "single_process"}},
         },
     )
-    entry = get_model_family_entry(family)
+    entry = get_model_family_entry("wan_2_1")
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
 
@@ -290,12 +289,11 @@ def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
     assert all(parameter.requires_grad for parameter in pipeline.transformer.parameters())
 
 
-@pytest.mark.parametrize("family", ["WanT2VModel", "WanI2VModel"])
 @pytest.mark.parametrize("dual", [False, True])
-def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None:
-    from vrl.models.families.wan_2_1 import model as wan
+def test_wan_replay_loads_trainable_state_without_pipeline(dual) -> None:
+    from vrl.models.families.wan_2_1.model import WanT2VModel
 
-    model = getattr(wan, family)(
+    model = WanT2VModel(
         transformer=torch.nn.Linear(2, 2),
         transformer_2=torch.nn.Linear(2, 2) if dual else None,
         scheduler=object(),

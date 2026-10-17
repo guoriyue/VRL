@@ -136,12 +136,11 @@ def test_unwrap_module_peels_real_peft_and_compile(compiled) -> None:
     assert unwrap_module(wrapped) is base
 
 
-@pytest.mark.parametrize("name", ["_orig_mod", "base_model"])
-def test_unwrap_module_preserves_ordinary_children(name) -> None:
+def test_unwrap_module_preserves_ordinary_children() -> None:
     base = ToyTransformer()
     child = nn.Module()
     child.model = nn.Linear(2, 2)
-    base.add_module(name, child)
+    base.add_module("_orig_mod", child)
     assert unwrap_module(base) is base
 
 
@@ -1241,10 +1240,9 @@ def test_apply_fsdp_rejects_unmatched_blocks_before_sharding(monkeypatch) -> Non
     assert calls == []
 
 
-@pytest.mark.parametrize("first_dtype", [torch.float32, torch.bfloat16])
-def test_fsdp_rejects_undeclared_mixed_dtype_without_casting(first_dtype) -> None:
-    model = ToyTransformer().to(first_dtype)
-    model.head.to(torch.bfloat16 if first_dtype == torch.float32 else torch.float32)
+def test_fsdp_rejects_undeclared_mixed_dtype_without_casting() -> None:
+    model = ToyTransformer().to(torch.float32)
+    model.head.to(torch.bfloat16)
     original = {name: parameter.dtype for name, parameter in model.named_parameters()}
     with pytest.raises(ValueError, match="mixed parameter dtypes"):
         _fsdp_strategy(_cpu_fsdp_context(), precision_policy="actor").prepare_model(

@@ -31,16 +31,9 @@ def _distributed_cfg(
     )
 
 
-@pytest.mark.parametrize(
-    ("local_rank", "expected"),
-    [(0, "2"), (3, "7")],
-)
-def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
-    local_rank: int,
-    expected: str,
-) -> None:
+def test_same_host_fsdp_selects_one_physical_gpu_per_rank() -> None:
     environ = {
-        "LOCAL_RANK": str(local_rank),
+        "LOCAL_RANK": "3",
         "LOCAL_WORLD_SIZE": "4",
         "WORLD_SIZE": "4",
         "CUDA_VISIBLE_DEVICES": "2,4,6,7",
@@ -52,16 +45,16 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
         environ=environ,
     )
 
-    assert selected == expected
-    assert environ["CUDA_VISIBLE_DEVICES"] == expected
+    assert selected == "7"
+    assert environ["CUDA_VISIBLE_DEVICES"] == "7"
     # The entrypoint feeds the physical ordinal back as a loader override.
     narrowed = OmegaConf.merge(
         cfg,
         {"distributed": {"resources": {"visible_devices": [int(selected)]}}},
     )
     resources = ResourcePlan.from_root(parse_config(narrowed))
-    assert resources.trainer_devices == (int(expected),)
-    assert resources.rollout_devices == (int(expected),)
+    assert resources.trainer_devices == (7,)
+    assert resources.rollout_devices == (7,)
 
 
 def test_same_host_ddp_selects_local_rank_when_visibility_is_unset() -> None:

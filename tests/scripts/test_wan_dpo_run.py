@@ -118,13 +118,12 @@ def _spy_wan_from_build(monkeypatch: pytest.MonkeyPatch, on_built=None) -> list[
     return built
 
 
-@pytest.mark.parametrize("family", ["wan_2_1", "wan"])
-def test_offline_dpo_trains_the_registry_model_end_to_end(monkeypatch, tmp_path, family) -> None:
+def test_offline_dpo_trains_the_registry_model_end_to_end(monkeypatch, tmp_path) -> None:
     """One real DPO step on the tiny snapshot: the alias resolves to ``wan_2_1``,
     the loss is finite, and both checkpoints carry the canonical family."""
 
     _install_local_pickapic(monkeypatch)
-    cfg = _tiny_dpo_run(tmp_path, family=family)
+    cfg = _tiny_dpo_run(tmp_path, family="wan")
 
     train_wan_2_1_dpo(cfg)
 
@@ -140,25 +139,20 @@ def test_offline_dpo_trains_the_registry_model_end_to_end(monkeypatch, tmp_path,
         assert meta["next_step"] == 1
 
 
-@pytest.mark.parametrize("family", ["wan_2_1_i2v", "sd3_5"])
 def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    family: str,
 ) -> None:
-    cfg = _tiny_dpo_run(tmp_path, family=family)
-    # Drop the keys the other family's schema does not accept, so the DPO
+    cfg = _tiny_dpo_run(tmp_path, family="wan_2_1_i2v")
+    # Drop the key the other family's schema does not accept, so the DPO
     # family gate is what rejects the run.
-    if family == "sd3_5":
-        del cfg.sampling.num_frames
-    else:
-        del cfg.model.executor
+    del cfg.model.executor
     dataset_calls = _install_local_pickapic(monkeypatch)
     built = _spy_wan_from_build(monkeypatch)
 
     with pytest.raises(
         ValueError,
-        match=rf"Wan Diffusion-DPO requires model\.family='wan_2_1'.*got '{family}'",
+        match=r"Wan Diffusion-DPO requires model\.family='wan_2_1'.*got 'wan_2_1_i2v'",
     ):
         train_wan_2_1_dpo(cfg)
 

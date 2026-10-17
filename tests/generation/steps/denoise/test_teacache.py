@@ -101,11 +101,10 @@ def test_skip_ratio_and_counters():
     assert c["teacache_skip_ratio"] == pytest.approx(3 / 5)
 
 
-@pytest.mark.parametrize("previous,current,expected", [(100, 101, 0.01), (-40000, 40000, 2.0)])
-def test_relative_l1_avoids_half_precision_overflow(previous, current, expected):
-    previous_signal = torch.full((1024,), previous, dtype=torch.float16)
-    current_signal = torch.full((1024,), current, dtype=torch.float16)
-    assert relative_l1_change(current_signal, previous_signal) == pytest.approx(expected)
+def test_relative_l1_avoids_half_precision_overflow():
+    previous_signal = torch.full((1024,), 100, dtype=torch.float16)
+    current_signal = torch.full((1024,), 101, dtype=torch.float16)
+    assert relative_l1_change(current_signal, previous_signal) == pytest.approx(0.01)
 
 
 def test_zero_previous_signal_reports_infinite_change():

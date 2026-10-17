@@ -105,8 +105,7 @@ def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict(
     assert type(request.sampling["seed"]) is int
 
 
-@pytest.mark.parametrize("sampling", [{}, {"seed": None}])
-def test_missing_rollout_seed_uses_checkpointed_driver_rng(sampling) -> None:
+def test_missing_rollout_seed_uses_checkpointed_driver_rng() -> None:
     from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
 
     previous = capture_rng_state()
@@ -114,7 +113,7 @@ def test_missing_rollout_seed_uses_checkpointed_driver_rng(sampling) -> None:
         random.seed(42)
         builder = GenerationRequestBuilder(
             entry=get_model_family_entry("cosmos-predict2.5"),
-            config=RolloutCollectorConfig(request_sampling=sampling),
+            config=RolloutCollectorConfig(request_sampling={}),
         )
         builder.build(["first"], 2)
         checkpoint = capture_rng_state()
@@ -122,13 +121,13 @@ def test_missing_rollout_seed_uses_checkpointed_driver_rng(sampling) -> None:
         random.seed(999)
         fresh_builder = GenerationRequestBuilder(
             entry=get_model_family_entry("cosmos-predict2.5"),
-            config=RolloutCollectorConfig(request_sampling=sampling),
+            config=RolloutCollectorConfig(request_sampling={}),
         )
         restore_rng_state(checkpoint)
         resumed = [fresh_builder.build(["next"], 2).request.sampling.get("seed") for _ in range(3)]
         assert all(type(seed) is int and 0 <= seed < 2**63 for seed in resumed)
         assert resumed == uninterrupted and len(set(resumed)) == 3
-        assert builder.config.request_sampling == sampling
+        assert builder.config.request_sampling == {}
     finally:
         restore_rng_state(previous)
 

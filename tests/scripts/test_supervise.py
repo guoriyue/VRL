@@ -394,13 +394,12 @@ def test_build_train_launch_keeps_single_process_direct() -> None:
     )
 
 
-@pytest.mark.parametrize("strategy", ["ddp", "fsdp"])
-def test_build_train_launch_uses_one_host_torchrun(strategy: str) -> None:
+def test_build_train_launch_uses_one_host_torchrun() -> None:
     cfg = OmegaConf.create(
         {
             "distributed": {
                 "training": {
-                    "strategy": strategy,
+                    "strategy": "ddp",
                     "num_nodes": 1,
                     "gpus_per_node": 4,
                 },

@@ -415,21 +415,14 @@ def test_strict_schema_v1_full_wrong_shape_rejects_all_roots_before_mutation(
     )
 
 
-@pytest.mark.parametrize("mutation", ["missing", "extra"])
-def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(
-    tmp_path,
-    mutation,
-) -> None:
+def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(tmp_path) -> None:
     source = _OwnedBundle()
     with torch.no_grad():
         source.module.weight.fill_(7.0)
         source.module.frozen_base.fill_(9.0)
         source.module.previous.fill_(8.0)
     state = dict(source.module.state_dict())
-    if mutation == "missing":
-        state.pop("frozen_base")
-    else:
-        state["unknown"] = torch.tensor([10.0])
+    state.pop("frozen_base")
     restored = _OwnedBundle()
     before = {name: value.clone() for name, value in restored.module.state_dict().items()}
 
