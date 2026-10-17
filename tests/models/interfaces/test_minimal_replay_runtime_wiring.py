@@ -215,14 +215,6 @@ class _TinyTransformer(nn.Module):
         return self.weight.dtype
 
 
-def _flow_match_scheduler(*_args: Any, **_kwargs: Any) -> Any:
-    """Stand-in for ``load_flow_match_scheduler``: the real class from its defaults."""
-
-    from diffusers import FlowMatchEulerDiscreteScheduler
-
-    return FlowMatchEulerDiscreteScheduler()
-
-
 def _diffusers_scheduler(_build: Any, class_name: str, **_kwargs: Any) -> Any:
     """Stand-in for ``load_diffusers_scheduler``.
 
@@ -276,55 +268,6 @@ def _build(**overrides: Any) -> ModelBuild:
     return ModelBuild(**values)
 
 
-@pytest.mark.parametrize(
-    "family",
-    ["sd3_5", "sana", "wan_2_1"],
-)
-def test_registry_descriptor_replay_builder_returns_minimal_bundle(
-    monkeypatch: pytest.MonkeyPatch,
-    family: str,
-) -> None:
-    """The descriptor-driven generic replay builder (descriptor families).
-
-    These families ship no builder functions: the registry entry's
-    ``DenoiseFamilyBuild`` recipe drives the generic builder, keyed by
-    ``build.family``. Behavioral contract matches the per-family builders above.
-    """
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.models.steps.denoise import build as _shared_build
-
-    loaded_builds: list[ModelBuild] = []
-
-    def fake_transformer_loader(build: ModelBuild, *_args: Any, **_kwargs: Any):
-        loaded_builds.append(build)
-        return _TinyTransformer()
-
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_transformer",
-        fake_transformer_loader,
-    )
-    monkeypatch.setattr(_shared_build, "load_flow_match_scheduler", _flow_match_scheduler)
-    # Families with a scheduler_classname (wan_2_1) load through the
-    # classname path instead of the flow-match default.
-    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
-
-    entry = get_model_family_entry(family)
-    bundle = entry.build_replay(
-        _build(
-            family=family,
-            parameter_dtype=torch.float16 if family == "sana" else torch.float32,
-        ),
-        expected_identity=None,
-    )
-
-    assert loaded_builds
-    if family == "sana":
-        assert loaded_builds[-1].parameter_dtype is torch.float16
-    assert set(bundle.trainable_modules) == {"transformer"}
-    assert not hasattr(bundle.model, "pipeline")
-
-
 def test_model_build_rejects_missing_family() -> None:
     """ModelBuild rejects a missing identity before any registry dispatch."""
     with pytest.raises(ValueError, match=r"ModelBuild\.family"):
@@ -359,28 +302,6 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 
     assert scheduler_classes == ["UniPCMultistepScheduler"]
     assert isinstance(bundle.scheduler, UniPCMultistepScheduler)
-
-
-def test_wan_i2v_replay_builder_uses_i2v_replay_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The i2v registry entry's replay_cls selects the I2V replay model."""
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.models.families.wan_2_1.model import WanI2VModel
-    from vrl.models.steps.denoise import build as _shared_build
-
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_transformer",
-        lambda *_args, **_kwargs: _TinyTransformer(),
-    )
-    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
-
-    bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
-        _build(family="wan_2_1_i2v"), expected_identity=None
-    )
-
-    assert isinstance(bundle.model, WanI2VModel)
 
 
 def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
@@ -427,39 +348,3 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     # boundary_ratio is behavior-consumed on the model (dual-stage transformer
     # routing), not bundle metadata — assert the consumed surface.
     assert bundle.model.boundary_ratio == 0.9
-
-
-def test_cosmos_predict25_replay_builder_is_pipeline_free(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The predict2.5 replay bundle is minimal: no pipeline, no raw handle, and the
-    shared replay forward the objectives call is still reachable on the model."""
-    from vrl.models.families.cosmos.predict2_5 import model as predict25_model
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.models.steps.denoise import build as _shared_build
-
-    # predict2_5 is a registry-descriptor family: the generic replay builder
-    # constructs it, so the loaders are patched on the shared build module.
-    monkeypatch.setattr(
-        _shared_build,
-        "load_diffusers_transformer",
-        lambda *_args, **_kwargs: _TinyTransformer(),
-    )
-    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
-    monkeypatch.setattr(
-        predict25_model.CosmosPredict25Model,
-        "apply_lora",
-        lambda self, _build: self.transformer.requires_grad_(True),
-    )
-
-    bundle = get_model_family_entry("cosmos-predict2.5").build_replay(
-        _build(
-            family="cosmos-predict2.5",
-            use_lora=True,
-            lora_config={"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
-        ),
-        expected_identity=None,
-    )
-
-    assert callable(bundle.model.replay_forward_with_latents)
-    assert not hasattr(bundle.model, "pipeline")

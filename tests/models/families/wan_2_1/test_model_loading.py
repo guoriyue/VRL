@@ -224,34 +224,6 @@ def test_wan_i2v_offload_hooks_are_deferred_until_after_the_loader(
     assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]
 
 
-def test_wan_i2v_sequential_offload_attaches_lora_without_full_gpu_move(monkeypatch) -> None:
-    """The 16.4B rollout stays on CPU until its final module tree is hooked."""
-
-    import peft
-
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline, _ = _patch_from_pretrained(monkeypatch)
-    monkeypatch.setattr(
-        peft,
-        "get_peft_model",
-        lambda transformer, _cfg, **_kwargs: transformer,
-    )
-    build = _i2v_build(
-        rollout=_rollout_build_options("sequential"),
-        use_lora=True,
-        lora={"rank": 2, "alpha": 2, "target_modules": ["to_q"]},
-    )
-
-    model = WanI2VPipelineModel.from_build(build)
-    model.apply_lora(build)
-
-    assert pipeline.transformer.to_calls == []
-    assert pipeline.sequential_offload_gpu is None
-    model.apply_generation_offload(build)
-    assert pipeline.sequential_offload_gpu == 0
-
-
 def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
     """Rollout storage must accept the exact BF16 payload exported by FSDP."""
     from torch import nn

@@ -17,9 +17,6 @@ Pinned invariant per family x sde_type x step: replaying the recorded
 prev_sample under unchanged inputs reproduces the collection log-prob exactly,
 at O(1) magnitude.
 
-Batch-AR denoise families are out of scope: they own grouped temporal
-transitions rather than the generic full-sequence scheduler and SDE evaluator
-exercised here.
 """
 
 from __future__ import annotations
@@ -41,21 +38,11 @@ _BATCH = 2
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduler_configs.json"
 
 
-def _full_sequence_diffusion_families() -> list[str]:
-    """Return families backed by the generic full-sequence SDE evaluator."""
-
-    return [
-        family
-        for family, entry in FAMILY_REGISTRY.items()
-        if entry.generation_regime == "full_sequence"
-    ]
-
-
 def _model_repos_by_family() -> dict[str, set[str]]:
     """Derive denoise-family repositories from family-first model presets."""
 
     out: dict[str, set[str]] = {}
-    denoise_families = set(_full_sequence_diffusion_families())
+    denoise_families = set(FAMILY_REGISTRY)
     for name in list_bundled_configs("model"):
         model = load_config(name).get("model", {})
         declared = model.get("family")
@@ -88,7 +75,7 @@ def _scheduler_for(family: str):
 
 def _parity_cases() -> list[object]:
     cases = []
-    for family in sorted(_full_sequence_diffusion_families()):
+    for family in sorted(FAMILY_REGISTRY):
         cases.extend(
             pytest.param(family, sde_type, id=f"{family}-{sde_type}")
             for sde_type in ("flow_grpo", "cps")
@@ -112,7 +99,7 @@ def _set_timesteps(scheduler) -> None:
 
 def test_scheduler_fixtures_have_complete_pinned_provenance() -> None:
     """Every checkpoint-owned scheduler is pinned and tied to a model YAML."""
-    assert set(_SCHEDULER_FIXTURES) == set(_full_sequence_diffusion_families())
+    assert set(_SCHEDULER_FIXTURES) == set(FAMILY_REGISTRY)
 
     model_repos = _model_repos_by_family()
     for family, fixture in _SCHEDULER_FIXTURES.items():

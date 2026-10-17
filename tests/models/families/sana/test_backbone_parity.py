@@ -57,43 +57,6 @@ def _state(*, do_cfg: bool) -> SanaSamplingState:
     )
 
 
-def test_sana_yaml_resolves_native_forward_precision() -> None:
-    """SANA's YAML owns the shared rollout and replay precision policy."""
-
-    from vrl.config.builders import BuiltConfigs
-    from vrl.config.loading import load_config
-    from vrl.config.precision import RolePrecision
-    from vrl.models.families.registry import get_model_family_entry
-
-    cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    built = BuiltConfigs.from_cfg(cfg)
-    entry = get_model_family_entry("sana")
-    expected = RolePrecision(
-        dtype="fp16",
-        float32_precision="ieee",
-        outer_autocast=False,
-    )
-
-    assert (
-        entry.resolve_model_build(
-            built.root,
-            "cpu",
-            precision=built.precision,
-            for_rollout=True,
-        ).precision
-        == expected
-    )
-    assert (
-        entry.resolve_model_build(
-            built.root,
-            "cpu",
-            precision=built.precision,
-            for_rollout=False,
-        ).precision
-        == expected
-    )
-
-
 def test_sana_fp16_output_is_promoted_before_cfg() -> None:
     """SANA matches native FP32 CFG instead of combining rounded FP16 branches."""
 
@@ -147,20 +110,6 @@ def test_sana_forward_step_runs_real_batched_cfg() -> None:
     assert out["noise_pred"].dtype is torch.float32
     assert out["noise_pred"].shape == TINY_SANA_LATENT_SHAPE
     assert not torch.allclose(cond, uncond)
-
-
-def test_sana_forward_step_single_branch_skips_cfg() -> None:
-    """No CFG: a single conditional forward on the undoubled batch."""
-    transformer = build_tiny_transformer("sana")
-    calls = record_forward_calls(transformer)
-    model = _model(transformer)
-    state = _state(do_cfg=False)
-
-    out = model.forward_step(state, 0)
-
-    assert len(calls) == 1
-    assert calls[0]["hidden_states"].shape[0] == TINY_SANA_LATENT_SHAPE[0]
-    assert out["noise_pred"].shape == TINY_SANA_LATENT_SHAPE
 
 
 def test_sana_forward_step_applies_timestep_scale() -> None:

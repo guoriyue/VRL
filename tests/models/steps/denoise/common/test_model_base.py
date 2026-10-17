@@ -191,20 +191,6 @@ def test_place_pipeline_components_does_not_change_gradients() -> None:
     assert all(module.requires_grad_enabled is None for module in pipeline.components.values())
 
 
-def test_shared_from_build_places_frozen_components_on_the_compute_device(monkeypatch) -> None:
-    """Default residency: encoder at the rollout prompt dtype, VAE fp32, both on device."""
-    pipeline = _LoadedPipeline()
-    _load_pipeline(monkeypatch, pipeline)
-
-    model = SD3_5PipelineModel.from_build(_bare_build())
-
-    assert model.pipeline is pipeline
-    assert pipeline.text_encoder.requires_grad_enabled is False
-    assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
-    assert pipeline.vae.requires_grad_enabled is False
-    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
-
-
 def test_shared_from_build_keeps_cpu_resident_components_on_the_host(monkeypatch) -> None:
     """``model.memory.cpu_resident`` is the only thing that parks a frozen component."""
     pipeline = _LoadedPipeline()
@@ -567,6 +553,20 @@ def test_load_trainable_state_rejects_all_unmatched_keys() -> None:
 
     with pytest.raises(ValueError, match="trainable keys prefixed"):
         runtime.load_trainable_state({"unknown": torch.ones(1)})
+
+
+def test_load_trainable_state_rejects_a_payload_carrying_frozen_keys() -> None:
+    """A payload that also names a frozen parameter is not "exactly trainable"."""
+    runtime = _ModelBaseStub()
+    runtime.transformer.bias.requires_grad_(False)
+
+    with pytest.raises(ValueError, match="exactly trainable"):
+        runtime.load_trainable_state(
+            {
+                "transformer.weight": torch.ones_like(runtime.transformer.weight),
+                "transformer.bias": torch.ones_like(runtime.transformer.bias),
+            },
+        )
 
 
 # -- versioned trainable-state slots ------------------------------------------

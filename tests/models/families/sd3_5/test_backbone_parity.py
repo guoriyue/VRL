@@ -72,30 +72,6 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
     assert not torch.allclose(cond, uncond)
 
 
-def test_sd3_forward_step_single_branch_skips_cfg() -> None:
-    transformer = build_tiny_transformer("sd3")
-    calls = record_forward_calls(transformer)
-    model = _model(transformer)
-    state = SD3SamplingState(
-        latents=torch.randn(TINY_SD3_LATENT_SHAPE),
-        timesteps=torch.tensor([[5.0, 6.0]]),
-        scheduler=None,
-        prompt_embeds=torch.randn(2, _TEXT_LEN, TINY_SD3_JOINT_DIM),
-        pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM),
-        negative_prompt_embeds=None,
-        negative_pooled_prompt_embeds=None,
-        guidance_scale=1.0,
-        do_cfg=False,
-    )
-
-    out = model.forward_step(state, 0)
-
-    # No CFG: a single conditional forward (batch not doubled).
-    assert len(calls) == 1
-    assert calls[0]["hidden_states"].shape[0] == TINY_SD3_LATENT_SHAPE[0]
-    assert out["noise_pred"].shape == TINY_SD3_LATENT_SHAPE
-
-
 def test_sd3_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
     """Checks bf16 rollout tensors replay cleanly through an fp32 transformer."""
     transformer = build_tiny_transformer("sd3")

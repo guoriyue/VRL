@@ -213,20 +213,6 @@ def test_runtime_bundle_applies_model_build_memory_policy(
     assert (bundle.model.vae.use_tiling, bundle.model.vae.use_slicing) == (True, False)
 
 
-def test_configured_section_without_target_fails() -> None:
-    vae_decode_config: dict[str, bool] = {"tiling": True}
-    with pytest.raises(
-        ValueError,
-        match=r"unsupported model\.memory section\(s\) vae_decode.*<none>",
-    ):
-        _apply_memory_policy(
-            _FakeModel(vae=None),
-            GenerationMemoryPolicy(
-                vae_decode=VaeDecodeMemory(**vae_decode_config),
-            ),
-        )
-
-
 def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

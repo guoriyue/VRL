@@ -390,16 +390,6 @@ class ModelBuild:
             kwargs["local_files_only"] = bool(model_config["local_files_only"])
         return kwargs
 
-    def config_revision_kwargs(self, field: str) -> dict[str, str]:
-        """An optional revision kwarg owned by one model-config repository.
-
-        ``revision`` above pins the model repository itself; families that pull
-        a tokenizer or encoder from a *separate* repository record that repo's
-        snapshot under its own ``model_config`` key, named by ``field``.
-        """
-        revision = (self.model_config or {}).get(field)
-        return {"revision": str(revision)} if revision else {}
-
 
 @dataclass
 class RuntimeBundle:

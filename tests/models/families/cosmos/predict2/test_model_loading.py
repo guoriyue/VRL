@@ -15,18 +15,10 @@ does not exercise:
   * frozen modules (vae fp32, text_encoder build dtype) are staged to the build
     device and have grad disabled.
 
-``transformers`` is a declared dependency of this repo but is not installed in
-the test venv used by this suite; the wrapper eagerly imports the cosmos
-pipeline submodule (to swap the safety checker), so a minimal ``transformers``
-stub is injected only when the real package is absent. This keeps the test
-exercising the real submodule swap on the real ``CosmosSafetyChecker`` symbol
-rather than skipping.
 """
 
 from __future__ import annotations
 
-import importlib.machinery
-import sys
 import types
 from typing import Any
 
@@ -58,36 +50,10 @@ class _FakePipeline:
         }
 
 
-def _ensure_transformers_importable() -> None:
-    """Inject a minimal ``transformers`` stub when the real one is absent.
-
-    The cosmos pipeline submodule does ``from transformers import ...`` at module
-    import time; the wrapper imports that submodule eagerly. The real dependency
-    is declared in pyproject but not installed in this venv, so provide a stub
-    with a valid ``__spec__`` (diffusers' import-availability probe inspects it).
-    """
-    if "transformers" in sys.modules:
-        return
-    try:  # real package present -> use it
-        import transformers  # noqa: F401
-
-        return
-    except ModuleNotFoundError:
-        pass
-    stub = types.ModuleType("transformers")
-    stub.__spec__ = importlib.machinery.ModuleSpec("transformers", loader=None)
-    stub.__version__ = "4.44.0"
-    stub.T5EncoderModel = type("T5EncoderModel", (), {})
-    stub.T5TokenizerFast = type("T5TokenizerFast", (), {})
-    sys.modules["transformers"] = stub
-
-
 def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
     monkeypatch,
 ) -> None:
     """Cosmos Predict2 ``from_build`` swaps the safety checker, restores grad mode, stages frozen modules."""
-    _ensure_transformers_importable()
-
     import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as v2w_mod
     from diffusers import Cosmos2VideoToWorldPipeline
 

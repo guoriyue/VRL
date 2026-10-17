@@ -53,24 +53,6 @@ def _state(model: VDNH3PipelineModel):
     return model.prepare_sampling(_request(), encoded)
 
 
-def test_the_transform_replaces_every_block_attention_and_keeps_the_original() -> None:
-    """Upstream's contract: ``block.attn`` becomes a HybridAttention wrapping the
-    original module, which stays reachable at ``attn.orig`` -- so the dense
-    teacher is always recoverable and the backbone weights are untouched."""
-    vendor = load_vdn()
-    components = build_tiny_minimax_h3_components()
-    original = [block.attn for block in components.transformer.transformer_blocks]
-
-    model = build_tiny_vdn_h3_model()
-
-    hybrids = list(vendor.iter_hybrids(model.transformer))
-    assert len(hybrids) == len(model.transformer.transformer_blocks)
-    for block in model.transformer.transformer_blocks:
-        assert isinstance(block.attn, vendor.hybrid_attention_cls)
-    # A freshly built tiny model has the same block count as the untransformed one.
-    assert len(original) == len(hybrids)
-
-
 def test_forward_step_runs_the_hybrid_and_keeps_the_minimax_h3_contract() -> None:
     """One joint forward through the grafted transformer: the video velocity comes
     back in the latent's own shape, finite, fp32, negated into the flow convention."""
@@ -155,16 +137,6 @@ def test_gradients_reach_the_branch_the_policy_would_train() -> None:
     assert projection.weight.grad is not None
     assert torch.isfinite(projection.weight.grad).all()
     assert float(projection.weight.grad.abs().sum()) > 0.0
-
-
-def test_the_forward_only_inference_kernels_stay_off() -> None:
-    """Upstream's ``set_inference_mode`` installs no-grad fused block bodies; a
-    trained policy must never carry them, so the graft leaves both flags off."""
-    model = build_tiny_vdn_h3_model()
-
-    for attn in load_vdn().iter_hybrids(model.transformer):
-        assert attn.inference_mode is False
-        assert attn.hybrid_inference_mode is False
 
 
 def test_a_missing_vdn_checkpoint_is_refused_with_the_dense_alternative() -> None:

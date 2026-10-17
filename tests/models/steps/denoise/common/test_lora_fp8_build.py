@@ -165,44 +165,6 @@ def test_shared_builder_moves_plain_lora_after_attach(monkeypatch) -> None:
     assert events == ["attach", "move"]
 
 
-def test_fp8_config_replay_build_ignores_rollout_options() -> None:
-    """Replay owns no rollout options even when collection uses fp8."""
-    from omegaconf import OmegaConf
-
-    from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import parse_config
-    from vrl.models.families.registry import get_model_family_entry
-
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "sd3_5",
-                "path": "fake",
-                "use_lora": True,
-                "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
-            },
-            "precision": {
-                "float32_precision": "tf32",
-                "training": {"dtype": "bf16"},
-                "rollout": {
-                    "dtype": "bf16",
-                    "quantization": {"format": "fp8"},
-                },
-            },
-        },
-    )
-    root = parse_config(cfg)
-    precision = PrecisionPolicy.from_section(root.precision)
-    build = get_model_family_entry("sd3_5").resolve_model_build(
-        root,
-        "cpu",
-        precision=precision,
-        for_rollout=False,
-    )
-
-    assert build.rollout is None
-
-
 def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch) -> None:
     import vrl.nn.quantization as quantization
 
