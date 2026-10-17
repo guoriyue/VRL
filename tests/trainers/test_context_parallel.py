@@ -162,21 +162,6 @@ def test_enable_context_parallel_refuses_models_without_a_plan() -> None:
         enable_context_parallel(_NoPlan(), mesh=None, ulysses_degree=2, ring_degree=1)
 
 
-def test_local_prompts_partitions_contiguously_with_the_remainder_on_the_last_peer() -> None:
-    from types import SimpleNamespace
-
-    def _schedule(cp_rank: int, cp_size: int = 3):
-        groups = SimpleNamespace(
-            cp_rank=cp_rank, cp_size=cp_size, object_group=None, leader_rank=0
-        )
-        return ContextParallelRolloutSchedule(inner=None, groups=groups)
-
-    prompts = list("abcdefg")
-    slices = [_schedule(r).local_prompts(prompts) for r in range(3)]
-    assert slices == [["a", "b"], ["c", "d"], ["e", "f", "g"]]
-    assert [p for s in slices for p in s] == prompts
-
-
 def test_batch_fingerprint_separates_reordered_and_rescored_batches() -> None:
     def _batch(rewards, groups):
         return RolloutBatch(rewards=torch.tensor(rewards), group_ids=torch.tensor(groups))

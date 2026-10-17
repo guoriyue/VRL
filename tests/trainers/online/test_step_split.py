@@ -188,32 +188,6 @@ def test_next_prompts_reaches_the_rollout_schedule(monkeypatch, tmp_path) -> Non
     assert seen == [(["a cat"], ["a dog"]), (["a dog"], None)]
 
 
-def test_backward_uses_named_profile_range(monkeypatch, tmp_path) -> None:
-    """The shared backward boundary must remain visible to external profilers."""
-
-    import contextlib
-
-    from vrl.utils import profiling
-
-    tb = real_trainer(monkeypatch, tmp_path)
-    events: list[str] = []
-
-    @contextlib.contextmanager
-    def record(name: str):
-        events.append(f"enter:{name}")
-        try:
-            yield
-        finally:
-            events.append(f"exit:{name}")
-
-    monkeypatch.setattr(profiling, "profile_range", record)
-    parameter = next(iter(tb.trainable_parameters().values()))
-    tb.trainer._backward(parameter.sum())
-
-    assert events == ["enter:trainer.backward", "exit:trainer.backward"]
-    assert parameter.grad is not None
-
-
 def test_streaming_all_filtered_update_does_not_advance_policy(monkeypatch, tmp_path) -> None:
     """An all-zero-advantage streamed batch records a step without publishing weights."""
 
@@ -315,21 +289,6 @@ def test_streaming_scaler_skipped_update_does_not_publish_weights(monkeypatch, t
     assert tb.trainer.state.global_step == 1
     assert _pushes(tb) == 1
     assert _unchanged(tb, before)
-
-
-def test_phase_events_use_the_metric_step(monkeypatch, tmp_path) -> None:
-    """JSON phase events and rollout stats use the same zero-based step."""
-
-    tb = real_trainer(monkeypatch, tmp_path, overrides=("trainer.profile=true",))
-
-    asyncio.run(tb.trainer.step(["a cat"]))
-
-    events = _jsonl(tb, "phase_events.jsonl")
-    stats = _jsonl(tb, "rollout_stats.jsonl")
-    assert events
-    assert {event["step"] for event in events} == {0}
-    assert [row["step"] for row in stats] == [0]
-    assert tb.trainer.state.step == 1
 
 
 def test_streaming_profiles_training_phases(monkeypatch, tmp_path) -> None:

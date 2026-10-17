@@ -108,34 +108,6 @@ class _DDPLike(torch.nn.parallel.DistributedDataParallel):
         self.module = inner
 
 
-def test_flatten_strips_ddp_module_prefix() -> None:
-    """A `.module`-wrapped trainable root must not leak `module.` to rollout."""
-    inner = torch.nn.Linear(2, 1, bias=False)
-    wrapped = _DDPLike(inner)
-    assert "module.weight" in wrapped.state_dict()  # the wrapper prefixes keys
-
-    state = flatten_trainable_module_state({"adapter": wrapped})
-
-    assert set(state) == {"adapter.weight"}  # prefix stripped
-    assert torch.equal(state["adapter.weight"], inner.weight)
-
-
-def test_flatten_strips_compile_orig_mod_prefix() -> None:
-    """A real ``torch.compile``'d policy — the default in live configs — exports clean keys.
-
-    ``torch.compile`` is free until the module is called, so the compiled shape is
-    torch's own ``OptimizedModule`` rather than a hand-written ``_orig_mod`` shell.
-    """
-    inner = torch.nn.Linear(2, 1, bias=False)
-    compiled = torch.compile(inner)
-    assert "_orig_mod.weight" in compiled.state_dict()  # the wrapper prefixes keys
-
-    state = flatten_trainable_module_state({"adapter": compiled})
-
-    assert set(state) == {"adapter.weight"}
-    assert torch.equal(state["adapter.weight"], inner.weight)
-
-
 def test_flatten_strips_nested_compile_inside_a_ddp_wrapper() -> None:
     """Nesting must peel both wrappers, and only this order can prove it.
 

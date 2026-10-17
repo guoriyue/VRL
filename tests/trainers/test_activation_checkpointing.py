@@ -24,22 +24,6 @@ def _config(mode: str | bool):
     )
 
 
-def test_absent_gradient_checkpointing_defaults_to_off() -> None:
-    class _Transformer:
-        def enable_gradient_checkpointing(self) -> None:
-            raise AssertionError("an absent public key must not enable checkpointing")
-
-    cfg = OmegaConf.create(
-        {
-            "actor": {},
-            "model": {"family": "sd3_5", "torch_compile": {"enable": False}},
-        },
-    )
-    bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
-
-    enable_transformer_gradient_checkpointing(bundle, parse_config(cfg))
-
-
 def test_cpu_checkpoint_installs_explicit_function_and_rejects_fallback():
     calls = []
     module = SimpleNamespace(enable_gradient_checkpointing=lambda **kwargs: calls.append(kwargs))

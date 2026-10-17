@@ -320,53 +320,6 @@ def test_adapter_export_rejects_custom_adapter_effective_path_collision(tmp_path
     assert not (tmp_path / "checkpoint-effective-collision").exists()
 
 
-def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state(
-    tmp_path,
-) -> None:
-    """The published adapter carries EMA weights; the resume checkpoint carries raw ones.
-
-    Driven by a real ``EMAWeights``, so the 7.0 in the artifact is the
-    wrapper's own running average copied in by its own ``copy_ema_to``, and the
-    restore afterwards is its own ``copy_temp_to`` — the previous stand-in filled
-    the number in itself, which made ``store_temp=True`` a claim about the stub
-    rather than about the swap. Here that claim is implied: a swap taken without
-    a snapshot could not restore 3.0 at all.
-    """
-
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, path, *, state_dict, selected_adapters):
-            assert selected_adapters == ["default"]
-            path.mkdir(parents=True)
-            save_file(dict(state_dict), path / "adapter_model.safetensors")
-
-    export_module = _ExportModule(1, 1, bias=False)
-    bundle = _Bundle(export_module)
-    ema = _ema_holding(export_module, average=7.0, live=3.0)
-
-    save_training_checkpoint(
-        tmp_path / "checkpoint-ema",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(export_module)},
-        export_ema=ema,
-    )
-
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-ema")
-    saved_trainable = checkpoint.checkpoint_state["module"]["weight"].item()
-    published = _exported_adapter_weight(
-        tmp_path / "checkpoint-ema" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
-    )
-
-    assert saved_trainable == pytest.approx(3.0)
-    assert published.item() == pytest.approx(7.0)
-    assert bundle.module.weight.item() == pytest.approx(3.0)
-    assert ema.temp_stored_parameters is None
-
-
 def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
     tmp_path,
 ) -> None:

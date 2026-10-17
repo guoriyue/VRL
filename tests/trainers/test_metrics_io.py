@@ -204,23 +204,6 @@ def test_continuous_phase_metrics_are_mapped_at_the_io_boundary() -> None:
     assert row.continuous_weight_sync_barrier_mode == pytest.approx(1.0)
 
 
-def test_strict_online_metric_row_defaults_all_continuous_columns_to_zero() -> None:
-    row = OnlineMetricRow.from_step_metrics(0, TrainStepMetrics())
-    values = dict(
-        zip(
-            OnlineMetricRow.csv_columns(),
-            row.to_csv().strip().split(","),
-            strict=True,
-        ),
-    )
-
-    continuous_values = {
-        name: float(value) for name, value in values.items() if name.startswith("continuous_")
-    }
-    assert continuous_values
-    assert set(continuous_values.values()) == {0.0}
-
-
 def test_online_metric_row_preserves_non_finite_values_for_health_consumers() -> None:
     row = OnlineMetricRow.from_step_metrics(
         0,

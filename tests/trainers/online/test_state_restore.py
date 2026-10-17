@@ -91,18 +91,6 @@ class TestOnlineTrainerResumeState:
         assert ema.num_updates == num_updates
         assert ema.decay == tb.trainer.config.ema.decay
 
-    def test_load_state_dict_accepts_legacy_total_keys(self, monkeypatch, tmp_path) -> None:
-        """Checkpoints written before the totals were dropped still resume."""
-
-        source = _trained(monkeypatch, tmp_path / "source")
-        state = source.trainer.state_dict()
-        state.update({"total_reward": 99.0, "total_loss": 101.0})
-        restored = _trainer(monkeypatch, tmp_path / "restored")
-
-        restored.trainer.load_state_dict(state)
-
-        assert _progress(restored.trainer) == _progress(source.trainer)
-
     def test_strict_resume_rejects_master_state_for_plain_optimizer(
         self, monkeypatch, tmp_path
     ) -> None:

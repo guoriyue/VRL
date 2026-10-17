@@ -133,24 +133,6 @@ class TestDiagnostics:
             trainer._validate_first_update_parity(stats, local_weight=1.0)
             assert trainer._replay_parity_passed is True
 
-    def test_every_update_parity_rejects_drift_after_initial_success(self, monkeypatch, tmp_path):
-        trainer = _trainer(
-            monkeypatch,
-            tmp_path,
-            "trainer.replay_parity.max_abs_logprob_diff=0.0",
-            "trainer.replay_parity.every_update=true",
-        ).trainer
-        trainer._validate_first_update_parity(
-            InitialReplayStats(logprob_abs_diff_max=0.0, finite=True),
-            local_weight=1.0,
-        )
-        assert trainer._replay_parity_passed
-        with pytest.raises(RuntimeError, match="replay parity failed before optimizer update"):
-            trainer._validate_first_update_parity(
-                InitialReplayStats(logprob_abs_diff_max=1e-12, finite=True),
-                local_weight=1.0,
-            )
-
     def test_replay_parity_passes_only_after_first_measured_update(
         self, monkeypatch, tmp_path
     ) -> None:

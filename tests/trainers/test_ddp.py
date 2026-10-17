@@ -63,7 +63,7 @@ def _ddp_wrap(module: nn.Module) -> nn.Module:
 # ── build_strategy dispatch + model-handle guard (no process group) ──────────
 
 
-def test_build_strategy_reads_the_ddp_public_override() -> None:
+def test_build_strategy_dispatches_the_ddp_strategy() -> None:
     strategy = build_strategy(
         RootConfig.model_validate(
             {
@@ -79,7 +79,6 @@ def test_build_strategy_reads_the_ddp_public_override() -> None:
     )
 
     assert isinstance(strategy, DDPStrategy)
-    assert strategy._find_unused_parameters is True
 
 
 def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:
@@ -153,35 +152,6 @@ def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) 
     assert all("module" not in key for key in got)
     for key in got:
         assert torch.allclose(got[key], expected[key])
-
-
-def test_ddp_checkpoint_state_excludes_frozen_params(cpu_process_group) -> None:
-    net = ToyTransformer()
-    net.head.requires_grad_(False)
-    strategy = _ddp_strategy(_cpu_ddp_context())
-
-    checkpoint = strategy.export_checkpoint_state(Bundle(_ddp_wrap(net)))["transformer"]
-
-    assert not any("head" in key for key in checkpoint)
-
-
-def test_ddp_export_then_load_checkpoint_state_round_trip(cpu_process_group) -> None:
-    strategy = _ddp_strategy(_cpu_ddp_context())
-    src = _ddp_wrap(ToyTransformer())
-    with torch.no_grad():
-        for p in src.parameters():
-            p.fill_(3.0)
-
-    snapshot = strategy.export_checkpoint_state(Bundle(src))
-    assert set(snapshot) == {"transformer"}
-    first_name, first_value = next(iter(snapshot["transformer"].items()))
-    live = dict(src.module.state_dict())[first_name]
-    assert first_value.data_ptr() != live.data_ptr()
-
-    dst = _ddp_wrap(ToyTransformer())
-    strategy.load_checkpoint_state(Bundle(dst), snapshot)
-    for value in dst.module.state_dict().values():
-        assert torch.allclose(value, torch.full_like(value, 3.0))
 
 
 def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(

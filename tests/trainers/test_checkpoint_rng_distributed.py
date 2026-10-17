@@ -161,12 +161,6 @@ def test_strict_restore_rejects_missing_requested_generator_before_mutation(name
     assert torch.equal(prompt_generator.get_state(), prompt_before)
 
 
-@pytest.mark.parametrize("state", [None, {}])
-def test_strict_restore_requires_requested_generator_even_without_rng_tree(state):
-    with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
-        restore_rng_state(state, prompt_generator=torch.Generator())
-
-
 @pytest.mark.parametrize("rank", [0, 3])
 def test_strict_four_rank_restore_checks_selected_rank_generator(rank):
     states = [

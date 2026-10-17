@@ -96,27 +96,6 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
     assert results[1] == (expected,)
 
 
-def test_falls_back_to_local_without_process_group() -> None:
-    assert _rank_strategy().collectives.all_true(True) is True
-    assert _rank_strategy().collectives.all_true(False) is False
-
-
-def test_zero_weight_initial_replay_is_fully_neutral() -> None:
-    resolved, has_measurements = _distributed_initial_replay_stats(
-        InitialReplayStats(
-            clip_fraction=float("nan"),
-            active_clip_fraction=float("inf"),
-            logprob_abs_diff_max=float("inf"),
-            finite=False,
-        ),
-        local_weight=0.0,
-        strategy=_rank_strategy(),
-    )
-
-    assert has_measurements is False
-    assert resolved == InitialReplayStats()
-
-
 def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)

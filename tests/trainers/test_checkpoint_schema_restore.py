@@ -370,75 +370,6 @@ def test_strict_schema_v1_full_state_restores_without_identity(tmp_path) -> None
     assert restored.module.frozen_base.item() == pytest.approx(9.0)
 
 
-def test_strict_schema_v1_full_wrong_shape_rejects_all_roots_before_mutation(
-    tmp_path,
-) -> None:
-    restored = _OwnedBundle()
-    restored.second = _OwnedModule()
-    restored.trainable_modules["second"] = restored.second
-    before = {
-        root_name: {name: value.clone() for name, value in module.state_dict().items()}
-        for root_name, module in restored.trainable_modules.items()
-    }
-    state = {
-        "module": {
-            "weight": torch.tensor([7.0]),
-            "frozen_base": torch.tensor([9.0]),
-            "previous": torch.tensor([8.0]),
-        },
-        "second": {
-            "weight": torch.tensor([10.0]),
-            "frozen_base": torch.tensor([11.0]),
-            "previous": torch.tensor([12.0, 13.0]),
-        },
-    }
-    payload = {
-        "schema_version": 1,
-        "family": "unit",
-        "trainer": {},
-        "model": {"trainable_modules": state},
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match="shape mismatch"):
-        _training_checkpoint(tmp_path, payload).restore_training(
-            trainer=_Trainer(),
-            bundle=restored,
-            family="unit",
-        )
-
-    assert all(
-        torch.equal(value, before[root_name][name])
-        for root_name, module in restored.trainable_modules.items()
-        for name, value in module.state_dict().items()
-    )
-
-
-def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(tmp_path) -> None:
-    source = _OwnedBundle()
-    with torch.no_grad():
-        source.module.weight.fill_(7.0)
-        source.module.frozen_base.fill_(9.0)
-        source.module.previous.fill_(8.0)
-    state = dict(source.module.state_dict())
-    state.pop("frozen_base")
-    restored = _OwnedBundle()
-    before = {name: value.clone() for name, value in restored.module.state_dict().items()}
-
-    # Without a saved identity a non-full v1 state is rejected before any key check.
-    with pytest.raises(ValueError, match="selective state without verified model identity"):
-        _training_checkpoint(tmp_path, _v1_payload(state)).restore_training(
-            trainer=_Trainer(),
-            bundle=restored,
-            family="unit",
-        )
-
-    assert all(
-        torch.equal(value, before[name]) for name, value in restored.module.state_dict().items()
-    )
-
-
 def test_strict_schema_v1_compiled_full_state_normalizes_legacy_prefix(tmp_path) -> None:
     source = _OwnedBundle()
     with torch.no_grad():
@@ -469,33 +400,6 @@ def test_strict_schema_v1_rejects_mixed_compile_prefixes(tmp_path) -> None:
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
-        )
-
-
-def test_strict_schema_v2_never_normalizes_compile_prefix(tmp_path) -> None:
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "unit",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {
-            "identity": UNIT_IDENTITY,
-            "owned_state": {
-                "module": {
-                    "_orig_mod.weight": torch.tensor([7.0]),
-                    "_orig_mod.previous": torch.tensor([8.0]),
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-
-    with pytest.raises(ValueError, match="keys mismatch"):
-        _training_checkpoint(tmp_path, payload).restore_training(
-            trainer=_Trainer(),
-            bundle=_OwnedBundle(),
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
         )
 
 

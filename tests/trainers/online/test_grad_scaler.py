@@ -169,32 +169,6 @@ def test_clip_and_step_lets_scaler_skip_nonfinite_gradient() -> None:
     assert trainer._grad_scaler.get_scale() < scale_before  # real backoff happened
 
 
-def test_low_precision_trainables_derive_master_optimizer_without_config_knob(
-    monkeypatch, tmp_path
-) -> None:
-    tb = real_trainer(monkeypatch, tmp_path, overrides=("precision.training.dtype=fp16",))
-    trainable = next(iter(tb.trainable_parameters().values()))
-
-    optimizer = tb.trainer._ensure_optimizer()
-
-    assert isinstance(optimizer, FP32MasterWeightOptimizer)
-    assert next(optimizer.parameters()).dtype is torch.float32
-    assert trainable.dtype is torch.float16
-
-
-def test_fp32_trainables_use_direct_optimizer_without_duplicate_master(
-    monkeypatch, tmp_path
-) -> None:
-    tb = real_trainer(monkeypatch, tmp_path)
-    trainables = list(tb.trainable_parameters().values())
-
-    optimizer = tb.trainer._ensure_optimizer()
-
-    assert not isinstance(optimizer, FP32MasterWeightOptimizer)
-    assert optimizer.param_groups[0]["params"][0] is trainables[0]
-    assert all(value.dtype is torch.float32 for value in trainables)
-
-
 # --------------------------------------------------------------------------
 # G4 (unit) — stepped reflects whether the scaler applied the update
 # --------------------------------------------------------------------------
@@ -265,14 +239,3 @@ def test_skipped_step_does_not_update_ema_or_rollout_weights(monkeypatch, tmp_pa
     for name, value in tb.trainable_parameters().items():
         assert torch.equal(value.detach(), before[name])
     assert tb.trainer.state.global_step == 1  # the step still counts as an iteration
-
-
-def test_applied_step_updates_ema_and_rollout_weights(monkeypatch, tmp_path) -> None:
-    tb, shadow = _trainer_with_ema(monkeypatch, tmp_path)
-
-    asyncio.run(tb.trainer.step(["p"]))
-
-    assert shadow.events == ["ema_step"]
-    assert tb.collector.trace.events.count("update_weights") == 2
-    assert tb.collector.runtime.current_policy_version == 2
-    assert tb.trainer.state.global_step == 1

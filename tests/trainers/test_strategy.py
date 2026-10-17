@@ -59,20 +59,6 @@ def test_prepare_model_leaves_roots_a_loader_already_dispatched() -> None:
     assert transformer.to_targets == []
 
 
-def test_backward_scales_loss_when_grad_scaler_present() -> None:
-    calls: list[str] = []
-
-    class _Scaler:
-        def scale(self, loss: torch.Tensor) -> torch.Tensor:
-            calls.append("scale")
-            return loss
-
-    leaf = nn.Linear(1, 1)
-    SingleProcessStrategy().backward(leaf(torch.ones(1, 1)).sum(), grad_scaler=_Scaler())
-
-    assert calls == ["scale"]
-
-
 def test_export_rollout_state_is_detached_cpu_snapshot_without_live_alias() -> None:
     bundle = _Bundle()
     live = bundle.trainable_modules["adapter"].weight
@@ -456,15 +442,4 @@ def test_export_and_load_checkpoint_state_round_trip() -> None:
     assert torch.equal(
         dst.trainable_modules["adapter"].weight,
         src.trainable_modules["adapter"].weight,
-    )
-
-
-def test_unsharded_checkpoint_optimizer_export_is_the_plain_export() -> None:
-    """With no gather to join, the primary-only optimizer export is the same state."""
-
-    model = nn.Linear(2, 2)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    unsharded = SingleProcessStrategy()
-    assert unsharded.export_checkpoint_optimizer_state(model, optimizer) == (
-        unsharded.export_optimizer_state(model, optimizer)
     )

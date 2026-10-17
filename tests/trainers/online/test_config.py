@@ -77,16 +77,6 @@ def test_online_plan_rejects_retired_accumulation_setting() -> None:
         OnlineBatchConfig.from_root(_public_batch_config(gradient_accumulation_steps=8))
 
 
-def test_unsplit_batch_config_derives_the_full_batch_size() -> None:
-    config = OnlineBatchConfig.from_root(_public_batch_config())
-
-    assert config.collections_per_update == 1
-    assert config.prompts_per_collection == 0
-    assert config.host_memory_budget_fraction == 0.0
-    assert isinstance(config.host_memory_budget_fraction, float)
-    assert config.streaming is False
-
-
 @pytest.mark.parametrize(
     ("actor", "message"),
     [

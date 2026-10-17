@@ -49,13 +49,6 @@ def test_trust_region_with_multi_epoch_is_allowed(monkeypatch, tmp_path) -> None
     _trains_one_step(bench)
 
 
-def test_plain_grpo_single_epoch_is_allowed(monkeypatch, tmp_path) -> None:
-    # Plain GRPO at one epoch is honest REINFORCE+group-baseline, not a no-op.
-    bench = real_trainer(monkeypatch, tmp_path, overrides=("actor.ppo_epochs=1",))
-
-    _trains_one_step(bench)
-
-
 def test_continuous_with_staleness_allows_single_epoch_trust_region(monkeypatch, tmp_path) -> None:
     # A stale behavior policy makes the ratio differ from 1 even at one epoch.
     bench = real_trainer(

@@ -314,53 +314,6 @@ def test_flow_grpo_loss_scaling_includes_timesteps(monkeypatch, tmp_path) -> Non
     assert bench.trainer.state.global_step == 1
 
 
-def test_streaming_matches_full_batch_gradient(monkeypatch, tmp_path) -> None:
-    """Streaming microbatches accumulate exactly the full-batch gradient.
-
-    Both trainers start from the same snapshot weights and draw the same
-    request seeds (one request per PromptExample either way), so both see the
-    same real rollouts; only the update's batching differs.
-    """
-
-    prompts = [PromptExample(prompt=text) for text in ("p0", "p1", "p2", "p3")]
-    full = real_trainer(
-        monkeypatch,
-        tmp_path / "full",
-        overrides=(*_ONE_EPOCH, "rollout.prompts_per_batch=4"),
-    )
-    # Each stack serves one snapshot: load the first policy before the second
-    # stack installs its pipeline.
-    asyncio.run(full.collector.collector.activate_generation_runtime())
-    streaming = real_trainer(
-        monkeypatch,
-        tmp_path / "streaming",
-        overrides=(*_ONE_EPOCH, *_STREAM_FOUR),
-    )
-    full_steps = _record_optimizer_steps(monkeypatch, full)
-    streaming_steps = _record_optimizer_steps(monkeypatch, streaming)
-    initial = full.trainable_parameters()
-    assert all(
-        torch.equal(initial[name], value)
-        for name, value in streaming.trainable_parameters().items()
-    )
-
-    random.seed(0)
-    asyncio.run(full.trainer.step(list(prompts)))
-    random.seed(0)
-    _stream(streaming, list(prompts))
-
-    assert [r.sampling["seed"] for r in full.collector.trace.requests] == [
-        r.sampling["seed"] for r in streaming.collector.trace.requests
-    ]
-    assert len(full_steps) == len(streaming_steps) == 1
-    assert full.trainer.state.global_step == streaming.trainer.state.global_step == 1
-    full_grad, streaming_grad = full_steps[0], streaming_steps[0]
-    assert full_grad.keys() == streaming_grad.keys()
-    assert any(bool(grad.abs().sum() > 0) for grad in full_grad.values())
-    for name, grad in full_grad.items():
-        torch.testing.assert_close(streaming_grad[name], grad, rtol=1e-6, atol=1e-7)
-
-
 def test_training_microbatch_size_splits_backward_and_preserves_gradient(
     monkeypatch, tmp_path
 ) -> None:

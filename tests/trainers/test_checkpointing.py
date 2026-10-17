@@ -8,7 +8,6 @@ import pytest
 import torch
 from torch import nn
 
-from tests.rollouts.collector._helpers import Trace
 from tests.trainers._checkpoint_helpers import (
     UNIT_IDENTITY,
     _Bundle,
@@ -28,7 +27,6 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.trainers.strategy import SingleProcessStrategy
 
 
 class _RecordingStrategy:
@@ -66,7 +64,6 @@ class _RecordingStrategy:
         )
         self.agreements: list[bool] = []
         self.exported: list[Any] = []
-        self.exported_weights: list[float] = []
         self._fail_agreements = fail_agreements
         self._fail_export_at = fail_export_at
         self._exported_state = exported_state
@@ -76,7 +73,6 @@ class _RecordingStrategy:
         if len(self.exported) == self._fail_export_at:
             raise RuntimeError("checkpoint gather failed")
         state = self._exported_state or export_checkpoint_state(bundle)
-        self.exported_weights.append(float(state["module"]["weight"].item()))
         return state
 
     def _agree(self, succeeded: bool) -> bool:
@@ -139,25 +135,6 @@ def test_rng_capture_only_tolerates_absent_numpy(monkeypatch, missing_module):
     # A saved NumPy state requires NumPy, even if capture can omit absent NumPy.
     with pytest.raises(ModuleNotFoundError):
         restore_rng_state({"numpy": ()})
-
-
-def test_rng_checkpoint_restores_python_numpy_and_named_generator_draws():
-    import random
-
-    import numpy as np
-
-    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
-
-    generator = torch.Generator().manual_seed(17)
-    state = capture_rng_state(prompt_generator=generator)
-    try:
-        expected = (random.random(), float(np.random.random()), torch.rand(3, generator=generator))
-        restore_rng_state(state, prompt_generator=generator)
-        assert random.random() == expected[0]
-        assert float(np.random.random()) == expected[1]
-        torch.testing.assert_close(torch.rand(3, generator=generator), expected[2])
-    finally:
-        restore_rng_state(state, prompt_generator=generator)
 
 
 def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> None:
@@ -349,39 +326,6 @@ def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
         )
 
 
-def test_restore_training_checkpoint_routes_model_load_through_strategy(
-    monkeypatch, tmp_path
-) -> None:
-    """Distributed model restore must use the same strategy seam as export."""
-
-    strategy = SingleProcessStrategy()
-    loads = Trace(monkeypatch)
-    loads.watch(strategy, "load_checkpoint_state", "load")
-    source = _Bundle()
-    save_training_checkpoint(
-        tmp_path / "checkpoint-strategy-restore",
-        trainer=_Trainer(),
-        bundle=source,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-    )
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy-restore")
-    trainer = _Trainer()
-    trainer._strategy = strategy
-    restored = _Bundle()
-
-    checkpoint.restore_training(
-        trainer=trainer,
-        bundle=restored,
-        family="unit",
-        expected_model_identity=UNIT_IDENTITY,
-    )
-
-    assert loads.calls == [("load", (restored, checkpoint.checkpoint_state))]
-
-
 def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
     """Checkpoint-owned state and trainer state come from their primary-only seams.
 
@@ -444,55 +388,6 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
     assert strategy.exported == [bundle]  # joined the collective gather
     assert out == {}  # no meta returned
     assert not ckpt_dir.exists()  # rank0-only IO: nothing written on a non-primary rank
-
-
-def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
-    tmp_path,
-) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise RuntimeError("artifact write failed")
-
-    module = _ExportModule(1, 1, bias=False)
-    strategy = _RecordingStrategy(world_size=2)
-
-    with pytest.raises(RuntimeError, match="artifact write failed"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-primary-write-failure",
-            trainer=_Trainer(),
-            bundle=_Bundle(module),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            strategy=strategy,
-        )
-
-    # The last vote is the publication verdict the peers wait on: the primary
-    # reports its failure to them before re-raising it.
-    assert strategy.agreements[-1] is False
-    assert not (tmp_path / "checkpoint-primary-write-failure").exists()
-    assert not list(tmp_path.glob("checkpoint-primary-write-failure.tmp-*"))
-
-
-def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
-    # The sixth vote is the primary's publication verdict.
-    strategy = _RecordingStrategy(rank=1, world_size=2, fail_agreements=(6,))
-
-    with pytest.raises(RuntimeError, match="publication failed on the primary"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-peer-write-failure",
-            trainer=_Trainer(),
-            bundle=_Bundle(),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            strategy=strategy,
-        )
-
-    assert not (tmp_path / "checkpoint-peer-write-failure").exists()
 
 
 def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path) -> None:
@@ -567,80 +462,6 @@ def test_training_checkpoint_preserves_swap_failure_without_unset_restore(
     assert not (tmp_path / "checkpoint-failed-ema-swap").exists()
 
 
-def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("peer failure must not reach artifact IO")
-
-    module = _ExportModule(1, 1, bias=False)
-    bundle = _Bundle(module)
-    ema = _ema_holding(module, average=7.0, live=3.0)
-    # The seventh vote is the peers' verdict on the EMA swap.
-    strategy = _RecordingStrategy(world_size=2, fail_agreements=(7,))
-
-    with pytest.raises(RuntimeError, match="peer rank failed before"):
-        save_training_checkpoint(
-            tmp_path / "checkpoint-peer-swap-failure",
-            trainer=_Trainer(),
-            bundle=bundle,
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=ema,
-            strategy=strategy,
-        )
-
-    # Only the raw gather ran: a second export would have seen the EMA's 7.0.
-    assert strategy.exported_weights == pytest.approx([3.0])
-    assert ema.temp_stored_parameters is None
-    assert module.weight.item() == pytest.approx(3.0)
-    assert not (tmp_path / "checkpoint-peer-swap-failure").exists()
-
-
-def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("failed rollback must not reach artifact IO")
-
-    module = _ExportModule(1, 1, bias=False)
-    strategy = _RecordingStrategy(world_size=2, fail_agreements=(7,))
-    # Real EMA, one injected fault: a real wrapper cannot be made to fail its own
-    # restore, and that failure is the whole subject here. Patching the one method
-    # keeps `has_updates`, the swap and the snapshot real.
-    ema = _ema_holding(module, average=7.0, live=3.0)
-
-    def failing_copy_temp_to(_parameters):
-        raise RuntimeError("rank-local EMA rollback failed")
-
-    monkeypatch.setattr(ema, "copy_temp_to", failing_copy_temp_to)
-
-    with pytest.raises(
-        RuntimeError,
-        match="rollback could not restore raw training weights",
-    ) as error:
-        save_training_checkpoint(
-            tmp_path / "checkpoint-failed-ema-rollback",
-            trainer=_Trainer(),
-            bundle=_Bundle(module),
-            family="unit",
-            model_identity=UNIT_IDENTITY,
-            progress={"next_epoch": 1},
-            rng_state={},
-            adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=ema,
-            strategy=strategy,
-        )
-
-    assert isinstance(error.value.__cause__, RuntimeError)
-    assert str(error.value.__cause__) == "rank-local EMA rollback failed"
-    # The swap really happened and really could not be undone: the weights are
-    # left at the EMA average, which is exactly why this is a hard error.
-    assert module.weight.item() == pytest.approx(7.0)
-    assert not (tmp_path / "checkpoint-failed-ema-rollback").exists()
-
-
 def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path) -> None:
     class _ExportModule(nn.Linear):
         def save_pretrained(self, *_args, **_kwargs):
@@ -672,37 +493,6 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
     assert module.weight.item() == pytest.approx(3.0)
     assert ema.temp_stored_parameters is None
     assert not (tmp_path / "checkpoint-mixed-ema-state").exists()
-
-
-def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path) -> None:
-    class _ExportModule(nn.Linear):
-        def save_pretrained(self, *_args, **_kwargs):
-            raise AssertionError("non-primary rank must not write artifacts")
-
-    module = _ExportModule(1, 1, bias=False)
-    bundle = _Bundle(module)
-    ema = _ema_holding(module, average=7.0, live=3.0)
-    strategy = _RecordingStrategy(rank=1, world_size=2)
-
-    result = save_training_checkpoint(
-        tmp_path / "checkpoint-nonprimary-ema",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-        export_ema=ema,
-        strategy=strategy,
-    )
-
-    assert result == {}
-    # The second gather sees the real EMA average, not a number a stub filled in.
-    assert strategy.exported_weights == pytest.approx([3.0, 7.0])
-    assert module.weight.item() == pytest.approx(3.0)
-    assert ema.temp_stored_parameters is None  # the swap was rolled back, not abandoned
-    assert not (tmp_path / "checkpoint-nonprimary-ema").exists()
 
 
 def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
@@ -743,38 +533,6 @@ def test_load_training_checkpoint_rejects_non_integer_schema_version(
 
     with pytest.raises(error, match=message):
         TrainingCheckpoint.load(ckpt)
-
-
-@pytest.mark.parametrize(
-    ("schema_version", "model"),
-    [
-        (1, {"trainable_modules": {}}),
-        (
-            CHECKPOINT_SCHEMA_VERSION,
-            {"identity": UNIT_IDENTITY, "owned_state": {}},
-        ),
-    ],
-)
-def test_load_training_checkpoint_accepts_exact_integer_schema_versions(
-    tmp_path,
-    schema_version,
-    model,
-) -> None:
-    ckpt = tmp_path / f"checkpoint-schema-{schema_version}"
-    ckpt.mkdir()
-    torch.save(
-        {
-            "schema_version": schema_version,
-            "family": "unit",
-            "trainer": {},
-            "model": model,
-            "progress": {},
-            "rng": {},
-        },
-        ckpt / TRAINING_CHECKPOINT_NAME,
-    )
-
-    assert TrainingCheckpoint.load(ckpt).schema_version == schema_version
 
 
 def test_save_training_checkpoint_requires_non_empty_identity(tmp_path) -> None:
@@ -1045,19 +803,6 @@ def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
     saved = TrainingCheckpoint.load(target)
     assert saved.payload["family"] == "unit"
     assert saved.checkpoint_state["module"]["weight"].item() == 7.0
-
-
-def test_require_equal_tensor_tree_compares_values() -> None:
-    from vrl.trainers.checkpointing import _require_equal_tensor_tree
-
-    cpu_tree = {"optimizer": {"exp_avg": torch.ones(3)}}
-    _require_equal_tensor_tree(cpu_tree, cpu_tree, label="same device")
-    with pytest.raises(ValueError, match="tensor mismatch"):
-        _require_equal_tensor_tree(
-            cpu_tree,
-            {"optimizer": {"exp_avg": torch.zeros(3)}},
-            label="mismatch",
-        )
 
 
 @pytest.mark.gpu

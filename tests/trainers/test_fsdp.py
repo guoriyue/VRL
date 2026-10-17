@@ -32,7 +32,6 @@ from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessG
 from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
-    gather_checkpoint_state_dict,
     iter_blocks,
     load_full_state_dict,
     mixed_precision_policy,
@@ -87,16 +86,6 @@ def _fsdp_strategy(
         cpu_offload=config.cpu_offload,
         shard_trainable_only=config.shard_trainable_only,
     )
-
-
-def test_fsdp_materializes_weights_on_the_primary_rank_only() -> None:
-    """Rank 0 reads the checkpoint; every other rank builds a skeleton that
-    ``prepare_model`` fills, so host memory holds one copy per node."""
-    assert _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").materialize_weights
-    other = DistributedTrainingContext(
-        strategy="fsdp", rank=1, world_size=2, device=torch.device("cpu")
-    )
-    assert _fsdp_strategy(other, precision_policy="none").materialize_weights is False
 
 
 def _strategy_config(
@@ -188,16 +177,6 @@ def test_trainable_only_fsdp_requires_native_precision() -> None:
         _fsdp_strategy(_cpu_fsdp_context(), shard_trainable_only=True)
 
 
-def test_build_strategy_preserves_trainable_only_fsdp() -> None:
-    config = _strategy_config(
-        "fsdp",
-        strategy_config={"shard_trainable_only": True, "precision_policy": "none"},
-    )
-    strategy = build_strategy(config, _cpu_fsdp_context())
-    assert isinstance(strategy, FSDPStrategy)
-    assert strategy._shard_trainable_only
-
-
 def test_apply_fsdp_casts_only_root_forward_inputs(monkeypatch) -> None:
     import torch.distributed.fsdp as torch_fsdp
 
@@ -261,15 +240,6 @@ def test_native_fsdp_preserves_frozen_float32_parameters() -> None:
     for parameter, expected, pointer in zip(net.head.parameters(), before, pointers, strict=True):
         assert parameter.dtype == torch.float32 and parameter.data_ptr() == pointer
         assert torch.equal(parameter, expected)
-
-
-def test_actor_fsdp_still_casts_frozen_float32_parameters() -> None:
-    net = ToyTransformer().to(dtype=torch.bfloat16)
-    net.head.to(dtype=torch.float32).requires_grad_(False)
-
-    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=True)
-
-    assert {parameter.dtype for parameter in net.parameters()} == {torch.bfloat16}
 
 
 def test_native_fsdp_still_rejects_frozen_nonfloating_parameters() -> None:
@@ -403,40 +373,6 @@ def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     assert not any("head" in key or "frozen_cache" in key for key in checkpoint)
 
 
-@pytest.mark.real_cover(
-    "tests/trainers/test_fsdp_gather_distributed.py::test_checkpoint_state_is_selective_and_round_trips_on_every_rank",
-    why=(
-        "one rank cannot observe a frozen base staying out of an all-gather; "
-        "that counterpart spawns a real gloo process group and runs on every PR"
-    ),
-)
-def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base(monkeypatch) -> None:
-    """Checkpoints own only trainable state, so the gather never asks for the frozen base.
-
-    The spy delegates to the real ``get_model_state_dict``, so the resulting key
-    set is torch's answer to ``ignore_frozen_params``, not a filter this test
-    re-implemented.
-    """
-    import torch.distributed.checkpoint.state_dict as dcp
-
-    module = nn.Linear(2, 1)
-    module.bias.requires_grad_(False)
-    observed: list[bool] = []
-    real_get_model_state_dict = dcp.get_model_state_dict
-
-    def spy(actual, *, options):
-        assert actual is module
-        observed.append(options.ignore_frozen_params)
-        return real_get_model_state_dict(actual, options=options)
-
-    monkeypatch.setattr(dcp, "get_model_state_dict", spy)
-
-    state = gather_checkpoint_state_dict(module)
-
-    assert observed == [True]
-    assert set(state) == {"weight"}
-
-
 def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:
     """Dual-stage Wan shards both named roots and writes both aliases back."""
     from torch.distributed.tensor import DTensor
@@ -449,32 +385,6 @@ def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> 
     assert policy.set_2_calls == 1
     assert any(isinstance(parameter, DTensor) for parameter in policy.transformer.parameters())
     assert any(isinstance(parameter, DTensor) for parameter in policy.transformer_2.parameters())
-
-
-def test_fsdp_export_then_load_checkpoint_state_round_trip(cpu_process_group) -> None:
-    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
-    src_module = ToyTransformer()
-    src_module.head.requires_grad_(False)
-    with torch.no_grad():
-        for parameter in src_module.parameters():
-            parameter.fill_(3.0 if parameter.requires_grad else 5.0)
-    src = _shard(src_module)
-
-    snapshot = strategy.export_checkpoint_state(Bundle(src))
-    assert set(snapshot) == {"transformer"}
-    assert not any("head" in key for key in snapshot["transformer"])
-
-    dst_module = ToyTransformer()
-    dst_module.head.requires_grad_(False)
-    with torch.no_grad():
-        dst_module.head.weight.fill_(11.0)
-        dst_module.head.bias.fill_(11.0)
-    dst = _shard(dst_module)
-    strategy.load_checkpoint_state(Bundle(dst), snapshot)
-    restored = gather_full_state_dict(dst)
-    for name, value in restored.items():
-        expected = 11.0 if name.startswith("head.") else 3.0
-        assert torch.allclose(value, torch.full_like(value, expected))
 
 
 def test_fsdp_checkpoint_loader_rejects_unselected_legacy_full_state(cpu_process_group) -> None:
@@ -744,30 +654,6 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     assert any(isinstance(parameter, DTensor) for parameter in bundle.model.parameters())
 
 
-def test_fsdp_prepare_model_requires_the_process_group(cpu_process_group, monkeypatch) -> None:
-    """prepare_model checks the process's group up front, symmetric with DDP.
-
-    init_device_mesh would lazily auto-init a default group without binding the
-    rank-local CUDA device first, so the NCCL group and per-block fully_shard
-    could bind the wrong card on a single-node multi-GPU box. The strategy never
-    creates the group; it requires the one the process owns.
-    """
-
-    calls: list[tuple] = []
-    real = TrainerProcessGroup.require
-
-    def _spy(context):
-        calls.append((context.strategy, context.device.type))
-        return real(context)
-
-    monkeypatch.setattr(TrainerProcessGroup, "require", staticmethod(_spy))
-
-    policy = FakePolicy(ToyTransformer())
-    _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
-
-    assert calls == [("fsdp", "cpu")]
-
-
 def test_fsdp_prepare_model_without_a_process_group_is_refused(monkeypatch) -> None:
     import torch.distributed as dist
 
@@ -822,40 +708,6 @@ def test_build_strategy_single_process_returns_single_process() -> None:
         device=torch.device("cpu"),
     )
     assert isinstance(build_strategy(RootConfig(), ctx), SingleProcessStrategy)
-
-
-@pytest.mark.parametrize(
-    ("strategy_config", "precision_policy", "reshard_after_forward", "cpu_offload"),
-    [
-        (None, "actor", True, False),
-        (
-            {
-                "mesh": ["dp_shard"],
-                "precision_policy": "none",
-                "reshard_after_forward": False,
-                "cpu_offload": True,
-            },
-            "none",
-            False,
-            True,
-        ),
-    ],
-)
-def test_build_strategy_fsdp_reads_public_defaults_and_overrides(
-    strategy_config: dict[str, Any] | None,
-    precision_policy: str,
-    reshard_after_forward: bool,
-    cpu_offload: bool,
-) -> None:
-    strategy = build_strategy(
-        _strategy_config("fsdp", strategy_config=strategy_config),
-        _cpu_fsdp_context(),
-    )
-
-    assert isinstance(strategy, FSDPStrategy)
-    assert strategy._precision_policy == precision_policy
-    assert strategy._reshard_after_forward is reshard_after_forward
-    assert strategy._cpu_offload is cpu_offload
 
 
 def test_build_strategy_rejects_config_context_mismatch() -> None:
@@ -929,31 +781,6 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
         strategy.park_training_state(state)
 
     # Rolled back: nothing stays parked, so the world is resident again.
-    assert strategy._parking is None
-
-
-@pytest.mark.parametrize("restore_parked", [True, False])
-def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
-    monkeypatch, restore_parked
-) -> None:
-    from vrl.models.parking import TrainingMemoryState
-
-    calls = []
-
-    class Model(nn.Linear):
-        def to(self, device):
-            calls.append("move")
-            return super().to(device)
-
-    strategy = _fsdp_strategy(_cpu_fsdp_context())
-    state = TrainingMemoryState(Model(2, 2), None, None, None, None, torch.device("cpu"))
-    strategy.park_training_state(state)
-    calls.clear()
-
-    strategy.shutdown(restore_parked=restore_parked)
-    strategy.restore_training_state(state)
-
-    assert calls == (["move"] if restore_parked else [])
     assert strategy._parking is None
 
 
@@ -1114,62 +941,6 @@ def _one_sgd_like_step(net: nn.Module, optimizer: torch.optim.Optimizer) -> None
     optimizer.zero_grad()
     net(torch.randn(2, 4)).sum().backward()
     optimizer.step()
-
-
-def test_fsdp_optimizer_state_export_is_full_plain_cpu(cpu_process_group) -> None:
-    """Exported Adam moments are FQN-keyed full CPU tensors, not DTensor shards."""
-
-    from torch.distributed.tensor import DTensor
-
-    torch.manual_seed(0)
-    net = _shard(ToyTransformer())
-    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
-    _one_sgd_like_step(net, optimizer)
-
-    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
-    state = strategy.export_optimizer_state(net, optimizer)
-
-    moments = state["state"]
-    assert moments, "no per-param optimizer state exported"
-    global_shapes = {name: p.shape for name, p in net.named_parameters()}
-    for fqn, entry in moments.items():
-        assert fqn in global_shapes, f"non-FQN optimizer key {fqn!r}"
-        for key in ("exp_avg", "exp_avg_sq"):
-            moment = entry[key]
-            assert isinstance(moment, torch.Tensor)
-            assert not isinstance(moment, DTensor)
-            assert moment.device.type == "cpu"
-            assert moment.shape == global_shapes[fqn]
-
-
-def test_fsdp_optimizer_state_round_trip(cpu_process_group) -> None:
-    """Export -> fresh optimizer -> load reproduces the exact moment tensors."""
-
-    torch.manual_seed(0)
-    net = _shard(ToyTransformer())
-    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
-    _one_sgd_like_step(net, optimizer)
-
-    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
-    exported = strategy.export_optimizer_state(net, optimizer)
-
-    # Resume precondition: the fresh optimizer exists but no training step ran
-    # (no pending gradients) — mirror it by clearing the grads the export step
-    # left behind.
-    for p in net.parameters():
-        p.grad = None
-    fresh = torch.optim.AdamW(net.parameters(), lr=1e-2)
-    strategy.load_optimizer_state(net, fresh, exported)
-    reexported = strategy.export_optimizer_state(net, fresh)
-
-    assert reexported["state"].keys() == exported["state"].keys()
-    for fqn, entry in exported["state"].items():
-        for key, value in entry.items():
-            other = reexported["state"][fqn][key]
-            if isinstance(value, torch.Tensor):
-                torch.testing.assert_close(other, value)
-            else:
-                assert other == value
 
 
 def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group) -> None:

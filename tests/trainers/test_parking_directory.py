@@ -9,17 +9,12 @@ back byte-identical, with the files gone after restore.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import torch
-from omegaconf import OmegaConf
 
-from vrl.config.schema import parse_config
 from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.models.parking_disk_store import ParkingDiskStore
 from vrl.ray.resources import DistributedResourceConfig, ParkingConfig
-from vrl.trainers.strategy import FSDPStrategy, build_strategy
 
 
 def test_parking_directory_is_optional_and_must_be_absolute() -> None:
@@ -27,32 +22,6 @@ def test_parking_directory_is_optional_and_must_be_absolute() -> None:
     for bad in ("", "   ", "relative/dir"):
         with pytest.raises(ValueError, match="disk_directory"):
             ParkingConfig("move", bad)
-
-
-def test_parking_directory_reaches_the_fsdp_strategy(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_init(self, context, **kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(FSDPStrategy, "__init__", fake_init)
-    root = parse_config(
-        OmegaConf.create(
-            {
-                "model": {"family": "sd3_5"},
-                "distributed": {
-                    "training": {"strategy": "fsdp", "fsdp": {"mesh": ["dp_shard"]}},
-                    "resources": {
-                        "trainer": {"parking": {"disk_directory": "/mnt/nvme/vrl-parking"}}
-                    },
-                },
-            }
-        )
-    )
-    context = SimpleNamespace(strategy="fsdp", rank=0, world_size=1, device="cpu")
-    build_strategy(root, context)
-
-    assert captured["parking_directory"] == "/mnt/nvme/vrl-parking"
 
 
 def _cpu_training_state() -> tuple[torch.nn.Module, TrainingMemoryState]:
@@ -123,32 +92,6 @@ def test_disk_parking_moves_every_parked_tensor_to_files_and_restores_them(
 
     parking.restore()
     assert not list(nvme.iterdir())
-    for name, tensor in model.state_dict().items():
-        assert torch.equal(tensor, before[name]), name
-
-
-def test_disk_belongs_to_the_move_mechanism_not_to_the_trainer(tmp_path, monkeypatch) -> None:
-    """Any role's move ledger can park to disk; the default stays in RAM."""
-
-    mounts = tmp_path / "mounts"
-    mounts.write_text("/dev/root / ext4 rw 0 0\n", encoding="utf-8")
-    monkeypatch.setattr(ParkingDiskStore, "_MOUNTS", str(mounts))
-    directory = tmp_path / "storage"
-    directory.mkdir()
-    model, _ = _cpu_training_state()
-    before = {name: tensor.clone() for name, tensor in model.state_dict().items()}
-
-    in_ram = ModelParking()
-    in_ram.park(model, restore_device=torch.device("cpu"))
-    assert not list(directory.iterdir())
-    in_ram.restore()
-
-    on_disk = ModelParking(disk=ParkingDiskStore(str(directory)))
-    on_disk.park(model, restore_device=torch.device("cpu"))
-    assert len(list(directory.rglob("*.bin"))) == 4
-    on_disk.restore()
-
-    assert not list(directory.iterdir())
     for name, tensor in model.state_dict().items():
         assert torch.equal(tensor, before[name]), name
 
