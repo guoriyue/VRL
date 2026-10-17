@@ -12,25 +12,20 @@ from typing import Any
 import torch
 from diffusers.image_processor import VaeImageProcessor
 
-from vrl.scripts.eval.sana_inference import SANA_EVAL_SCHEDULER_CONFIG
 
-
-def build_official_sana_scheduler(**overrides: Any) -> Any:
-    """The real ``DPMSolverMultistepScheduler`` at SANA's official protocol.
-
-    Config-init, no download. An override is how the drift tests produce a
-    scheduler that must be REJECTED, and because the object is genuine an
-    upstream rename of any protocol key turns the accept case red instead of
-    letting a double echo the table back.
-    """
+def build_official_sana_scheduler() -> Any:
+    """The real ``DPMSolverMultistepScheduler`` at SANA's official protocol (config-init, no download)."""
 
     from diffusers import DPMSolverMultistepScheduler
 
-    kwargs = {
-        key: value for key, value in SANA_EVAL_SCHEDULER_CONFIG.items() if key != "class_name"
-    }
-    kwargs.update(overrides)
-    return DPMSolverMultistepScheduler(**kwargs)
+    return DPMSolverMultistepScheduler(
+        algorithm_type="dpmsolver++",
+        solver_order=2,
+        solver_type="midpoint",
+        use_flow_sigmas=True,
+        flow_shift=3.0,
+        prediction_type="flow_prediction",
+    )
 
 
 class _TinyTextEncoder(torch.nn.Module):

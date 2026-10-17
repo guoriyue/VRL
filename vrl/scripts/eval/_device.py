@@ -1,12 +1,11 @@
 """Shared device and dtype resolution for the checkpoint-eval scripts.
 
-The eval entrypoints (`cosmos_predict25_kling_eval`, `sana_aesthetic_checkpoint_eval`,
-`video_reward_suite`, `wan_robotics_checkpoint_eval` and others) each carried a
-verbatim copy of the same ``--device`` resolver. This is the single owner.
+The eval entrypoints (`cosmos_predict25_kling_eval`, `video_reward_suite`,
+`wan_robotics_checkpoint_eval` and others) each carried a verbatim copy of the
+same ``--device`` resolver. This is the single owner.
 
-``torch`` is imported inside the functions so importing this module (and, transitively,
-``sana_aesthetic_checkpoint_eval``, which deliberately keeps torch out of its module-load
-path) does not eagerly pull torch.
+``torch`` is imported inside the functions so importing this module does not
+eagerly pull torch.
 """
 
 from __future__ import annotations

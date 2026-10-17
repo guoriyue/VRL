@@ -285,9 +285,6 @@ to the archived versions, not current launch entrypoints.
 - `load_prompt_dataset_index` reads the existing prompt dataset index format.
   Existing dataset paths and YAML keys retain their spelling.
 - `vrl.scripts.data.video_world.dataset_index` builds Video2World dataset rows.
-- SANA evaluation shares `SANA_EVAL_SAMPLING_CONFIG` and
-  `SANA_EVAL_SCHEDULER_CONFIG`. Checkpoint comparison writes
-  `evaluation_record.json` and returns its path as `evaluation_record`.
 - `TrainingRunResultWriter` writes `training_run_result.json`, or
   `training_run_result.rank-N.json` under torchrun. The outcome field is
   `status` (`success`, `failed`, or `terminated`); aggregated worker records

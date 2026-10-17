@@ -1,6 +1,6 @@
 # SANA 1.6B + aesthetic GRPO — pre-registered trustworthy learning curve.
-# PASS/FAIL is owned by docs/sprints/SPRINT_sana_aesthetic_trustworthy_curve.md
-# and vrl.scripts.eval.sana_aesthetic_curve_verdict. Do not change the run depth,
+# PASS/FAIL was pre-registered in docs/sprints/done/SPRINT_sana_aesthetic_trustworthy_curve.md
+# (its evaluation scripts were removed on 2026-10-16). Do not change the run depth,
 # eval grid, seed, or thresholds after the baseline row has been written.
 defaults:
   - /recipe/online/flow_matching_grpo
