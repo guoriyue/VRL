@@ -1138,7 +1138,7 @@ class OnlineTrainer:
             # is ~1/100 of step 0's, so its per-element log-prob gradient is two
             # orders above the rest and no ratio clip catches it. Excluding it
             # changed nothing in the quality A/B
-            # (docs/sprints/done/SPRINT_terminal_step_training_policy.md).
+            # (archive/main-20261016:docs/sprints/done/SPRINT_terminal_step_training_policy.md).
             indices = [index for index in indices if index != num_timesteps - 1]
         return indices
 

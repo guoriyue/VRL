@@ -328,7 +328,7 @@ def test_pickscore_score_media_scores_the_middle_frame_of_each_video(
         "be observed by recording the call; the real PickScore_v1 hub load has no "
         "opt-in counterpart yet"
     ),
-    tracked_in="docs/sprints/done/SPRINT_reward-tiny-real-and-optional-lanes.md",
+    tracked_in="docs/sprints/planned/SPRINT_test_cleanup_night.md",
 )
 @pytest.mark.parametrize(
     ("processor_revision", "model_revision"),

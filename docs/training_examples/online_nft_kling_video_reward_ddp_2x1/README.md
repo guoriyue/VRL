@@ -80,11 +80,11 @@ launcher in your own supervisor with this logic:
 - **note (node B):** worker processes do not always survive ssh-backgrounding; kill by PID
   and verify `nvidia-smi` is clear before re-launching, or the next run hits a stale GPU.
 
-See the engineering history in
-[`docs/sprints/done/SPRINT_symmetric_colocated_ddp.md`](../../sprints/done/SPRINT_symmetric_colocated_ddp.md)
-and [`SPRINT_ddp_2x1_first_run_findings.md`](../../sprints/done/SPRINT_ddp_2x1_first_run_findings.md),
-and a full run record (config + reward trend + cost profile + the walls hit) in
-[`docs/runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/`](../../runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/).
+The engineering history and the full run record (config + reward trend + cost
+profile + the walls hit) are archived at
+`archive/main-20261016:docs/sprints/done/SPRINT_symmetric_colocated_ddp.md`,
+`archive/main-20261016:docs/sprints/done/SPRINT_ddp_2x1_first_run_findings.md` and
+`archive/main-20261016:docs/runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/`.
 
 ## Known gotchas (from the 2026-06-20 run)
 

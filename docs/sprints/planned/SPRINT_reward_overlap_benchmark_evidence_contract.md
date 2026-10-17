@@ -126,4 +126,4 @@ identity 或训练长度变化都拒绝混合。
 - `tests/scripts/perf/test_reward_overlap_benchmark.py`
 - `vrl/scripts/train.py::write_run_verdict`
 - `vrl/trainers/checkpointing.py::save_resolved_config`
-- `docs/sprints/done/SPRINT_reward_service.md`
+- `archive/main-20261016:docs/sprints/done/SPRINT_reward_service.md`

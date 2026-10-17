@@ -1,5 +1,5 @@
 # SANA 1.6B + aesthetic GRPO — pre-registered trustworthy learning curve.
-# PASS/FAIL was pre-registered in docs/sprints/done/SPRINT_sana_aesthetic_trustworthy_curve.md
+# PASS/FAIL was pre-registered in archive/main-20261016:docs/sprints/done/SPRINT_sana_aesthetic_trustworthy_curve.md
 # (its evaluation scripts were removed on 2026-10-16). Do not change the run depth,
 # eval grid, seed, or thresholds after the baseline row has been written.
 defaults:

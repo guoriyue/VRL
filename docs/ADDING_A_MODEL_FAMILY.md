@@ -197,8 +197,8 @@ python -m vrl.scripts.generation.full_sequence_probe \
 A family is **Runnable** after its config, runtime, rollout, and replay contracts
 pass and it produces an artifact. Mark it **Validated** only after a real training
 run proves optimizer updates, a non-flat reward, generated artifacts, and changed
-weights. Record the reproducible run under `docs/runs/` before changing the README
-status.
+weights. Keep the run's config and metrics in its output directory and link it from
+the family's README before changing the status; run records are not committed.
 
 ## Checklist
 

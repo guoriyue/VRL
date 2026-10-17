@@ -12,7 +12,7 @@ Miles 论文 v1 与当前 main 的差异必须保留，不能混成同一份复�
 ## 问题与现状
 
 论文 §2.2.4 的可借鉴点是 delayed result attribution，不是重新把 eval 塞入 trainer。
-VRL 已在 `docs/sprints/done/SPRINT_remove_inline_fixed_eval.md` 删除 inline eval。
+VRL 已在 `archive/main-20261016:docs/sprints/done/SPRINT_remove_inline_fixed_eval.md` 删除 inline eval。
 `vrl/scripts/eval/image_checkpoint_eval.py::EvaluationPlan` 已记录模型/runtime 身份，
 并校验 checkpoint digest；`vrl/trainers/checkpointing.py` 是 checkpoint owner。
 

@@ -63,7 +63,7 @@ one L40S, i.e. ~2 min of judge time per 16-rollout round against ~10 min of gene
 ## Drift shortcuts and the "natural" criteria (2026-10-01 evening)
 
 Stage-1 policies trained on the default pairwise criteria drifted brighter, more saturated and smoother
-(`docs/research/qwen21_aesthetic/VLM_STAGE1_RUN.md`), and the user judged later checkpoints "more fake".
+(`archive/main-20261016:docs/research/qwen21_aesthetic/VLM_STAGE1_RUN.md`), and the user judged later checkpoints "more fake".
 New shortcut transforms of s0, scored pairwise against the base reference (64 groups; rate = share of
 transforms scoring >= the genuine image):
 

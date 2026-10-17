@@ -45,7 +45,7 @@ weight-sync 栅栏等本 sprint 够不着的项，则只做「转默认」部分
    多 worker / 单 chunk 情形保持现行自动回退（行为已存在，补一条显式测试）。
    Bit-exact 性质是转默认的前提，已由现有对比测试钉住——补一条
    video 形状（多帧）用例。
-4. **测量档案**：结果并入 `docs/sprints/info/`（遵守 perf sprint 永久保留惯例），
+4. **测量档案**：结果记在本 sprint 文件里（仓库不再保存独立的测量档案目录），
    更新 `project_real_run_profiling` 记忆中的 64%/36% 数字。
 
 ## 非目标

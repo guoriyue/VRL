@@ -21,11 +21,11 @@ It applies only to the training sampler below; a card for another sampler says n
 
 Within-group spread (gate 4), measured under this sampler with a shared initial latent: median group standard deviation is
 HPSv3 0.553, SigLIP 0.200, PickScore 0.012. The previous `[4, 36]` / noise 0.2 window gave SigLIP 0.033 (see
-`docs/research/qwen21_aesthetic/DEBUG_20260927.md`).
+`archive/main-20261016:docs/research/qwen21_aesthetic/DEBUG_20260927.md`).
 
 ## Data
 
-- **Prompts**: the 64 frozen qualification prompts, `docs/research/qwen21_aesthetic/qualification_prompts.jsonl`
+- **Prompts**: the 64 frozen qualification prompts, `archive/main-20261016:docs/research/qwen21_aesthetic/qualification_prompts.jsonl`
   (8 categories × 8).
 - **Images**: 8 samples each (512 images) at the sampler above, with one shared initial latent per prompt.
 - **Location**: `/mnt/nvme/aes2/qual/`, with scores in `scores.jsonl`.
@@ -90,4 +90,4 @@ model judges.
 - **Grain**: none (edge energy down).
 - **Watch**: images get darker and more saturated with training, and ck20 is preferred less than ck10.
 - **Safety blind spot**: the reward favours glamour portraits. On a prompt that sexualizes a minor it pushed further than base.
-  Prompts matching `docs/research/qwen21_aesthetic/prompt_filter.py` are excluded from training and evaluation.
+  Prompts matching `archive/main-20261016:docs/research/qwen21_aesthetic/prompt_filter.py` are excluded from training and evaluation.

@@ -314,8 +314,8 @@ Metric names retain their existing schema, including `continuous.queue_wait_s`.
 
 ## Documented-command compilation gate
 
-`tests/config/test_documented_launches.py` scans shell fences in `docs/*.md` and
-`docs/sprints/info/*.md`. Literal `python -m vrl.scripts... --config` commands
+`tests/config/test_documented_launches.py` scans shell fences in `docs/*.md`.
+Literal `python -m vrl.scripts... --config` commands
 using bundled `experiment/` or `recipe/` names pass their config and dotlist/group
 overrides through `load_config` and `parse_config`; `--config=NAME` also works.
 This catches removed keys and stale recipe names without loading models or
@@ -326,4 +326,4 @@ own integration checks and are outside this bundled-config gate.
 Fences explicitly tagged `bash historical` retain commands from recorded
 experiments and are excluded. Marking a block historical preserves evidence; it
 must not be used to exempt a current launch instruction from validation.
-`docs/sprints/done` and research archives are outside the scan.
+`docs/sprints/` is outside the scan.

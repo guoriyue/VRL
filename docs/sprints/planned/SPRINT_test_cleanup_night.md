@@ -31,7 +31,6 @@ affordable on CPU. Verify before changing; commit per batch; never push.
 - Eight tests are red on upstream itself. Do not touch them and do not
   "fix" them green; record them:
   `tests/architecture/test_generation_rollout_boundaries.py::test_generation_model_imports_stay_on_public_floor`,
-  `tests/generation/bindings/chunk_autoregressive/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`,
   `tests/generation/bindings/full_sequence/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`,
   and the five in `tests/scripts/test_train_signals.py`.
 
@@ -61,7 +60,8 @@ affordable on CPU. Verify before changing; commit per batch; never push.
    labelled doubles, 39 NO REAL COUNTERPART). AST-profile every test:
    assertion kind (numeric / raises / state / none), whether monkeypatch
    targets are `vrl.*` or external, branch count of fake classes. Record the
-   baseline as a new batch section in `docs/sprints/SPRINT_test_credibility.md`.
+   baseline as a new section in this file (the earlier batches are archived at
+   `archive/main-20261016:docs/sprints/SPRINT_test_credibility.md`).
 1. Replace the weakest wiring tests with real code. Build a `tiny_test`
    model family (CPU, KB-scale weights, reusing
    `tests/models/steps/denoise/fixtures.py::build_tiny_*`) registered
@@ -104,3 +104,15 @@ upstream-red list. Do not report coverage or test counts; do not claim "all
 verified" unless the full suite ran. When two approaches both work, pick one.
 Stop and write it down -- do not guess -- only for credentials, access you
 lack, or a decision that changes user-visible behavior.
+
+## Doubles with no real counterpart yet (tracked here)
+
+`real_cover(None, tracked_in=...)` labels must name a plan on disk; these two
+are the open ones. Close an item by adding the real counterpart and pointing
+the label at it, or by deleting the double.
+
+- `tests/rewards/test_clip_reward_models.py::test_pickscore_passes_optional_revisions_to_matching_loaders`:
+  which revision reached the hub loaders is observable only by recording the
+  call; a real PickScore_v1 hub load has no opt-in counterpart.
+- `tests/utils/test_profiling.py` (`_NVTX_DEPTH_IS_UNOBSERVABLE`): nvtx
+  push/pop pairing is visible only to an external collector (nsys) on a GPU box.

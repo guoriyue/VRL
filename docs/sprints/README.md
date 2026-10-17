@@ -1,34 +1,25 @@
 # Sprint docs layout
 
 ```text
-docs/sprints/      active — in-flight work or living logbooks (appended often)
-  planned/         decided to do, not started yet (waiting on TIME)
-  parked/          deliberately deferred (waiting on an EVENT; each doc states
-                   its trigger — ask "what is it waiting for?" to file)
-  done/            completed, kept as records (delete when no longer referenced)
-  reading/         source-code studies and direction discussions, not action items
-  info/            profiling / measurement result archives — kept as reference and
-                   revisited often, not action items (e.g. perf + cross-model profile)
+docs/sprints/planned/   decided to do, not started or in flight; each file is an
+                        executable current-state plan
 ```
 
-`done/` vs `info/`: `done/` is *finished work*; `info/` is *measurement data* that
-outlives the work that produced it. `reading/` and `info/` are categorized by KIND,
-the other three by STATUS.
-
-File new sprints at the level matching their status; move them as status changes
-(`git mv` keeps history).
+Only plans live on `main`. Finished sprints, measurement archives, source-code
+studies, run records, research notes and papers are not kept in the tree: the
+last full snapshot is branch `archive/main-20261016` (`git show
+archive/main-20261016:docs/sprints/done/<file>`), and references in code or docs
+use that `ref:path` form.
 
 Lifecycle invariants:
 
-- A file in `planned/` must contain an executable current-state plan. A `DONE`,
-  `completed`, or “all items landed” execution banner means the file belongs in
-  `done/`, not `planned/`.
-- Move a completed sprint in the same commit that lands its final action. Do not
-  leave cleanup bookkeeping for a later sweep.
-- When a sprint is partially complete, split the remaining current-state action
-  into a short `planned/` file and archive the pre-execution audit in `done/`.
-- A sprint blocked on an owner decision or external capability belongs in
-  `parked/` and must name the event that moves it back to `planned/`.
-- Paths and line numbers in `done/` are historical evidence, not instructions
-  against current HEAD. Every new cleanup sprint must re-read the definition,
-  producers, non-test consumers, tests, and dotted-string/config references.
+- A file in `planned/` must contain an executable current-state plan. When a
+  sprint lands its final action, delete the file in the same commit; a `DONE`
+  banner in `planned/` is a bug.
+- A sprint blocked on an owner decision or external capability states the event
+  that unblocks it at the top of the file.
+- Paths and line numbers in a plan are evidence at the time of writing, not
+  instructions against current HEAD. Re-read the definition, producers,
+  non-test consumers, tests, and dotted-string/config references before acting.
+- Measurements that matter to a current decision go into the plan that needs
+  them; a measurement that matters to no plan is not committed.

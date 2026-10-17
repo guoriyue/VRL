@@ -50,7 +50,7 @@ offline `OfflineSFTTrainer`). `vrl/scripts/denoise/encode_layered_scenes.py`
 caches each scene's condition tokens, prompt embeds, packed target frames and
 token weights with the family model; `vrl/scripts/eval/layered_decompose_eval.py`
 decomposes cached scenes with one adapter and scores the known-layer axes. The
-experiments and the data layout are in `docs/research/layering_scene_family/`.
+experiments and the data layout are in `archive/main-20261016:docs/research/layering_scene_family/`.
 
 ## Smoke
 

@@ -1,7 +1,0 @@
-Read CHUNK (a JSON list of cells). For each cell write ONE natural-language text-to-image prompt (35-70 words, English) for an image generator and output {"id", "prompt", "action_id"}:
-- Exactly `expected_people` ADULTS (write the number as a word, e.g. "eight adults" or "six grown women and men"); everyone is an adult and visibly adult.
-- They are in CLOSE physical contact performing the `interaction` described in `interaction_desc`, with one concrete, specific action you invent (action_id = a short snake_case label of that action, unique across all cells you write).
-- Setting: the `scene_family`. Style: the `style` (start the prompt with it, e.g. "A photorealistic photograph of..." or "An anime illustration of...").
-- Medium-wide shot so every person's full body or most of it, and all arms, hands and legs, are visible; ordinary clothing suited to the activity.
-- Forbidden: mannequins, statues, dolls, dress forms, puppets, robots, reflections, posters or screens showing people, crowds beyond the stated count, ropes, poles, sticks, hoses, scarves or any long thin limb-like object; no text in the image; nothing sexual or revealing; no children.
-Write the result to OUT as a JSON list in the same order covering every cell. Do not generate images.

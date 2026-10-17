@@ -11,7 +11,7 @@ sprint 的可执行项：把每次更新 30 分钟压到 10 分钟量级，同�
 但当前配置的 GPU 只用了 2.5 GB/46 GB，每一步都在通过 PCIe 搬 2×28.6 GB 专家
 权重；每次更新 30 分钟里 ≥ 90% 的时间是权重搬运，不是计算。
 
-完整运行记录：`docs/runs/wan22_t2v_grpo_20260914/README.md`（分支
+完整运行记录：`archive/main-20261016:docs/runs/wan22_t2v_grpo_20260914/README.md`（分支
 `exp/wan22-t2v-grpo`）。运行目录 `/mnt/nvme/outputs/wan22_t2v_grpo/`。
 
 ## 1. 学习实验结论（已完成）
@@ -125,7 +125,7 @@ nvidia-smi 表现：每卡 2.5 GB 显存、util 93-96%（util 只表示"有 kern
 - [ ] **E. 去掉冗余：** 文本编码器（11.4 GB bf16）在 encode 后可以从 rollout
   worker 释放或只在 rank 0 保留；VAE 解码 tiling 在 320p 下不必要（探针证明关掉
   不影响输出）。
-- [ ] **F. 记录**：每一项改完在 `docs/runs/wan22_t2v_grpo_20260914/` 追加相位表，
+- [ ] **F. 记录**：每一项改完在运行目录 `/mnt/nvme/outputs/wan22_t2v_grpo/` 的 README 追加相位表，
   把最终推荐配置回写到 `vrl/config/presets/experiment/wan_2_2/` 的公开 preset
   （当前公开 preset 仍是 1 rank / `precision_policy: actor` / 10 步 / 无
   `lora_parameter_dtype`，与所有通过验收的跑都不一致）。
@@ -142,7 +142,7 @@ nvidia-smi 表现：每卡 2.5 GB 显存、util 93-96%（util 只表示"有 kern
 ## 7. 复现入口
 
 ```bash
-# 训练（4 卡）和评估的完整命令见 docs/runs/wan22_t2v_grpo_20260914/README.md §6
+# 训练（4 卡）和评估的完整命令见 archive/main-20261016:docs/runs/wan22_t2v_grpo_20260914/README.md §6
 /mnt/nvme/outputs/wan22_t2v_grpo/tools/launch_train.sh <yaml> <name>   # 设 RAY_memory_usage_threshold=0.98
 # cron 队列（用户要求）：每 30 分钟检查 4 卡空闲后跑 /mnt/nvme/outputs/gpu_queue/jobs/pending/ 的下一个脚本
 ```

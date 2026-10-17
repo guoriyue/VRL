@@ -6,7 +6,7 @@ segment builders assemble ``packed_static``, the real ``Cosmos3OmniTransformer``
 runs the per-step call with the eleven kwargs ``forward_step`` passes, and the
 real ``AutoencoderKLWan`` decodes. What this cannot say is anything about the
 numbers a trained checkpoint would produce; that needs an e2e case, see the
-audit in ``docs/sprints/done/SPRINT_tiny-real-diffusers-fixtures_audit.md`` §9.
+audit in ``archive/main-20261016:docs/sprints/done/SPRINT_tiny-real-diffusers-fixtures_audit.md`` §9.
 """
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 A DiT is one short stem, N identical blocks, and one head. Compiling the root
 module traces and lowers all N blocks as one graph, so cold compile time grows
 with N (tens of minutes for a 512p Cosmos shape, see
-``docs/sprints/done/SPRINT_ray_rollout_operation_deadlines.md``) and every
+``archive/main-20261016:docs/sprints/done/SPRINT_ray_rollout_operation_deadlines.md``) and every
 recompile — a new resolution, a partial last batch — pays the whole graph
 again. Compiling each block in place instead lowers the block's code once:
 dynamo treats block parameters as graph inputs, so every instance of the block

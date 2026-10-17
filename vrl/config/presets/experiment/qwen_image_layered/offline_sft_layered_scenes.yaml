@@ -1,6 +1,6 @@
 # Qwen-Image-Layered + supervised flow matching on rendered layered scenes.
 #
-# The supervised stage of the layering work (docs/research/layering_scene_family):
+# The supervised stage of the layering work (archive/main-20261016:docs/research/layering_scene_family):
 # a LoRA from the official Stable-Layers adapter learns one layer per object with
 # occluded parts completed where the scene makes them inferable. One GPU; a
 # 48 GB card holds the bf16 transformer, a 32 GB card streams its frozen blocks
@@ -9,7 +9,7 @@
 # Inputs, set at launch:
 #   data.manifest     cached scene root(s), from encode_layered_scenes
 #   model.lora.path   PEFT directory of the starting adapter (the official
-#                     Stable-Layers weights; docs/research/layering_scene_family)
+#                     Stable-Layers weights; archive/main-20261016:docs/research/layering_scene_family)
 #
 # Usage:
 #   CUDA_VISIBLE_DEVICES=0 vrl-train \

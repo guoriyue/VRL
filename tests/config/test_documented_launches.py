@@ -1,6 +1,6 @@
 """Maintained Markdown launch commands compile against the bundled config schema.
 
-Scope is docs/*.md and docs/sprints/info/*.md. Fences explicitly tagged
+Scope is docs/*.md. Fences explicitly tagged
 `bash historical` retain recorded run commands. External standalone scorer YAMLs
 and dynamic shell variables are not bundled RootConfig recipes and are excluded.
 No documented command is executed and no model or reward backend is loaded.
@@ -65,8 +65,5 @@ def _compile_documented_commands(paths):
 
 def test_maintained_documented_launches_compile_without_loading_models():
     docs = Path(__file__).resolve().parents[2] / "docs"
-    compiled = _compile_documented_commands(
-        [*sorted(docs.glob("*.md")), *sorted((docs / "sprints/info").glob("*.md"))]
-    )
-    assert any(path.parent == docs for path in compiled)
-    assert any(path.parent == docs / "sprints/info" for path in compiled)
+    compiled = _compile_documented_commands(sorted(docs.glob("*.md")))
+    assert compiled

@@ -208,8 +208,8 @@ bazel build --build_python_zip //tools/delivery:node_probe   # copy to a node: p
 
 Every `py_binary`/`py_test` runs from a runfiles venv whose `sys.executable`
 carries the whole closure, so torchrun ranks, Ray workers and reward workers
-inherit it. See [docs/research/bazel_migration.md](docs/research/bazel_migration.md)
-for the acceptance record.
+inherit it. The acceptance record is archived at
+`archive/main-20261016:docs/research/bazel_migration.md`.
 
 ## Quickstart
 

@@ -105,6 +105,6 @@ afterwards.
 ## References
 
 - `vrl/utils/profiling.py` — `profile_range`, `capture_torch_trace`, manifest
-- `docs/sprints/done/SPRINT_trustworthy_profiling_api.md` — mechanism and non-goals
+- `archive/main-20261016:docs/sprints/done/SPRINT_trustworthy_profiling_api.md` — mechanism and non-goals
 - `tests/utils/test_profiling.py` — range transparency / NVTX pairing
 - `tests/trainers/test_weight_sync.py` — pins the `weight_sync.*` ranges

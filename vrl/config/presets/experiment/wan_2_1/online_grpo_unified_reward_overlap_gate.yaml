@@ -1,9 +1,9 @@
 # Wan 2.1 1.3B + remote UnifiedReward generation/reward overlap acceptance gate.
 #
 # This is a reusable scheduling gate, not a production training recipe. It is the
-# workload for the A/B/C acceptance in docs/sprints/done/SPRINT_reward_service.md
+# workload for the A/B/C acceptance in archive/main-20261016:docs/sprints/done/SPRINT_reward_service.md
 # and the throughput measurement parked in
-# docs/sprints/info/SPRINT_video_rollout_stage_overlap.md.
+# archive/main-20261016:docs/sprints/info/SPRINT_video_rollout_stage_overlap.md.
 #
 # Physical topology (four L4s):
 #   GPU 0:   single-process trainer

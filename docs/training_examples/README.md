@@ -1,8 +1,7 @@
 # Training Examples
 
-See the [dated recipe evidence inventory](RECIPE_EVIDENCE_INVENTORY.md) for
-observed artifact availability and test-scope gaps, and [run evidence](RUN_EVIDENCE.md)
-for the launch, completion and evaluation integrity checks.
+See [run evidence](RUN_EVIDENCE.md) for the launch, completion and evaluation
+integrity checks.
 
 This directory is for specific training runs that are useful as examples.
 

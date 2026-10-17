@@ -89,7 +89,7 @@ campaign，不提交用户当前脏文件，不 push。
 
 ## Program 验收
 
-- 五个 child sprint 全部移入 `docs/sprints/done/`；
+- 五个 child sprint 全部完成并从 `planned/` 移出；
 - 每个 child 有独立 commit 与 CPU true/false tests；
 - touched Python 逐文件 Ruff check/format；
 - architecture、generation contracts、model interfaces、perf verdict、Ray actor pool、

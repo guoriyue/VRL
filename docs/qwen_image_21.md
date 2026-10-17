@@ -24,7 +24,7 @@ The native editing path was verified against the upstream pipeline (shared first
 latent, RGB/RGBA output, replay log-probability parity, one LoRA backward step)
 with a one-off probe, `vrl.scripts.generation.qwen_image_21_edit_probe`; the
 results are in `docs/reference/qwen_image_21_editing.md` and
-`docs/reports/visual_rl_engine_20260922/PROGRESS.md`. The probe was removed
+`archive/main-20261016:docs/reports/visual_rl_engine_20260922/PROGRESS.md`. The probe was removed
 on 2026-10-16; recover it from commit `47f276be7` to rerun the comparison.
 
 ## Bundled experiments
