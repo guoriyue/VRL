@@ -5,7 +5,7 @@ It consumes scoring runs written by ``vrl.scripts.rewards.rescore_media``
 (``vrl.rewards.evaluation.Evaluation``) and produces reports. Training never
 reads them.
 
-* ``analysis.Analysis``: health, stress, sequence, ranking, paired and repeatability reports.
+* ``analysis.Analysis``: health, stress, ranking, paired and repeatability reports.
 * ``stress.build_stress_manifest``: deterministic perturbations for stress audits.
 * ``shortcuts.build_shortcut_manifest``: task-avoiding candidates (unchanged source,
   shifted or re-cropped frame, another scene) for edit rewards, paired like stress.

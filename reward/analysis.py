@@ -13,7 +13,6 @@ from typing import Any
 
 from vrl.rewards.evaluation import Evaluation
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.sequences import EditSequence
 from vrl.utils.json_files import canonical_json_sha256
 from vrl.utils.score_statistics import bootstrap_mean_interval, distribution
 
@@ -169,11 +168,6 @@ class Analysis:
                 for transform, axes in by_transform.items()
             },
         }
-
-    def sequence(self, edit_sequence: EditSequence) -> dict[str, Any]:
-        """Requirement preservation across an ordered sequence of states."""
-
-        return edit_sequence.report(self.evaluation)
 
     def spread(
         self,

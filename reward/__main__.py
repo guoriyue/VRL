@@ -9,7 +9,6 @@ whose axes are ``NAME/axis``.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from reward.analysis import Analysis
@@ -17,7 +16,6 @@ from reward.labels import Contrast, OutcomeLabel, agreement
 from reward.shortcuts import build_shortcut_manifest
 from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation
-from vrl.rewards.sequences import EditSequence
 from vrl.utils.json_files import write_json
 
 
@@ -52,8 +50,6 @@ def main(argv: list[str] | None = None) -> None:
     health = command("health")
     health.add_argument("--tie-epsilon", type=float, default=0.0)
     command("stress")
-    sequence = command("sequence")
-    sequence.add_argument("--spec", required=True, type=Path)
     compare = command("compare")
     compare.add_argument("--other", required=True, type=Path)
     compare.add_argument("--first-axis", required=True)
@@ -120,10 +116,6 @@ def main(argv: list[str] | None = None) -> None:
             result = analysis.health(tie_epsilon=args.tie_epsilon)
         elif args.command == "stress":
             result = analysis.stress()
-        elif args.command == "sequence":
-            result = analysis.sequence(
-                EditSequence.model_validate(json.loads(args.spec.read_text()))
-            )
         elif args.command == "agreement":
             result = agreement(
                 evaluation,

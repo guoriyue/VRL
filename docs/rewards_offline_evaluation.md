@@ -259,64 +259,10 @@ multiple comparisons; they are not independent confirmation experiments.
 
 ## Sequential edit preservation
 
-Export a completed edit-chain run (the sibling `agentic` repository, its
-`docs/edit_chains.md`) instead of assembling media paths by hand:
-
-```bash
-python -m agentic.scripts.export_chain_media \
-  --run outputs/chain-eval/chains/page-12/run/run.json \
-  --output-dir outputs/chain-export
-python -m vrl.scripts.rewards.rescore_media \
-  --manifest outputs/chain-export/media.jsonl --config scorer.yaml \
-  --output-dir outputs/chain-rescore
-```
-
-The export directory contains a copy of the run record, a content-bound
-`media.jsonl` (the source, then every step's output, each naming the source as
-its reference and carrying the chain's reward assets), and `provenance.json`
-with ordered sample IDs and parent relationships. Media stay at their original
-paths. Only a successful run exports; provenance is written last as the
-completion marker, so do not consume partial exports.
-
-This validates recorded lineage, not an independent attestation that the generator
-internals used the reference. It does not rerun the policy or prove likelihood
-parity. Keep those model-specific checks separate.
-
-After independently scoring all states of an editing sequence under one fixed
-recipe and task, report when requirements are achieved or broken:
-
-```bash
-python -m reward sequence --evaluation outputs/sequence-scores \
-  --spec sequence.json --output outputs/sequence-report.json
-```
-
-Example `sequence.json`:
-
-```json
-{"sequence_id":"dialogue-edit","samples":["initial","added","damaged","repaired"],"requirements":[{"name":"first-bubble","axis":"region/panel-1/exact","direction":1,"threshold":1.0,"active_from":0},{"name":"protected-artwork","axis":"rgb_outside_l1","direction":-1,"threshold":0.02,"active_from":1}]}
-```
-
-The region exact criterion has a literal OCR interpretation. The pixel threshold
-above is illustrative, not a validated default; choose tolerances using the task's
-actual reconstruction/noise behavior before examining results. Use namespaced
-axes when auditing a joined scoring view (`--component NAME=DIRECTORY` entries
-in place of `--evaluation`).
-
-Every state needs its own sample ID, even if the image bytes repeat. Step zero is
-the initial state. `active_from` specifies when a requirement becomes due, allowing
-later steps to add requirements. All images are still scored against the same
-final task/reference/text specification; changed prompt, metadata or auxiliary
-identity is rejected. This prevents replacing an old transcript target from being
-misreported as retaining it. It does not yet model legitimate replacement of a
-previous requirement; use a separately declared task for that case.
-
-Reports retain each raw value, pass/fail/unknown/not-active state, adjacent measured
-regressions and improvements, first satisfaction, final status and missing
-coverage. A final repaired page does not erase intermediate regressions. Failed
-scoring or missing axes remain unknown, never zero; no transition is inferred
-across an unknown interval. This report neither changes reward weights nor proves that the generator
-used one state as the next edit's input: actual run lineage must be
-verified separately. It measures declared score criteria, not human preference.
+Edit-chain states (the sibling `agentic` repository) export to a `media.jsonl`
+that `vrl.scripts.rewards.rescore_media` scores like any other manifest; the
+requirement-preservation audit over those scores lives there
+(`agentic.scripts.audit_sequence`, its `docs/edit_chains.md`).
 
 ## Repeated scoring variation
 
