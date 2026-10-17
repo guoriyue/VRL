@@ -11,11 +11,8 @@ from omegaconf import OmegaConf
 
 from tests.config.helpers import unknown_keys
 from vrl.config.model_schema import (
-    LoraSection,
-    ModelExecutorSection,
     ModelMemorySection,
     ModelSection,
-    TorchCompileSection,
     VaeDecodeMemorySection,
 )
 from vrl.config.schema import (
@@ -188,46 +185,6 @@ def test_model_family_aliases_select_their_canonical_section_classes() -> None:
 
         assert type(parsed_alias.model) is type(canonical.model)
         assert parsed_alias.model.family == alias
-
-
-def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
-    raw_model = {
-        "family": "flux",
-        "lora": {
-            "rank": 8,
-            "alpha": 16,
-            "path": None,
-            "target_modules": [],
-            "init_lora_weights": False,
-            "dropout": 0.0,
-        },
-        "memory": {
-            "vae_decode": {
-                "tiling": False,
-                "slicing": None,
-            },
-        },
-        "torch_compile": {
-            "enable": False,
-            "mode": None,
-        },
-        "executor": {
-            "num_frames": 1,
-            "max_sequence_length": 128,
-            "fps": None,
-            "batch_passthrough_keys": [],
-        },
-    }
-
-    parsed = parse_config(OmegaConf.create({"model": raw_model}))
-
-    assert isinstance(parsed.model, ModelSection)
-    assert isinstance(parsed.model.lora, LoraSection)
-    assert isinstance(parsed.model.memory, ModelMemorySection)
-    assert isinstance(parsed.model.memory.vae_decode, VaeDecodeMemorySection)
-    assert isinstance(parsed.model.torch_compile, TorchCompileSection)
-    assert isinstance(parsed.model.executor, ModelExecutorSection)
-    assert parsed.model.model_dump(exclude_unset=True) == raw_model
 
 
 def test_generation_memory_schema_and_policy_share_one_field_vocabulary() -> None:

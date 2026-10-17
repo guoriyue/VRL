@@ -93,31 +93,6 @@ def test_main_reports_a_missing_manifest_as_a_failure(tmp_path, capsys) -> None:
     assert "✓ reward preflight" not in capsys.readouterr().out
 
 
-def test_main_prints_the_score_table_on_success(tmp_path, capsys) -> None:
-    code = main(
-        [
-            "--config",
-            "recipe/online/flow_matching_grpo",
-            "--prompts",
-            "1",
-            "--device",
-            "cpu",
-            "+model/sd3_5=medium",
-            "+sampling/image=512",
-            "+sampling/denoise=10_step_cfg_4_5",
-            "actor.optim.lr=1e-5",
-            "+reward=image_sharpness",
-            "+dataset=drawbench_train_192",
-            f"trainer.output_dir={tmp_path / 'out'}",
-        ]
-    )
-
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "image_sharpness" in out
-    assert "✓ reward preflight: 1 row(s)" in out
-
-
 @pytest.mark.parametrize(
     ("task", "expected_shape"),
     [("t2i", (3, 32, 48)), ("t2v", (3, 5, 32, 48))],

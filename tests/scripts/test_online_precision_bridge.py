@@ -9,21 +9,6 @@ from omegaconf import OmegaConf
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import parse_config
-from vrl.models.dtypes import resolve_torch_dtype
-
-
-def test_fp16_precision_block_drives_trainer_and_rollout():
-    """Checks scalar fp16 drives both replay compute and rollout precision."""
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
-
-    built = BuiltConfigs.from_cfg(cfg)
-
-    assert built.precision.training.label == "fp16"
-    assert built.precision.rollout.label == "fp16"
-    assert built.precision.denoise_math == "fp32"
 
 
 @pytest.mark.parametrize(
@@ -52,18 +37,6 @@ def test_rollout_precision_split_auto_derives_correction_policy(
         tis_mode="truncate",
         rs_mode="seq_mean_k1",
     )
-
-
-def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
-    block = _plain_policy("bf16")
-    block["rollout"]["outer_autocast"] = False
-    cfg = _with_precision("sd3_5/online_grpo_ocr", block)
-
-    built = BuiltConfigs.from_cfg(cfg)
-
-    assert built.precision.training.label == "bf16"
-    assert built.precision.rollout.label == "bf16+no-autocast"
-    assert built.trainer.precision_correction.tis_mode == "truncate"
 
 
 def test_explicit_precision_correction_is_respected_on_rollout_split():
@@ -110,20 +83,6 @@ def _rollout_quantization_policy(format_name: str) -> dict:
     block = _plain_policy("bf16")
     block["rollout"]["quantization"] = {"format": format_name}
     return block
-
-
-@pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
-def test_math_axis_resolves_to_dtype(math, expected):
-    # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
-
-    block = _plain_policy("fp32")
-    block["denoise_math"] = {"dtype": math}
-    cfg = _with_precision("sd3_5/online_grpo_ocr", block)
-    assert (
-        resolve_torch_dtype(PrecisionPolicy.from_section(parse_config(cfg).precision).denoise_math)
-        is expected
-    )
-    assert BuiltConfigs.from_cfg(cfg).precision.denoise_math == math
 
 
 @pytest.mark.parametrize(

@@ -15,10 +15,24 @@ def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:
     return {name: axis.length for name, axis in trajectory.axes.items() if axis.length is not None}
 
 
-def test_all_builders_derive_structure() -> None:
-    for name, trajectory, expected_axis_lengths in _structural_trajectories():
-        assert len(trajectory.sample_rows) == expected_axis_lengths["sample"], name
-        assert _axis_lengths(trajectory) == expected_axis_lengths, name
+def test_diffusion_builder_derives_sample_and_denoise_axes() -> None:
+    request = _request()
+    sample_rows = request.sample_rows()
+    policy_shape = (len(sample_rows), 3)
+
+    trajectory = build_diffusion_trajectory(
+        request=request,
+        sample_rows=sample_rows,
+        observations=torch.zeros(*policy_shape, 1),
+        actions=torch.ones(*policy_shape, 1),
+        old_log_prob=torch.zeros(policy_shape),
+        timesteps=torch.zeros(policy_shape),
+        replay_tensors={},
+        context={},
+    )
+
+    assert len(trajectory.sample_rows) == 2
+    assert _axis_lengths(trajectory) == {"sample": 2, "denoise": 3}
 
 
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
@@ -85,30 +99,3 @@ def _request() -> GenerationRequest:
         inputs=["draw"],
         samples_per_prompt=2,
     )
-
-
-def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int]]]:
-    request = _request()
-    sample_rows = request.sample_rows()
-    batch_size = len(sample_rows)
-
-    diffusion_steps = 3
-    diffusion_policy_shape = (batch_size, diffusion_steps)
-    diffusion = build_diffusion_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        observations=torch.zeros(*diffusion_policy_shape, 1),
-        actions=torch.ones(*diffusion_policy_shape, 1),
-        old_log_prob=torch.zeros(diffusion_policy_shape),
-        timesteps=torch.zeros(diffusion_policy_shape),
-        replay_tensors={},
-        context={},
-    )
-
-    return [
-        (
-            "diffusion",
-            diffusion,
-            {"sample": batch_size, "denoise": diffusion_steps},
-        ),
-    ]

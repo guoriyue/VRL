@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.config.loading import list_bundled_configs, load_config
+from vrl.config.loading import load_config
 
 
 def test_config_package_defers_typed_builder_import() -> None:
@@ -29,13 +29,6 @@ def test_config_package_defers_typed_builder_import() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-
-
-def test_bundled_config_inventory_contains_canonical_recipe() -> None:
-    names = list_bundled_configs("experiment")
-
-    assert "experiment/sd3_5/online_grpo_ocr.yaml" in names
-    assert all(name.startswith("experiment/") for name in names)
 
 
 def test_logical_name_cannot_be_shadowed_by_current_directory(

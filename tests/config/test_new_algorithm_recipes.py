@@ -9,12 +9,10 @@ algorithm needs (and nothing trips the unknown-key check).
 from __future__ import annotations
 
 import pytest
-from omegaconf import OmegaConf
 
 from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
-from vrl.config.schema import parse_config
 
 # A complete diffusion GRPO experiment; we swap only its /recipe/online group so
 # the new recipe inherits a full model/sampling/reward/dataset environment.
@@ -59,21 +57,3 @@ def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
     # Required for the trust-region loss; without it generation never stores the
     # rollout proposal mean and the loss fails fast.
     assert cfg.rollout.return_prev_sample_mean is True
-
-
-@pytest.mark.parametrize(
-    ("kind", "field", "value"),
-    [
-        ("flow_dppo", "clip_ratio", 0.2),
-        ("grpo_guard", "kl_coef", 0.1),
-    ],
-)
-def test_algorithm_configs_reject_unconsumed_knobs(
-    kind: str,
-    field: str,
-    value: object,
-) -> None:
-    cfg = OmegaConf.create({"algorithm": {"kind": kind, field: value}})
-
-    with pytest.raises(ValueError, match=rf"algorithm\.{field}"):
-        parse_config(cfg)

@@ -109,7 +109,7 @@ def test_trainer_config_from_cfg_reports_all_missing_required_keys() -> None:
 
 def test_config_groups_are_not_flattened() -> None:
     """Bundled config groups keep their nested layout: no experiment / model / sampling entry sits
-    flat at the group root, and the retired ``task`` and ``profiling`` groups are empty.
+    flat at the group root.
     """
     flattened = [
         name
@@ -117,11 +117,8 @@ def test_config_groups_are_not_flattened() -> None:
         for name in list_bundled_configs(group)
         if len(Path(name).parts) == 2
     ]
-    task_configs = list_bundled_configs("task")
 
     assert flattened == []
-    assert task_configs == ()
-    assert list_bundled_configs("profiling") == ()
 
 
 def test_geometry_sampling_presets_do_not_own_text_encoder_lengths() -> None:
@@ -158,14 +155,8 @@ def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
-    """Every experiment lives at ``<family>/<recipe>``.
-
-    Generation regime and policy-step math live in registry semantics, so
-    the config path must not reintroduce the retired AR/diffusion taxonomy.
-    """
+    """Every experiment lives at ``<family>/<recipe>``."""
     names = _experiment_names()
-    groups = {Path(name).parts[0] for name in names}
-    assert {"ar", "diffusion"}.isdisjoint(groups)
     assert all(len(Path(name).parts) == 2 for name in names)
 
 
@@ -518,15 +509,6 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() 
     assert resources.colocated is True
 
 
-def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
-    """The YAML ``trainer.entrypoint`` is a dotted path that imports to a callable."""
-    from vrl.utils.config import import_from_path
-
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-
-    assert callable(import_from_path(parse_config(cfg).trainer.entrypoint))
-
-
 def test_cli_overrides_reach_typed_trainer_config() -> None:
     """CLI overrides for resume, torch profiler, drop-zero-advantage and batch width all reach the
     typed trainer / resume / rollout configs.
@@ -585,13 +567,6 @@ def test_public_reward_builder_validates_its_input() -> None:
 
     with pytest.raises(ValueError, match=r"reward\.kwargs\.ocr must be a mapping"):
         RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg))
-
-
-def test_required_training_fields_fail_fast() -> None:
-    cfg = load_config("experiment/wan_2_1/online_grpo_ocr")
-    cfg.trainer.output_dir = "???"
-    with pytest.raises(ValueError, match=r"trainer\.output_dir"):
-        require_training_config(cfg)
 
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:

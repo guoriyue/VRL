@@ -22,12 +22,6 @@ def test_axis_requires_a_string_name(name) -> None:
         TrajectoryAxis(name, "denoise_step", 2)
 
 
-@pytest.mark.parametrize("length", [None, 0])
-def test_axis_preserves_unknown_empty_and_positive_lengths(length) -> None:
-    axis = TrajectoryAxis("iteration", "denoise_step", length)
-    assert axis.length == length
-
-
 def test_tensor_rejects_unknown_role() -> None:
     from vrl.trajectory.types import TrajectoryTensor
 

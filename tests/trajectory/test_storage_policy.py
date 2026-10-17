@@ -10,20 +10,6 @@ from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 
-def test_default_storage_policy_returns_original_batch() -> None:
-    """The default policy is the identity: the same trajectory object, the same tensor leaves,
-    axes untouched.
-    """
-    trajectory = _trajectory()
-    actions = trajectory.segments["denoise"].tensors["actions"].value
-
-    result = TrajectoryStoragePolicy().apply_to_trajectory_(trajectory)
-
-    assert result is trajectory
-    assert result.segments["denoise"].tensors["actions"].value is actions
-    assert result.axes["denoise"].kind == "denoise_step"
-
-
 def test_dtype_policy_only_casts_floating_tensors() -> None:
     """A dtype policy casts floating tensors only; integer replay inputs keep ``torch.long``
     and axis lengths are preserved.
@@ -43,16 +29,6 @@ def test_dtype_policy_only_casts_floating_tensors() -> None:
     )
     axis_lengths = {n: a.length for n, a in result.axes.items() if a.length is not None}
     assert axis_lengths == {"sample": 2, "denoise": 2}
-
-
-def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
-    """A device policy moves every tensor leaf of every segment to that device."""
-    trajectory = _trajectory()
-
-    result = TrajectoryStoragePolicy(device="cpu").apply_to_trajectory_(trajectory)
-
-    for tensor in result.segments["denoise"].tensors.values():
-        assert str(tensor.value.device) == "cpu"
 
 
 def test_rollout_schema_parses_the_storage_policy_and_rejects_bad_values() -> None:

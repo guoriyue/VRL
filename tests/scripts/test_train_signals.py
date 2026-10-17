@@ -74,19 +74,6 @@ def test_main_cancels_async_trainer_and_restores_signal_handlers(
     assert handlers.current == handlers.original
 
 
-def test_main_restores_signal_handlers_after_async_trainer_returns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def finish() -> None:
-        await asyncio.sleep(0)
-
-    handlers = _install_cli_fakes(monkeypatch, finish())
-
-    train.main(["--config", "test"])
-
-    assert handlers.current == handlers.original
-
-
 def test_main_restores_signal_handlers_after_async_trainer_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

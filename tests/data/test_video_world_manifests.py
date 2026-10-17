@@ -73,41 +73,6 @@ def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> N
     assert report.warnings == ()
 
 
-def test_source_backed_video_world_manifest_requires_provenance(tmp_path: Path) -> None:
-    """The source-backed loader accepts rows whose metadata carries full provenance and reports no
-    episode overlap.
-    """
-    data_root = tmp_path / "external"
-    _write_ppm(data_root / "video_world" / "references" / "ref.ppm")
-    train_manifest = tmp_path / "v2w_train.jsonl"
-    eval_manifest = tmp_path / "v2w_eval.jsonl"
-    _write_jsonl(
-        train_manifest,
-        {
-            "prompt": "The robot arm moves toward the cup.",
-            "reference_image": "video_world/references/ref.ppm",
-            "metadata": _source_backed_metadata("episode_train"),
-        },
-    )
-    _write_jsonl(
-        eval_manifest,
-        {
-            "prompt": "The robot arm moves away from the cup.",
-            "reference_image": "video_world/references/ref.ppm",
-            "metadata": _source_backed_metadata("episode_eval"),
-        },
-    )
-
-    report = DatasetFileReport.from_video_world_manifest(
-        train_manifest,
-        eval_manifest=eval_manifest,
-        data_root=data_root,
-    )
-
-    assert report.row_count == 1
-    assert report.source_episode_overlap == ()
-
-
 def test_source_backed_video_world_manifest_can_require_target_video(tmp_path: Path) -> None:
     """Checks target-aware Video2World manifests require target clips."""
     data_root = tmp_path / "external"

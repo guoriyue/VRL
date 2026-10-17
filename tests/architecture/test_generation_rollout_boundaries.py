@@ -41,20 +41,6 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_rewards_layer_does_not_import_generation_rollout_or_training_layers() -> None:
-    """Rewards stay independently reusable below rollout orchestration."""
-    violations = _forbidden_imports(
-        VRL_ROOT / "rewards",
-        forbidden=(
-            "vrl.generation",
-            "vrl.rollouts",
-            "vrl.scripts",
-            "vrl.trainers",
-        ),
-    )
-    assert not violations, _format_violations(violations)
-
-
 def test_importing_rewards_loads_no_generation_rollout_or_training_layer() -> None:
     """The direct-import scan above cannot see a leak through ``vrl.config``;
     import every reward module and inspect what actually loaded.

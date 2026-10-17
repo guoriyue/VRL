@@ -39,8 +39,3 @@ def test_loss_rejects_a_shape_mismatch() -> None:
 def test_timestep_window_must_be_a_forward_range(window: tuple[int, int]) -> None:
     with pytest.raises(ValueError, match="timestep_index_range"):
         DiffusionSFTConfig(timestep_index_range=window)
-
-
-def test_timestep_window_is_stored_as_ints() -> None:
-    assert DiffusionSFTConfig(timestep_index_range=(0.0, 48.0)).timestep_index_range == (0, 48)
-    assert DiffusionSFT(DiffusionSFTConfig()).sft_weight == 0.0

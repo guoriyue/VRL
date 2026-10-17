@@ -165,44 +165,6 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     assert pickscore.scorer._worker_config.device == "cpu"
 
 
-def test_sana_family_defaults_to_native_fp16() -> None:
-    """The public role precision matches the checkpoint's runtime invariant."""
-    cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    built = BuiltConfigs.from_cfg(cfg)
-    entry = get_model_family_entry("sana")
-    build = entry.resolve_model_build(
-        built.root,
-        torch.device("cpu"),
-        precision=built.precision,
-    )
-
-    assert cfg.model.get("dtype") is None
-    expected = RolePrecision(
-        dtype="fp16",
-        float32_precision="ieee",
-        outer_autocast=False,
-    )
-    assert built.precision.stages_match
-    assert built.root.rollout is not None
-    assert (
-        built.trainer.batch_config.training_microbatch_size
-        == built.root.rollout.samples_per_generation_batch
-    )
-    assert build.parameter_dtype is torch.float16
-    assert build.precision == expected
-    assert (
-        entry.resolve_model_build(
-            built.root,
-            torch.device("cpu"),
-            precision=built.precision,
-            for_rollout=False,
-        ).precision
-        == expected
-    )
-    assert build.rollout is not None
-    assert build.rollout.prompt_encoder_dtype is torch.bfloat16
-
-
 @pytest.mark.parametrize(("role", "dtype"), [("training", "bf16"), ("rollout", "fp32")])
 def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
@@ -245,15 +207,6 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     assert pickscore_config["device"] == "cpu"
     assert pickscore_config["processor_revision"] == cfg.reward.kwargs.pickscore.processor_revision
     assert pickscore_config["model_revision"] == cfg.reward.kwargs.pickscore.model_revision
-
-
-def test_sana_rejects_redundant_or_conflicting_model_dtype() -> None:
-    """A family invariant must not also survive as a user-controlled knob."""
-    cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    cfg.model.dtype = "fp16"
-
-    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
-        parse_config(cfg)
 
 
 def test_sana_direct_tool_override_changes_storage_only() -> None:

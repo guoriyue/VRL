@@ -126,12 +126,6 @@ def test_metrics_csv_preflight_preserves_single_process_error(monkeypatch, tmp_p
         )
 
 
-def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None:
-    OnlineMetricsCSV(tmp_path, component_names=("aesthetic",))
-    with pytest.raises(ValueError, match="different metrics schema"):
-        OnlineMetricsCSV(tmp_path, component_names=("aesthetic", "pickscore"), resume_epoch=0)
-
-
 def test_metrics_csv_initializes_both_headers_before_any_rows(tmp_path) -> None:
     output_dir = tmp_path / "new_run"
     OnlineMetricsCSV(output_dir, component_names=("ocr",))

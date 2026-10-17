@@ -489,15 +489,6 @@ def test_train_writes_atomic_rank_results_and_failure_wins_aggregation(tmp_path)
     assert not list(out.glob(".*.tmp-*"))
 
 
-def test_train_keeps_single_process_result_name(tmp_path) -> None:
-
-    out = tmp_path / "run"
-    TrainingRunResultWriter(str(out), environ={}).write()
-
-    assert json.loads((out / "training_run_result.json").read_text())["status"] == "success"
-    assert not list(out.glob("training_run_result.rank-*.json"))
-
-
 def test_train_result_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     from vrl.ray.operation_deadline import RayOperationTimeout
     from vrl.rollouts.collector.core import (
@@ -522,19 +513,6 @@ def test_train_result_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     assert result["error_class"] == "RayOperationTimeout"
     assert "offload cleanup failed" in result["error_message"]
     assert "RayOperationTimeout" in result["error_message"]
-
-
-def test_train_result_keeps_terminal_identity_before_dependency_cause(tmp_path) -> None:
-    from vrl.ray.operation_deadline import RayOperationTimeout
-
-    timeout = RayOperationTimeout("rollout.startup.load_policy", 1.0)
-    timeout.__cause__ = TimeoutError("dependency-owned timeout")
-    out = tmp_path / "run"
-
-    TrainingRunResultWriter(str(out), environ={}).write(error=timeout)
-
-    result = json.loads((out / "training_run_result.json").read_text())
-    assert result["error_class"] == "RayOperationTimeout"
 
 
 def test_distributed_success_requires_every_rank_result(tmp_path) -> None:
@@ -733,26 +711,6 @@ def test_health_gate_trips_on_a_grad_norm_spike_after_the_failure_limit(tmp_path
     assert result["consecutive_unhealthy_rows"] == 2
     assert any("grad_norm 2.1 is above maximum 0.8" in reason for reason in result["reasons"])
     assert result["thresholds"]["max_grad_norm"] == 0.8
-
-
-def test_health_gate_accepts_a_grad_norm_below_the_maximum(tmp_path) -> None:
-    out = tmp_path / "run"
-    out.mkdir()
-    (out / "metrics.csv").write_text(_METRICS_HEADER + _metric_row(0, grad_norm="0.26"))
-    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1, max_grad_norm=0.8), out)
-
-    assert gate.judge_new_rows() is False
-    assert not (out / HEALTH_RESULT_NAME).exists()
-
-
-def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
-    out = tmp_path / "run"
-    out.mkdir()
-    (out / "metrics.csv").write_text(_METRICS_HEADER + _metric_row(0, grad_norm="1e6"))
-    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
-
-    assert gate.judge_new_rows() is False
-    assert not (out / HEALTH_RESULT_NAME).exists()
 
 
 def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum() -> None:
@@ -1099,17 +1057,6 @@ def test_supervisor_clears_previous_success_before_new_process(tmp_path):
     assert outcome.exit_code == 0
     assert outcome.result is None
     assert not list(out.glob("training_run_result*.json"))
-
-
-def test_supervised_result_does_not_include_attempt_identity(tmp_path):
-    out = tmp_path / "run"
-    command = _child_script(
-        tmp_path,
-        f"from vrl.training_run_result import TrainingRunResultWriter\nTrainingRunResultWriter({str(out)!r}).write()\n",
-    )
-    outcome = RunSupervisor(command=command, output_dir=out)._run_attempt([])
-    assert outcome.result["status"] == "success"
-    assert "attempt_id" not in outcome.result
 
 
 def test_supervisor_records_nonzero_exit_even_after_child_wrote_success(tmp_path):

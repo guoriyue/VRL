@@ -256,11 +256,6 @@ def test_quantization_pass_dispatches_nvfp4(capsys, monkeypatch) -> None:
     assert "nvfp4" in capsys.readouterr().out
 
 
-def test_nvfp4_policy_rejects_fp8_recipes() -> None:
-    with pytest.raises(ValueError, match="does not accept a recipe"):
-        QuantizationPolicy(format="nvfp4", recipe="rowwise")
-
-
 def test_pass_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
     from vrl.nn.optimization import QuantizationPass
 

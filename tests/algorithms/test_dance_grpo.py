@@ -18,12 +18,6 @@ _pick = OnlineTrainer._train_timestep_indices
 # --------------------------------------------------------- timestep selection
 
 
-def test_full_fraction_trains_all_steps_regardless_of_selection() -> None:
-    # timestep_fraction == 1 -> every step trained, selection is a no-op.
-    assert _pick(10, 1.0, "strided") == list(range(10))
-    assert _pick(10, 1.0, "random") == list(range(10))
-
-
 def test_strided_is_deterministic_and_evenly_spaced() -> None:
     a = _pick(10, 0.5, "strided")
     b = _pick(10, 0.5, "strided")

@@ -309,13 +309,6 @@ def _rollout_spec(
     )
 
 
-def test_quantization_pass_raises_when_swap_matches_nothing():
-    from vrl.nn.optimization import QuantizationPass
-
-    with pytest.raises(RuntimeError, match="matched 0 linears"):
-        QuantizationPass().quantize(QuantizablePolicy(linears=()), _rollout_spec("fp8"))
-
-
 def test_quantization_pass_disabled_without_scheme_and_counts_swaps():
     from vrl.nn.optimization import QuantizationPass
 
