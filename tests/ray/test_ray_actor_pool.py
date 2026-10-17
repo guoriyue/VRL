@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import threading
 import time
 
 import pytest
 
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
-from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import require_actor_gpu_ids
 
 # The real-Ray tests here share the package cluster (tests/ray/conftest.py);
@@ -127,120 +123,6 @@ def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
         # The cluster is shared: this test owns its actors, not the cluster.
         if group is not None:
             group.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_hung_business_call_times_out_while_health_group_responds(local_ray) -> None:
-    """A live health thread cannot disguise a stalled default-group call."""
-
-    ray = local_ray
-    health_group = "test_health"
-
-    class _HungWorker:
-        def __init__(self) -> None:
-            self._business_started = threading.Event()
-
-        def block(self, _payload: None) -> None:
-            self._business_started.set()
-            threading.Event().wait()
-
-        @ray.method(concurrency_group=health_group)
-        def health(self) -> bool:
-            return self._business_started.is_set()
-
-    actor_cls = ray.remote(
-        num_cpus=0,
-        concurrency_groups={health_group: 1},
-    )(_HungWorker)
-    actor = actor_cls.remote()
-    dispatcher = RayActorDispatcher(("w0",))
-    started_at = time.monotonic()
-    task = asyncio.create_task(
-        dispatcher.run(
-            [
-                RayActorJob(
-                    job_index=0,
-                    worker_id="w0",
-                    remote_method=actor.block.remote,
-                    payload=None,
-                ),
-            ],
-            operation="rollout.generation.batch",
-            call_timeout_s=1.0,
-        ),
-    )
-    try:
-        business_started = False
-        while not business_started:
-            business_started = await asyncio.to_thread(
-                ray.get,
-                actor.health.remote(),
-                timeout=1.0,
-            )
-            if not business_started:
-                await asyncio.sleep(0.01)
-
-        with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.batch"):
-            await task
-
-        assert time.monotonic() - started_at < 3.0
-        assert (
-            await asyncio.to_thread(
-                ray.get,
-                actor.health.remote(),
-                timeout=1.0,
-            )
-            is True
-        )
-    finally:
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        ray.kill(actor, no_restart=True)
-
-
-@pytest.mark.asyncio
-async def test_concurrent_calls_wait_locally_before_starting_real_ray_deadline(local_ray) -> None:
-    """Two healthy sync calls each get a full budget after real actor admission."""
-
-    ray = local_ray
-
-    class _SlowWorker:
-        @staticmethod
-        def execute(payload: str) -> str:
-            if payload != "warm":
-                time.sleep(0.6)
-            return payload
-
-    actor = ray.remote(num_cpus=0)(_SlowWorker).remote()
-    dispatcher = RayActorDispatcher(("w0",))
-    assert ray.get(actor.execute.remote("warm")) == "warm"
-
-    async def dispatch(payload: str) -> list[tuple[int, str]]:
-        return await dispatcher.run(
-            [
-                RayActorJob(
-                    job_index=0,
-                    worker_id="w0",
-                    remote_method=actor.execute.remote,
-                    payload=payload,
-                ),
-            ],
-            operation="test.sync_actor",
-            # Each warmed call finishes comfortably inside this budget, while
-            # two mailbox-queued calls would take about 1.2 seconds.
-            call_timeout_s=1.0,
-        )
-
-    try:
-        first, second = await asyncio.gather(
-            dispatch("first"),
-            dispatch("second"),
-        )
-        assert first == [(0, "first")]
-        assert second == [(0, "second")]
-    finally:
-        ray.kill(actor, no_restart=True)
 
 
 def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:

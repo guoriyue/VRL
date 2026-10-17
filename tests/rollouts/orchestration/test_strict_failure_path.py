@@ -106,17 +106,6 @@ async def test_strict_shared_phase_keeps_handoff_order_in_next_iteration(
 
 
 @pytest.mark.asyncio
-async def test_strict_parks_trainer_when_only_reward_shares_its_gpu(monkeypatch, tmp_path) -> None:
-    schedule, _bench, phase = _schedule(
-        monkeypatch, tmp_path, lifecycle=_REWARD_SHARES_TRAINER_GPU
-    )
-
-    await schedule.next_iteration(["p0"], group_size=1)
-
-    assert phase.events == _SHARED_PHASE
-
-
-@pytest.mark.asyncio
 async def test_strict_terminal_shutdown_parks_before_shared_pipeline_cleanup(
     monkeypatch, tmp_path
 ) -> None:

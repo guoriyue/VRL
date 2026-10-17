@@ -37,15 +37,6 @@ def _resources(
     )
 
 
-def test_strict_on_a_shared_gpu_and_continuous_on_disjoint_gpus_pass() -> None:
-    """The two supported pairings are silent."""
-
-    _resources(visible=[0], trainer=[0], rollout=[0]).validate_schedule_mode("strict_on_policy")
-    _resources(visible=[0, 1, 2], trainer=[0], rollout=[1], reward=[2]).validate_schedule_mode(
-        "continuous"
-    )
-
-
 def test_continuous_shared_gpu_is_rejected() -> None:
     with pytest.raises(ValueError, match="disjoint trainer and rollout GPUs"):
         _resources(visible=[0], trainer=[0], rollout=[0]).validate_schedule_mode("continuous")

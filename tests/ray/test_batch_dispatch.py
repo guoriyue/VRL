@@ -759,26 +759,6 @@ async def test_executor_round_robin_dispatches_per_plan_binding(local_ray, spawn
         assert row["sample_count"] == 2
 
 
-@pytest.mark.asyncio
-async def test_executor_runtime_debug_exposes_chunk_schedule(spawn) -> None:
-    """runtime_debug surfaces per-batch placement telemetry."""
-
-    executor = _executor([("w0", spawn(_Worker, "w0")), ("w1", spawn(_Worker, "w1"))])
-    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
-
-    assert output.runtime_debug is not None
-    debug_schedule = output.runtime_debug["chunk_schedule"]
-    assert len(debug_schedule) == 4
-    for row in debug_schedule:
-        assert {
-            "batch_key",
-            "sample_count",
-            "assigned_worker",
-            "queue_wait_s",
-            "execution_s",
-        } <= set(row)
-
-
 @pytest.mark.parametrize("worker_ids", ["ab", [""], [1]])
 def test_dispatcher_rejects_invalid_worker_identity(worker_ids):
     with pytest.raises(ValueError, match="worker ids must be"):

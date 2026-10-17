@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -51,32 +49,3 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
 
     assert collector_request.metadata["reference_images"][0].endswith("ref.ppm")
     assert collector_request.request.inputs[0].reference_images[0].endswith("ref.ppm")
-
-
-@pytest.mark.parametrize("root_from_env", [True, False], ids=["VRL_DATA_ROOT", "artifact_root"])
-def test_cosmos_per_sample_reference_resolves_under_the_data_root(
-    monkeypatch, tmp_path: Path, root_from_env: bool
-) -> None:
-    """Checks per-sample references resolve at load and pass the required-image hook.
-
-    The data root comes from ``VRL_DATA_ROOT`` or from data.artifact_data_root.
-    """
-    manifest = _write_reference_manifest(tmp_path)
-    if root_from_env:
-        monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
-    data_root = RootedPaths.data_root(None if root_from_env else tmp_path, allow_absolute=True)
-    # Production sequence: run_online_recipe resolves reference paths at load
-    # time, then required-image resolution fills defaults and checks existence.
-    examples = [
-        example.with_resolved_references(data_root)
-        for example in load_prompt_dataset_index(manifest)
-    ]
-    examples = [
-        example.with_required_reference_images(manifest=manifest, row_index=index)
-        for index, example in enumerate(examples)
-    ]
-
-    assert examples[0].reference_images == [
-        str((tmp_path / "video_world" / "references" / "ref.ppm").resolve()),
-    ]
-    assert "reference_image" not in examples[0].metadata

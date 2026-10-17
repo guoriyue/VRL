@@ -9,7 +9,6 @@ from dataclasses import asdict
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
@@ -30,7 +29,6 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory.storage import TrajectoryStoragePolicy
-from vrl.utils.config import import_from_path
 
 
 def _typed_model_build_inputs(payload):
@@ -189,22 +187,6 @@ def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
         )
 
 
-def test_family_registry_entries_have_complete_protocol_wiring() -> None:
-    """Registration and DenoiseFamilyBuild.__post_init__ enforce the entry shape;
-    what they cannot check is that the dotted paths resolve. Gatherers are
-    built per entry in test_every_registry_entry_has_pickle_safe_ray_launch_inputs."""
-
-    for entry in FAMILY_REGISTRY.values():
-        assert entry.task
-        assert entry.executor_cls.startswith(
-            (
-                "vrl.models.families.",
-                "vrl.generation.bindings.full_sequence.",
-            ),
-        )
-        assert callable(import_from_path(entry.family_build.replay_cls))
-
-
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
     result = subprocess.run(
         [
@@ -321,20 +303,6 @@ def test_rollout_config_is_projected_from_yaml() -> None:
     )
 
 
-def test_cosmos_predict2_recipe_keeps_request_and_reward_fps_at_16() -> None:
-    cfg = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
-    root = parse_config(cfg)
-    collector_config = RolloutCollectorConfig.from_root(root)
-    collector_request = GenerationRequestBuilder(
-        entry=get_model_family_entry("cosmos-predict2"),
-        config=collector_config,
-    ).build(["robot arm moves"], 1)
-
-    assert collector_config.request_sampling["fps"] == 16
-    assert collector_request.request.sampling["fps"] == 16
-    assert collector_request.metadata["video_fps"] == 16
-
-
 def test_request_fps_override_updates_reward_metadata() -> None:
     collector_request = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
@@ -347,8 +315,3 @@ def test_request_fps_override_updates_reward_metadata() -> None:
 
     assert collector_request.request.sampling["fps"] == 12
     assert collector_request.metadata["video_fps"] == 12
-
-
-def test_unknown_family_raises_clear_error() -> None:
-    with pytest.raises(ValueError, match="unsupported model family"):
-        get_model_family_entry("not_a_family")

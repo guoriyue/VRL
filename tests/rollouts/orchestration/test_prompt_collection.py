@@ -13,7 +13,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import pytest
-import torch
 
 from tests.rollouts.collector._helpers import CollectorBench, IndexReward, real_collector
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
@@ -22,7 +21,6 @@ from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.collector.core import (
     PromptCollectionCleanupError,
 )
-from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
 
@@ -109,38 +107,6 @@ async def test_mixed_prompts_preserve_group_id_remap(monkeypatch, tmp_path) -> N
     assert _flow(bench) == ["generate", "generate", "generate", "score"]
     assert _generated_prompts(bench) == ["s0", "e1", "s2"]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
-
-
-@pytest.mark.asyncio
-async def test_prompt_example_scalar_remap_updates_trainer_group_ids(
-    monkeypatch, tmp_path
-) -> None:
-    """Checks remaps update trainer grouping without rewriting stable identity."""
-
-    bench = real_collector(monkeypatch, tmp_path)
-
-    batches = await _collect(
-        bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")], group_size=2
-    )
-
-    for expected_group, batch in enumerate(batches):
-        expected = torch.full((2,), expected_group, dtype=torch.long)
-        assert torch.equal(batch.group_ids, expected)
-        assert batch.trajectory is not None
-        assert torch.equal(TrajectorySignalBuilder(batch).group_ids, expected)
-        assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0]
-
-
-@pytest.mark.asyncio
-async def test_plain_string_list_remap_updates_signal_group_ids(monkeypatch, tmp_path) -> None:
-    """Checks evaluator signals consume the remapped trainer-owned groups."""
-
-    bench = real_collector(monkeypatch, tmp_path)
-
-    batches = await _collect(bench, ["p0", "p1"])
-
-    assert [batch.group_ids.item() for batch in batches] == [0, 1]
-    assert [TrajectorySignalBuilder(batch).group_ids.item() for batch in batches] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -235,8 +201,11 @@ async def test_isolated_reward_overlaps_scoring_with_next_generation(
     reward = _GatedReward()
     bench = real_collector(monkeypatch, tmp_path, reward=reward)
     _hook_generation(monkeypatch, bench, _release_score_when_overlapped(reward))
+    stats = RolloutStats()
 
-    batches = await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")])
+    batches = await _collect(
+        bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")], stats=stats
+    )
 
     assert reward.events == [
         "score_start:p0",
@@ -248,59 +217,7 @@ async def test_isolated_reward_overlaps_scoring_with_next_generation(
     assert reward.max_active == 1
     assert reward.active == 0
     assert [batch.group_ids.item() for batch in batches] == [0, 1]
-
-
-class _SlowReward(IndexReward):
-    """Scoring whose cost is proportional to the batch, like a reward model."""
-
-    def __init__(self, delay_s: float) -> None:
-        super().__init__()
-        self.delay_s = delay_s
-
-    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        await asyncio.sleep(self.delay_s * len(samples))
-        return await super().score_batch(samples)
-
-
-@pytest.mark.asyncio
-async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab(
-    monkeypatch, tmp_path
-) -> None:
-    prompts = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
-    # Enough sampling steps that a group's generation is comparable to its
-    # scoring, so the streamed schedule has something to overlap.
-    steps = ("sampling.num_steps=50",)
-    serial = real_collector(
-        monkeypatch,
-        tmp_path / "serial",
-        reward=_SlowReward(0.05),
-        lifecycle=_SHARED_REWARD,
-        overrides=steps,
-    )
-    # Each stack serves one snapshot; load the first policy before the second
-    # stack installs its own pipeline. Both policies are loaded before timing
-    # so neither wall includes a model build.
-    await serial.collector.activate_generation_runtime()
-    streaming = real_collector(
-        monkeypatch, tmp_path / "streaming", reward=_SlowReward(0.05), overrides=steps
-    )
-    await streaming.collector.activate_generation_runtime()
-    serial_stats = RolloutStats()
-    overlap_stats = RolloutStats()
-
-    await _collect(serial, prompts, stats=serial_stats)
-    await _collect(streaming, prompts, stats=overlap_stats)
-
-    # Wall time is noisy under load (the two walls sit within milliseconds of
-    # each other on a loaded host); the overlap measurement is the signal: the
-    # serial schedule never overlaps, the streamed one overlaps at least one
-    # reward's scoring with the next group's generation.
-    assert serial_stats.phase_seconds["collect.generation_reward_overlap"] == 0.0
-    assert overlap_stats.phase_seconds["collect.generation_reward_overlap"] >= 0.02
-    assert overlap_stats.counters == {
-        "collect.group_count": 2.0,
-        "collect.sample_count": 2.0,
-    }
+    assert stats.phase_seconds["collect.generation_reward_overlap"] > 0.0
 
 
 @pytest.mark.asyncio

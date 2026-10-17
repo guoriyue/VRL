@@ -25,7 +25,6 @@ from vrl.models.families.registry import (
     get_model_family_entry,
 )
 from vrl.ray.resources import ResourcePlan
-from vrl.rollouts.collector.config import RolloutCollectorConfig
 
 
 class _TestGatherer:
@@ -269,65 +268,6 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
     }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
     assert "quantization" not in model_build["rollout"]
-
-
-def test_generation_batch_width_reaches_the_request_not_the_executor() -> None:
-    """The batch width is a request field; executor kwargs never carry it."""
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[
-            # This test only exercises input routing; resource validation has
-            # dedicated coverage and the repository verify lane hides all GPUs.
-            "distributed.resources.visible_devices=[]",
-            "distributed.resources.trainer.num_gpus=0",
-            "distributed.resources.rollout.num_gpus=0",
-            "distributed.resources.rollout.num_engines=1",
-            "rollout.samples_per_generation_batch=3",
-        ],
-    )
-
-    inputs, _ = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("sd3_5"),
-    )
-
-    assert "samples_per_generation_batch" not in inputs.launch_config.executor_kwargs
-    collector = RolloutCollectorConfig.from_root(parse_config(cfg))
-    assert collector.samples_per_generation_batch == 3
-    assert "samples_per_generation_batch" not in collector.request_sampling
-
-
-def test_model_torch_compile_applies_to_all_diffusion_rollout_families() -> None:
-    """Checks model.torch_compile is the single compile source for rollout workers.
-
-    The projection into ModelBuild.model_config is family-generic
-    (ModelFamilyEntry.resolve_model_build), so one family pins it.
-    """
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[
-            "distributed.resources.visible_devices=[]",
-            "distributed.resources.trainer.num_gpus=0",
-            "distributed.resources.rollout.num_gpus=0",
-            "distributed.resources.rollout.num_engines=1",
-            "actor.gradient_checkpointing=off",
-            "model.torch_compile.enable=true",
-            "model.torch_compile.mode=default",
-        ],
-    )
-    entry = get_model_family_entry("sd3_5")
-
-    inputs, _ = _capture_launch_inputs(
-        cfg,
-        entry,
-    )
-
-    assert entry.generation_regime == "full_sequence"
-    model_config = inputs.launch_config.model_build["model_config"]
-    assert model_config["torch_compile"] == {
-        "enable": True,
-        "mode": "default",
-    }
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:

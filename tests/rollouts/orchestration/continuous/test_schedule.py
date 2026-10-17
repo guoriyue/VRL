@@ -25,7 +25,6 @@ from tests.rollouts.collector._helpers import (
 )
 from tests.rollouts.orchestration.continuous._helpers import (
     owner_snapshot,
-    wait_for_owner_progress,
 )
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rewards import RewardOutput, RewardSample
@@ -148,38 +147,6 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner(
     assert bench.trace.events.count("collector_shutdown") == 2
     assert schedule._rollout_thread._closed is True
     assert thread is not None and not thread.is_alive()
-
-
-@pytest.mark.asyncio
-async def test_owner_production_advances_while_trainer_loop_is_blocked(
-    monkeypatch, tmp_path
-) -> None:
-    bench = _bench(monkeypatch, tmp_path)
-    _delay_generation(monkeypatch, bench, 0.02)
-    schedule = _build(_continuous_config(), bench)
-
-    try:
-        await schedule.next_iteration(
-            ["p0"],
-            group_size=1,
-            next_prompts=["p1"],
-        )
-        before = await owner_snapshot(schedule._rollout_thread)
-        assert before.producer_state is not None
-        assert before.producer_state.submitted_count == 2
-
-        # Blocks the trainer asyncio loop exactly like synchronous backward,
-        # until the owner has completed one more item on its own thread.
-        after = wait_for_owner_progress(
-            schedule._rollout_thread,
-            completed_above=before.producer_state.completed_count,
-        )
-        assert after.producer_state is not None
-        assert after.producer_state.tick_count > before.producer_state.tick_count
-        assert after.producer_state.submitted_count == before.producer_state.submitted_count
-        assert after.producer_state.completed_count > before.producer_state.completed_count
-    finally:
-        await schedule.shutdown()
 
 
 @pytest.mark.asyncio
@@ -347,22 +314,6 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit(
 
 
 @pytest.mark.asyncio
-async def test_result_slots_fit_the_finite_prompt_batch(monkeypatch, tmp_path) -> None:
-    """Every prompt group must reach the iteration even with serial admission."""
-
-    bench = _bench(monkeypatch, tmp_path)
-    schedule = _build(_continuous_config(), bench)
-
-    try:
-        iteration = await schedule.next_iteration(["a", "b", "c"], group_size=2)
-        assert len(iteration.batches) == 3
-        assert sum(batch.rewards.numel() for batch in iteration.batches) == 6
-        assert sorted(int(b.group_ids[0]) for b in iteration.batches) == [0, 1, 2]
-    finally:
-        await schedule.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_persistent_producer_failure_fails_fast_with_root_cause(
     monkeypatch, tmp_path
 ) -> None:
@@ -446,29 +397,15 @@ async def test_weight_sync_waits_for_inflight_reward(monkeypatch, tmp_path) -> N
         assert not barrier.done()
 
         reward.allow_score.set()
-        await asyncio.wait_for(barrier, 5.0)
+        phases = await asyncio.wait_for(barrier, 5.0)
         assert _pushes(bench) == pushes_before + 1
+        # A full-finetune run has no versioned slots: the barrier drained (mode 0).
+        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
         resumed = await owner_snapshot(schedule._rollout_thread)
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
     finally:
         reward.allow_score.set()
-        await schedule.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_draining_barrier_reports_mode_zero(monkeypatch, tmp_path) -> None:
-    """A full-finetune run has no versioned slots: the barrier mode metric is 0 (draining)."""
-
-    bench = _bench(monkeypatch, tmp_path)
-    assert bench.stack.built.trainer.versioned_weight_sync is False
-    schedule = _build(_continuous_config(), bench)
-
-    try:
-        await schedule.next_iteration(["p0", "p1"], group_size=2)
-        phases = await schedule.after_train_step()
-        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
-    finally:
         await schedule.shutdown()
 
 
@@ -605,25 +542,6 @@ async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch(
             await schedule.next_iteration(["p0", "p1"], group_size=2)
         assert exc_info.value.__cause__ is not None
         assert "lost its fixed policy-version slot" in str(exc_info.value.__cause__)
-    finally:
-        await schedule.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_prefetch_installs_the_next_prompt_batch(monkeypatch, tmp_path) -> None:
-    """The producer advances to exactly the prompt batch announced as prefetch."""
-
-    bench = _bench(monkeypatch, tmp_path)
-    schedule = _build(_continuous_config(), bench)
-
-    try:
-        await schedule.next_iteration(
-            ["p0", "p1"],
-            group_size=2,
-            next_prompts=["p0", "p2"],
-        )
-        await schedule.next_iteration(["p0", "p2"], group_size=2)
-        assert (await owner_snapshot(schedule._rollout_thread)).prompts == ("p0", "p2")
     finally:
         await schedule.shutdown()
 

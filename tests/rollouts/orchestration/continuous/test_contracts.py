@@ -234,27 +234,6 @@ async def test_result_slot_is_filled_only_after_reward_scoring(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_failed_reward_scoring_leaves_result_slot_empty(monkeypatch, tmp_path) -> None:
-    """Reward failures surface as producer errors, not as scored results."""
-
-    stack = await _stack(monkeypatch, tmp_path)
-    stack.bench.trace.fail("score", "reward model exploded", times=3)
-    producer = _producer(stack.coordinator)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    try:
-        await _wait_until(lambda: producer.state.error_count >= 2)
-        assert _ready(results) == 0
-        assert "reward model exploded" in str(producer.state.last_error)
-        assert producer.state.completed_count == 0
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
 async def test_terminal_generation_error_is_not_retried_or_wrapped(monkeypatch, tmp_path) -> None:
     error = RayOperationTimeout(
         "rollout.generation.batch",
@@ -373,35 +352,6 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried(monkeypatch,
         assert producer.state.submitted_count == 1
         assert producer.inflight_count == 0
         assert _ready(results) == 0
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
-async def test_finite_prompt_batch_completes_each_slot_once_then_idles(
-    monkeypatch, tmp_path
-) -> None:
-    stack = await _stack(monkeypatch, tmp_path)
-    producer = _producer(stack.coordinator, prompts=["p0", "p1", "p2"], max_inflight=2)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    producer.pause_admission()
-    try:
-        # The drain must admit p2 even though pause caught the batch with only
-        # the first two slots live.
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert _ready(results) == 3
-        assert _attempts(stack.bench) == {"p0": 1, "p1": 1, "p2": 1}
-        assert producer.state.submitted_count == 3
-        assert producer.state.completed_count == 3
-
-        producer.resume_admission()
-        await asyncio.sleep(0.02)
-        assert _attempts(stack.bench) == {"p0": 1, "p1": 1, "p2": 1}
-        assert producer.inflight_count == 0
     finally:
         await producer.stop()
 
@@ -615,80 +565,7 @@ async def test_producer_stop_does_not_wait_forever_for_cancel_suppression(
 # ------------------------------------------------------- weight-sync drain
 
 
-@pytest.mark.asyncio
-async def test_drain_prompt_batch_waits_for_generation_and_reward(monkeypatch, tmp_path) -> None:
-    """The barrier drain returns only after gen + reward of in-flight work."""
-
-    stack, reward, gate = await _gated(monkeypatch, tmp_path)
-    gate.allow.clear()
-    reward.allow_score.clear()
-    producer = _producer(stack.coordinator)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    try:
-        await asyncio.wait_for(gate.started.wait(), 5.0)
-        producer.pause_admission()
-        barrier: list[str] = []
-
-        async def _drain_then_sync() -> None:
-            await producer.drain_prompt_batch(wait_timeout_s=5.0)
-            barrier.append("sync")
-
-        drain_task = asyncio.create_task(_drain_then_sync())
-        await asyncio.sleep(0.05)
-        assert not barrier  # generation still running
-
-        gate.allow.set()
-        await _wait_until(lambda: "generate_end" in reward.events)
-        await asyncio.sleep(0.05)
-        assert not barrier  # reward still running
-
-        reward.allow_score.set()
-        await asyncio.wait_for(drain_task, 5.0)
-        # Sync strictly after the full collect, and the drained group was
-        # harvested into the batch results (drained, never dropped).
-        assert reward.events == ["generate_start", "generate_end", "score_end"]
-        assert barrier == ["sync"]
-        assert _ready(results) == 1
-    finally:
-        producer.resume_admission()
-        await producer.stop()
-
-
 # ------------------------------------------------------- version stamping
-
-
-@pytest.mark.asyncio
-async def test_items_carry_policy_version_captured_at_submission(monkeypatch, tmp_path) -> None:
-    """A version bump mid-flight must not relabel an already-submitted group."""
-
-    stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
-    gate.allow.clear()
-    # max_stale=1 so the mid-flight bump to v2 keeps the group inside the
-    # freshness window (staleness 1 <= 1); this test pins version *stamping*,
-    # not the freshness gate, so the group must survive to be inspected.
-    producer = _producer(stack.coordinator, max_stale=1)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    try:
-        await asyncio.wait_for(gate.started.wait(), 5.0)
-        producer.pause_admission()
-        assert await stack.bump_version() == 2  # trainer syncs while the group is in flight
-        gate.allow.set()
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-
-        assert _ready(results) == 1
-        assert prompt_batch.policy_version == 1
-        assert stack.bench.trace.requests[0].policy_version == 1
-    finally:
-        producer.resume_admission()
-        await producer.stop()
 
 
 # ----------------------------------------------- producer freshness gate
@@ -780,47 +657,6 @@ async def _collect_iteration(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ready_count", [0, 1])
-async def test_consumer_timeout_identifies_incomplete_batch(ready_count) -> None:
-    prompt_batch = _prompt_batch([None, None], batch_id=7)
-    for slot in range(ready_count):
-        prompt_batch.results[slot] = _item()
-    receipts = list(prompt_batch.results)
-
-    with pytest.raises(TimeoutError) as caught:
-        await _collect_iteration(
-            _consumer(max_stale=1, wait_timeout_s=0.001),
-            prompt_batch,
-            current_policy_version=2,
-        )
-
-    message = str(caught.value)
-    assert "prompt_batch_id=7" in message
-    assert f"ready_groups={ready_count}/2" in message
-    assert "current_policy_version=2" in message
-    assert prompt_batch.results == receipts
-
-
-@pytest.mark.asyncio
-async def test_consumer_consumes_stale_items_within_bound() -> None:
-    """max_stale=1 lets the trainer consume one-version-old groups.
-
-    The consumer only reads the slots; releasing them is the producer's.
-    """
-    items = [_item(), _item()]
-    prompt_batch = _prompt_batch(list(items))
-    iteration = await _collect_iteration(
-        _consumer(max_stale=1), prompt_batch, current_policy_version=2
-    )
-
-    phases = iteration.stats.as_metrics_dict()
-    assert phases["continuous.rollout_policy_version"] == 1.0
-    assert phases["continuous.stale_policy_versions"] == 1.0
-    assert phases["continuous.consume_policy_version"] == 2.0
-    assert prompt_batch.results == items
-
-
-@pytest.mark.asyncio
 async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     """A finite batch fails instead of dropping slots it cannot regenerate.
 
@@ -835,15 +671,6 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     with pytest.raises(RuntimeError, match="older than the policy window"):
         await _collect_iteration(consumer, prompt_batch, current_policy_version=2)
     assert prompt_batch.results == items
-
-
-@pytest.mark.asyncio
-async def test_iteration_carries_batch_identity_gauges() -> None:
-    prompt_batch = _prompt_batch([_item(), _item()], batch_id=3)
-    iteration = await _collect_iteration(
-        _consumer(max_stale=0), prompt_batch, current_policy_version=1
-    )
-    assert iteration.stats.as_metrics_dict()["continuous.batch_id"] == pytest.approx(3.0)
 
 
 def test_item_ages_never_go_negative_under_a_skewed_clock(

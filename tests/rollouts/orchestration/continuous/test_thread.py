@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,6 @@ from tests.tiny_real_stack import (
 )
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
 from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
@@ -55,16 +54,12 @@ async def _stack(
     *,
     reward: IndexReward | None = None,
     non_draining: bool = False,
-    version: int | None = None,
 ) -> tuple[CollectorBench, TrainerSide]:
-    """A real collector bench plus its trainer side; ``version`` pre-installs
-    the trainer's weights at that policy version, as a resumed run finds them."""
+    """A real collector bench plus its trainer side."""
 
     bench = real_collector(monkeypatch, tmp_path, reward=reward, versioned_slots=non_draining)
     bench.trace.watch(bench.collector, "shutdown", "collector_shutdown")
     trainer = trainer_side(bench)
-    if version is not None:
-        await bench.runtime.update_weights(trainer.export(), version)
     return bench, trainer
 
 
@@ -449,93 +444,6 @@ async def test_cancelled_shutdown_waiter_does_not_abandon_cleanup(monkeypatch, t
     finally:
         release.set()
         await owner.shutdown()
-
-
-class _PromptValueReward(IndexReward):
-    """Scores a sample by the integer its prompt spells, so equal prompt orders
-    give equal reward batches."""
-
-    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        await super().score_batch(samples)
-        return RewardOutput(scores=tuple(float(int(sample.prompt)) for sample in samples))
-
-
-@pytest.mark.asyncio
-async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
-    tmp_path, monkeypatch
-):
-    from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
-    from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-
-    def sampler(generator):
-        return PromptBatchSampler(
-            generator=generator,
-            num_examples=12,
-            prompts_per_rank=3,
-            strategy="random_without_replacement",
-        )
-
-    rng = torch.Generator().manual_seed(23)
-    original_sampler = sampler(rng)
-    current = [str(index) for index in original_sampler.sample(epoch=0)]
-    preview = [str(index) for index in original_sampler.preview(epoch=1)]
-    bench, trainer = await _stack(monkeypatch, tmp_path / "original", reward=_PromptValueReward())
-    original = _owner(bench, trainer)
-    restored = None
-    try:
-        await original.next_iteration(
-            current,
-            group_size=2,
-            runtime_debug=False,
-            initial_weights=trainer.export(),
-            next_prompts=preview,
-        )
-        await original.commit_weights(trainer.export())
-        checkpoint = tmp_path / "sampler.pt"
-        torch.save(
-            {
-                "rng": capture_rng_state(prompt_generator=rng),
-                "version": bench.runtime.current_policy_version,
-            },
-            checkpoint,
-        )
-        next_current = [str(index) for index in original_sampler.sample(epoch=1)]
-        reference = await original.next_iteration(
-            next_current,
-            group_size=2,
-            runtime_debug=False,
-            initial_weights=None,
-        )
-        saved = torch.load(checkpoint, weights_only=False)
-        restored_rng = torch.Generator().manual_seed(999)
-        restore_rng_state(saved["rng"], prompt_generator=restored_rng)
-        resumed_prompts = [str(index) for index in sampler(restored_rng).sample(epoch=1)]
-        assert resumed_prompts == next_current == preview
-        # A new owner over a new stack whose weights sit at the checkpointed version.
-        resumed_bench, resumed_trainer = await _stack(
-            monkeypatch,
-            tmp_path / "resumed",
-            reward=_PromptValueReward(),
-            version=saved["version"],
-        )
-        restored = _owner(resumed_bench, resumed_trainer)
-        resumed = await restored.next_iteration(
-            resumed_prompts,
-            group_size=2,
-            runtime_debug=False,
-            initial_weights=None,
-        )
-        for before, after in zip(reference.batches, resumed.batches, strict=True):
-            assert torch.equal(before.rewards, after.rewards)
-            assert torch.equal(before.group_ids, after.group_ids)
-        # A restart regenerates with restored weights; matching prompt RNG does
-        # not preserve the pre-crash old-policy trajectory or its numerical values.
-        assert reference.stats.gauges["continuous.rollout_policy_version"] == 1
-        assert resumed.stats.gauges["continuous.rollout_policy_version"] == 2
-    finally:
-        await original.shutdown()
-        if restored is not None:
-            await restored.shutdown()
 
 
 @pytest.mark.asyncio

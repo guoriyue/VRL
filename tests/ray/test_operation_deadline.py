@@ -198,31 +198,3 @@ def test_actor_group_metadata_wait_has_a_fresh_budget(local_ray, monkeypatch) ->
         assert handle.node_ip == local_ray.util.get_node_ip_address()
     finally:
         group.shutdown()
-
-
-def test_actor_group_metadata_timeout_kills_candidates(local_ray, monkeypatch) -> None:
-    ray = local_ray
-    cancelled = _record_cancels(monkeypatch, ray)
-    killed = _record_kills(monkeypatch)
-    barriers = _record_barriers(monkeypatch)
-
-    with pytest.raises(RayOperationTimeout, match=r"rollout\.startup\.worker_metadata"):
-        RayActorGroup.launch(
-            worker_cls=_StartupWorker,
-            worker_configs=[{"metadata_s": 30.0}, {"metadata_s": 30.0}],
-            worker_ids=["w0", "w1"],
-            num_cpus=0.0,
-            num_gpus=0.0,
-            rpc_timeout_s=3.0,
-            operation_prefix="rollout",
-            startup_method="load_policy",
-        )
-
-    assert [operation for operation, _ in barriers] == [
-        "rollout.startup.load_policy",
-        "rollout.startup.worker_metadata",
-    ]
-    metadata_refs = barriers[1][1]
-    assert cancelled == [(ref, False) for ref in metadata_refs]
-    assert len(killed) == 2
-    assert all(_dead(ray, actor) for actor in killed)

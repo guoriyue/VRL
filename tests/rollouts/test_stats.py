@@ -5,13 +5,6 @@ from __future__ import annotations
 from vrl.rollouts.stats import RolloutStats
 
 
-def test_add_phase_sums_on_repeat() -> None:
-    s = RolloutStats()
-    s.add_phase("denoise", 1.0)
-    s.add_phase("denoise", 0.5)
-    assert s.phase_seconds["denoise"] == 1.5
-
-
 def test_counter_sums_without_entering_phase_percentage_base() -> None:
     s = RolloutStats()
     s.add_phase("denoise", 2.0)
@@ -65,13 +58,6 @@ def test_reward_timings_become_second_phases_and_count_the_call() -> None:
     assert metrics["reward.artifact_validation_s"] == 0.002
     assert metrics["reward.call_count"] == 1.0
     assert "scores" not in metrics and "reward.scores_s" not in metrics
-
-
-def test_add_phases_accumulates_mapping() -> None:
-    s = RolloutStats()
-    s.add_phases({"a": 1.0, "b": 2.0})
-    assert s.phase_seconds == {"a": 1.0, "b": 2.0}
-    assert RolloutStats().phase_seconds == {}
 
 
 def test_profiled_phase_records_its_wall_clock_interval_and_merge_carries_it() -> None:

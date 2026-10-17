@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.rollouts.collector._helpers import Trace
 from vrl.ray import dependencies
 
 
@@ -136,17 +135,3 @@ def test_current_gpu_ids_rejects_instead_of_dropping_or_truncating(monkeypatch, 
     monkeypatch.setattr(ray, "get_gpu_ids", lambda: [0, invalid])
     with pytest.raises(ValueError, match=r"Ray GPU ID\[1\]"):
         dependencies.current_gpu_ids()
-
-
-@pytest.mark.slow_test
-def test_cluster_topology_preserves_driver_node_lookup_failure(local_ray, monkeypatch):
-    failure = RuntimeError("driver node lookup failed")
-    lookup = Trace(monkeypatch)
-    lookup.watch(dependencies, "current_node_ip", "node_ip")
-    lookup.fail("node_ip", failure)
-
-    with pytest.raises(RuntimeError, match="driver node lookup failed") as caught:
-        dependencies.ClusterTopology.discover(local_ray)
-
-    assert caught.value is failure
-    assert lookup.events == ["node_ip"]

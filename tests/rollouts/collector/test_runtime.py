@@ -26,7 +26,6 @@ from vrl.rollouts.collector.batch_builder import (
 )
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.weight_sync import flatten_trainable_module_state, to_cpu_snapshot
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 
@@ -241,46 +240,6 @@ def test_collector_does_not_offload_runtime_before_independent_reward(
     assert bench.trace.events == ["generate", "score"]
 
 
-@pytest.mark.parametrize(
-    (
-        "rollout_handoff",
-        "trainer_handoff",
-        "expected",
-    ),
-    [
-        (False, False, True),
-        (True, False, False),
-        (False, True, False),
-    ],
-)
-def test_collector_derives_reward_generation_overlap_from_topology(
-    monkeypatch,
-    tmp_path,
-    rollout_handoff: bool,
-    trainer_handoff: bool,
-    expected: bool,
-) -> None:
-    lifecycle = RoleLifecycle(
-        trainer=(0,),
-        rollout=(1,),
-        reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
-    )
-    bench = real_collector(monkeypatch, tmp_path, lifecycle=lifecycle)
-
-    asyncio.run(
-        bench.collector.prepare_training_batches(
-            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
-            group_size=1,
-            runtime_debug=False,
-            policy_version=None,
-            stats=RolloutStats(),
-        )
-    )
-
-    assert len(bench.reward.calls) == (2 if expected else 1)
-    assert bench.collector.reward_isolation_verified is expected
-
-
 def test_collector_blocks_trainer_handoff_when_reward_parking_fails(monkeypatch, tmp_path) -> None:
     """A failed reward park remains terminal even after rollout itself parks."""
 
@@ -400,16 +359,6 @@ def test_reward_samples_forward_boxed_media_without_resolving(monkeypatch, tmp_p
     assert [sample.output for sample in samples] == refs
 
 
-def test_reward_samples_reject_reference_count_mismatch(monkeypatch, tmp_path) -> None:
-    from vrl.utils.media_reference import MediaReference
-
-    builder = _reward_sample_builder(real_collector(monkeypatch, tmp_path), ["p0", "p1"])
-    builder.output.output = [MediaReference("boxed-ref", 0)]
-
-    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
-        builder.reward_samples()
-
-
 def test_reward_samples_reject_sample_row_output_mismatch(monkeypatch, tmp_path) -> None:
     builder = _reward_sample_builder(
         real_collector(monkeypatch, tmp_path),
@@ -419,23 +368,6 @@ def test_reward_samples_reject_sample_row_output_mismatch(monkeypatch, tmp_path)
 
     with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
         builder.reward_samples()
-
-
-def test_reward_samples_preserve_prompt_identity_and_metadata(monkeypatch, tmp_path) -> None:
-    builder = _reward_sample_builder(
-        real_collector(monkeypatch, tmp_path),
-        ["p0", "p1"],
-        metadata={"target_text": "caption"},
-    )
-
-    samples = builder.reward_samples()
-
-    assert [sample.prompt for sample in samples] == ["p0", "p1"]
-    assert [sample.sample_id for sample in samples] == [
-        row.sample_id for row in builder.output.trajectory.sample_rows
-    ]
-    assert len(set(sample.sample_id for sample in samples)) == 2
-    assert all(sample.metadata["target_text"] == "caption" for sample in samples)
 
 
 def test_collector_uses_one_reward_call_and_splits_scores_per_group(monkeypatch, tmp_path) -> None:

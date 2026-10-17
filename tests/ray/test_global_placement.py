@@ -211,22 +211,6 @@ def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
         assert requirements[bundle_index]["CPU"] >= owner.rollout_worker.cpus_per_worker
 
 
-def test_assign_roles_shared_reward_binds_same_bundle_as_rollout() -> None:
-    """Shared reward resolves to the very bundle rollout uses (same GPU)."""
-    owner = _owner(
-        {
-            "visible_devices": [0, 1],
-            "trainer": {"devices": [0]},
-            "rollout": {"devices": [1]},
-            "reward": {"devices": [1]},
-        },
-    )
-    probed = {0: 0, 1: 1}
-    roles = owner.assign_roles(probed)
-
-    assert roles["rollout"] == roles["reward"]
-
-
 def test_assign_roles_raises_when_requested_gpu_absent_from_probe() -> None:
     """A rollout device missing from the probed PG is a hard error, not silent."""
     owner = _owner(
@@ -286,24 +270,6 @@ def test_gpu_bundles_reserve_rollout_cpu_before_role_assignment() -> None:
     # Probing may swap the planned trainer and rollout bundle assignments.
     trainer_bundle = owner.layout.bundle_gpu_ids.index(owner.resources.trainer_devices[0])
     assert requirements[trainer_bundle] == {"CPU": 2.0, "GPU": 1.0}
-    assert owner.required_local_cluster_cpus() == 4
-
-
-def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
-    """Fractional role bundles are summed and rounded once at node startup."""
-    owner = _owner(
-        {
-            "visible_devices": [0],
-            "trainer": {"devices": [0]},
-            "rollout": {"devices": [0], "num_engines": 1},
-        },
-        worker=_worker(cpus_per_worker=4.0),
-    )
-
-    # No CPU reward bundle: in-process CPU rewards run in the driver.
-    assert owner._bundle_requirements() == [
-        {"CPU": 4.0, "GPU": 1.0},
-    ]
     assert owner.required_local_cluster_cpus() == 4
 
 

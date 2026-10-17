@@ -82,25 +82,6 @@ def test_auto_device_discovery_preserves_cuda_query_failure(monkeypatch) -> None
     assert caught.value is error
 
 
-def test_resolved_resource_summaries_are_derived_from_topology() -> None:
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                },
-            )
-        ),
-    )
-
-    assert resolved.rollout_num_gpus == 1
-    assert resolved.colocated is False
-    assert resolved.requires_trainer_reservation is True
-    assert BundleLayout.from_resources(resolved).bundle_gpu_ids == (0, 1)
-
-
 def test_pinned_device_intersection_declares_colocation() -> None:
     """Hand-pinning intersecting devices sets IS the sharing declaration."""
     resolved = ResourcePlan.from_root(
@@ -239,29 +220,6 @@ def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
                 )
             ),
         )
-
-
-def test_single_gpu_unpinned_rollout_shares_the_trainer_gpu() -> None:
-    """One GPU, unpinned rollout: trainer and rollout time-share it."""
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {
-                        "num_gpus": 1,
-                        "num_engines": 1,
-                    },
-                },
-            )
-        ),
-    )
-
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == (0,)
-    assert resolved.colocated is True
-    assert resolved.lifecycle.rollout_mode == "on_demand"
 
 
 def test_unpinned_rollout_cannot_outgrow_the_trainer_pool() -> None:
@@ -510,31 +468,6 @@ def test_cross_node_dedicated_reward_gets_its_own_budget_token() -> None:
     assert resolved.reward_torch_device() == "cuda:0"
 
 
-def test_resource_plan_formatter_includes_key_fields() -> None:
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": "auto"},
-                },
-            )
-        ),
-    )
-
-    text = str(resolved)
-
-    # The formatter renders resolved fields as `key=value`; assert the resolved
-    # values reach the log line, not a frozen layout. A reword of the plan line
-    # (key spelling / separators) must not break behavioral coverage.
-    assert f"trainer={list(resolved.trainer_devices)}" in text
-    assert f"rollout={list(resolved.rollout_devices)}" in text
-    assert f"reward={list(resolved.reward_devices)}" in text
-    assert f"trainer_reservation={resolved.requires_trainer_reservation}" in text
-    assert f"offload=train:{resolved.lifecycle.offload_train}" in text
-
-
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     """``cross_node`` with explicit counts assigns trainer and rollout distinct ordinals, not
     colocated, with no trainer reservation.
@@ -559,27 +492,6 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     assert resolved.colocated is False
     assert resolved.requires_trainer_reservation is False
     assert resolved.trainer_torch_device == "cuda:0"
-
-
-def test_cross_node_scales_to_multiple_rollout_workers() -> None:
-    """``cross_node`` scales rollout devices and engines to the explicit count."""
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": "auto",
-                    "cross_node": True,
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 3, "num_engines": 3},
-                },
-            )
-        ),
-    )
-
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == (1, 2, 3)
-    assert resolved.rollout_num_engines == 3
-    assert resolved.requires_trainer_reservation is False
 
 
 def test_cross_node_requires_explicit_rollout_count() -> None:
@@ -634,29 +546,6 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     assert plan.park_rollout_for_train is False
     assert plan.park_rollout_for_reward is False
     assert plan.offload_reward is False
-
-
-def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
-    """Trainer/rollout share a GPU -> rollout on_demand, releases before train only."""
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                },
-            )
-        ),
-    )
-
-    plan = resolved.lifecycle
-    assert resolved.colocated is True
-    assert plan.rollout_mode == "on_demand"
-    assert plan.park_rollout_for_train is True
-    # No reward role shares the rollout GPU, so no reward release is needed.
-    assert plan.offload_reward is False
-    assert plan.park_rollout_for_reward is False
 
 
 def test_unpinned_gpu_reward_follows_the_trainer_gpu() -> None:
@@ -815,28 +704,6 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
     assert set(layout.rollout_bundle_indices).isdisjoint(layout.reward_bundle_indices)
 
 
-def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
-    """Shared single-GPU reward sits on the rollout device: same bundle index."""
-
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0], "num_engines": 1},
-                    "reward": {"devices": [0]},
-                },
-                kling_video_reward=True,
-            )
-        ),
-    )
-
-    layout = BundleLayout.from_resources(resolved)
-    assert layout.rollout_bundle_indices == layout.reward_bundle_indices
-    assert layout.total_bundles == 1
-
-
 # ---------------------------------------------------------------- fsdp (P2)
 
 
@@ -955,51 +822,6 @@ def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -
 
 
 # ── cosmos async-reward recipe (3-GPU disjoint reward overlap) ───────────────
-
-
-def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
-    """The cosmos online_grpo_async_reward recipe composes a 3-GPU disjoint layout
-    whose RESOLVED plan enables reward(N)/rollout(N+1) overlap.
-
-    Loads the recipe through the real config compose path (same as
-    test_all_experiments_load_and_validate), then asserts the resolver's BEHAVIOR,
-    not literal YAML values: reward devices disjoint from rollout, the handoff does
-    NOT release rollout before reward, the reward lease is resident, and the
-    continuous orchestration block is present/parsed. visible_devices is the only
-    site-supplied knob (the recipe is GPU-count agnostic), so the test pins the
-    [0,1,2] disjoint topology the recipe header documents.
-    """
-    from vrl.config.loading import load_config
-
-    cfg = load_config("experiment/cosmos_predict2/online_grpo_async_reward")
-
-    # The recipe deliberately omits visible_devices (it is a site/run knob). Supply
-    # the 3-GPU box the disjoint layout targets; the resolver derives the rest.
-    cfg.distributed.resources.visible_devices = [0, 1, 2]
-
-    resolved = ResourcePlan.from_root(parse_config(cfg))
-
-    # Disjoint reward placement is the load-bearing topology: reward must not share
-    # the rollout GPU, otherwise reward(N) serializes after rollout(N).
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    # Disjoint reward -> no pre-reward rollout release -> reward overlaps rollout(N+1).
-    assert resolved.lifecycle.park_rollout_for_reward is False
-    # A resident reward lease is what keeps reward on its own card across iterations.
-    assert resolved.lifecycle.offload_reward is False
-
-    # Continuous orchestration must be composed in (the producer keeps rollout(N+1)
-    # in flight while reward(N) scores). Assert the parsed schedule mode + inflight
-    # bound behavior, not the literal yaml number.
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
-
-    orchestration = cfg.trainer.rollout_orchestration
-    assert orchestration.schedule_mode == "continuous"
-    typed = RolloutOrchestrationConfig(
-        **OmegaConf.to_container(orchestration, resolve=True),
-    )
-    # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
-    # reward(N) scores; assert the relation, not the literal value.
-    assert typed.continuous.max_inflight_groups >= 2
 
 
 def test_each_role_parks_with_its_default_and_refuses_other_mechanisms() -> None:

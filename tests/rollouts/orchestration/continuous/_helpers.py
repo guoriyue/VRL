@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -73,24 +72,3 @@ async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
     runtime, loop = owner._ensure_thread()
     future = asyncio.run_coroutine_threadsafe(_snapshot(runtime), loop)
     return await owner._await_command(future)
-
-
-def wait_for_owner_progress(
-    owner: ContinuousRolloutThread,
-    *,
-    completed_above: int,
-    timeout_s: float = 5.0,
-) -> OwnerSnapshot:
-    """Block the calling thread, like synchronous backward does, until the owner
-    has completed more than ``completed_above`` items; return that snapshot."""
-
-    runtime, loop = owner._ensure_thread()
-    deadline = time.monotonic() + timeout_s
-    while True:
-        snapshot = asyncio.run_coroutine_threadsafe(_snapshot(runtime), loop).result(timeout_s)
-        state = snapshot.producer_state
-        if state is not None and state.completed_count > completed_above:
-            return snapshot
-        if time.monotonic() >= deadline:
-            raise AssertionError("owner made no progress while the trainer thread was blocked")
-        time.sleep(0.005)
