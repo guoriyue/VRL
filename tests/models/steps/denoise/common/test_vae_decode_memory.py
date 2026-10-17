@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any
@@ -228,24 +227,16 @@ def test_configured_section_without_target_fails() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("family", "model_module_name", "model_class_name"),
-    [
-        ("causvid", "vrl.models.families.causvid.model", "CausVidPipelineModel"),
-    ],
-)
 def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
     monkeypatch: pytest.MonkeyPatch,
-    family: str,
-    model_module_name: str,
-    model_class_name: str,
 ) -> None:
     """The runtime policy protects callers that bypass typed config validation."""
 
+    from vrl.models.families import sana
     from vrl.models.families.registry import get_model_family_entry
 
-    model_module = importlib.import_module(model_module_name)
-    monkeypatch.setattr(model_module, model_class_name, _TargetlessRuntimeModel)
+    family = "sana"
+    monkeypatch.setattr(sana.model, "SanaPipelineModel", _TargetlessRuntimeModel)
     entry = get_model_family_entry(family)
 
     bundle = entry.build_rollout(

@@ -20,16 +20,8 @@ every `vrl` Bazel target; the main repo (`vrl/`) needs no `sys.path` injection.
 | `videophy`       | `mplug_owl_video`                                            |
 | `VMBench`        | _(not imported — run via CLI)_ motion-eval benchmark; fold scores in with `--merge-json` |
 | `DynamicEval`    | _(not imported — run via CLI)_ dynamic-scene eval; fold scores in with `--merge-json` |
-| `CausVid`        | `causvid` causal-Wan model/runtime (in-process; released weights are non-commercial) |
-| `MAGI-1`         | _(not imported — isolated subprocess)_ official causal-chunk video generator |
 | `vdn-minimax-h3` | `src` — VDN-H3 hybrid window-softmax / linear attention (see the name note below) |
 
-The causal-chunk adapters enforce their audited source revisions at runtime:
-`CausVid@adb6a5ecd07666b4d0290042915c8406e6d5ce22` and
-`MAGI-1@0fcefdef8ce2df37a3b8890979433c06eb003328`. CausVid's source and
-released generator checkpoint are CC BY-NC-SA 4.0 / non-commercial (the
-checkpoint revision is separately pinned in the model preset); MAGI-1 source
-and weights are Apache-2.0.
 
 Not every vendored repo is exposed through `//third_party:vendored`: it lists
 only submodules that `vrl/` **imports** in-process. The two motion-eval

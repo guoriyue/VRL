@@ -154,10 +154,8 @@ classDiagram
     class BatchExecutorBase
     class DenoiseBatchExecutorBase
     class GenericDenoiseBatchExecutor
-    class ChunkAutoregressiveDenoiseExecutorBase
     GenerationBatchExecutor <|.. BatchExecutorBase : satisfies
     BatchExecutorBase <|-- DenoiseBatchExecutorBase
-    BatchExecutorBase <|-- ChunkAutoregressiveDenoiseExecutorBase
     DenoiseBatchExecutorBase <|-- GenericDenoiseBatchExecutor
     DenoiseBatchExecutorBase <|-- CosmosBatchExecutor
     DenoiseBatchExecutorBase <|-- Wan_2_1I2VBatchExecutor
@@ -166,14 +164,11 @@ classDiagram
     DenoiseBatchExecutorBase <|-- Cosmos3BatchExecutor
     DenoiseBatchExecutorBase <|-- MiniMaxH3BatchExecutor
     MiniMaxH3BatchExecutor <|-- VDNH3BatchExecutor
-    ChunkAutoregressiveDenoiseExecutorBase <|-- Magi1BatchExecutor
-    ChunkAutoregressiveDenoiseExecutorBase <|-- CausVidBatchExecutor
 ```
 
 | Binding | Base / generic | Gatherer | Data types | Families |
 |---|---|---|---|---|
 | `full_sequence` | `DenoiseBatchExecutorBase`; families with no custom per-batch logic get `GenericDenoiseBatchExecutor` via the registry default | `DenoiseBatchGatherer` | `DenoiseSamplingParams` (parsed per request by `DenoiseBatchExecutorBase.parse_sampling_params`), `DenoiseBatchResult`, `ReferenceConditionedBatches` (mixin for reference-image conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, qwen-image 2.1, minimax h3 / vdn h3; every other diffusion family (sana, flux, sd3.5, qwen-image, …) uses the generic executor via the registry default |
-| `chunk_autoregressive` | `ChunkAutoregressiveDenoiseExecutorBase` | `ChunkAutoregressiveDenoiseGatherer` | `ChunkAutoregressiveDenoiseResult` | magi-1, causvid. Here "chunk" means a **temporal chunk** of the video (causal-chunk generation) — a different concept from sample batches. |
 
 Below the executors, `steps/denoise/` holds the family-neutral inner loop
 (`DenoiseLoopConfig`, `DenoiseSDEParams`, `DenoiseLoopResult`,
@@ -295,7 +290,7 @@ prescribes.
 | `TrajectoryRolloutBatchBuilder`, `RolloutBatchBuildContext`, `RolloutBatch` | Scored outputs → training batches. |
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous runs a producer/consumer pipeline on `ContinuousRolloutThread`, with scored results stored by prompt slot in `PromptBatch`. `ContinuousRolloutSettings` carries the runtime settings, including the `max_stale_policy_versions` bound the producer and consumer check. |
 | `RolloutRuntimeCoordinator` | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`). |
-| `Evaluator` (ABC) → `DenoiseSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `TrajectorySignalBatch` via `TrajectorySignalBuilder`; the SDE evaluator's segment is a `FlowSDESignal` (proposal mean, std, sqrt(-dt), sigma always present), the chunk evaluator's a plain `SegmentSignal`. Objectives read the type's fields; there is no declared key list. |
+| `Evaluator` (ABC) → `DenoiseSDELogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `TrajectorySignalBatch` via `TrajectorySignalBuilder`; the SDE evaluator's segment is a `FlowSDESignal` (proposal mean, std, sqrt(-dt), sigma always present), the chunk evaluator's a plain `SegmentSignal`. Objectives read the type's fields; there is no declared key list. |
 | `RolloutStats` | Carries phase timing and throughput metrics; the trainer logs them and writes one `rollout_stats.jsonl` row per profiled step. |
 
 ---

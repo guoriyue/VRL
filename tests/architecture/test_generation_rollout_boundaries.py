@@ -125,13 +125,13 @@ def lazy_import():
     }
 
 
-def test_ray_working_dir_keeps_pinned_chunk_runtime_inputs() -> None:
+def test_ray_working_dir_keeps_vendored_runtime_inputs() -> None:
     """Exercise Ray's real ignore traversal for required vendored runtime files."""
 
-    if not (ROOT / "third_party" / "MAGI-1" / "inference").is_dir():
+    if not (ROOT / "third_party" / "vdn-minimax-h3" / "src").is_dir():
         # The traversal is over the source checkout Ray would package; a Bazel
-        # runfiles tree carries only the vendored subset, not the MAGI-1 tree.
-        pytest.skip("needs a source checkout with the MAGI-1 submodule")
+        # runfiles tree carries only the vendored subset, not the submodule tree.
+        pytest.skip("needs a source checkout with the vdn-minimax-h3 submodule")
 
     import logging
 
@@ -139,14 +139,12 @@ def test_ray_working_dir_keeps_pinned_chunk_runtime_inputs() -> None:
     from ray._private.runtime_env import packaging
 
     required = {
-        "third_party/CausVid/causvid/models/wan/causal_model.py",
-        "third_party/MAGI-1/example/4.5B/4.5B_base_config.json",
-        "third_party/MAGI-1/example/assets/special_tokens.npz",
-        "third_party/MAGI-1/inference/pipeline/entry.py",
+        "third_party/vdn-minimax-h3/src/__init__.py",
+        "third_party/videophy/videocon/training/pipeline_video/mplug_owl_video/__init__.py",
     }
     excluded = {
-        "third_party/CausVid/.git/HEAD",
-        "third_party/MAGI-1/.git/HEAD",
+        "third_party/vdn-minimax-h3/.git/HEAD",
+        "third_party/videophy/.git/HEAD",
         "third_party/DynamicEval/docs/static/videos/prompt_id_024_compressed.mp4",
         "third_party/VMBench/Grounded-SAM-2/assets/tracking_car.mp4",
     }
@@ -185,13 +183,13 @@ def test_ray_ignore_excludes_submodule_git_pointer_files(tmp_path: Path) -> None
         (ROOT / ".rayignore").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    source_root = tmp_path / "third_party" / "CausVid"
+    source_root = tmp_path / "third_party" / "vdn-minimax-h3"
     source_root.mkdir(parents=True)
     (source_root / ".git").write_text(
-        "gitdir: ../../../.git/modules/third_party/CausVid\n",
+        "gitdir: ../../../.git/modules/third_party/vdn-minimax-h3\n",
         encoding="utf-8",
     )
-    runtime_file = source_root / "causvid" / "models" / "runtime.py"
+    runtime_file = source_root / "src" / "models" / "runtime.py"
     runtime_file.parent.mkdir(parents=True)
     runtime_file.write_text("# runtime\n", encoding="utf-8")
     visited: set[Path] = set()
@@ -216,7 +214,6 @@ def test_trajectory_layer_stays_family_neutral() -> None:
         VRL_ROOT / "trajectory",
         forbidden=(
             "vrl.algorithms",
-            "vrl.generation.bindings.chunk_autoregressive",
             "vrl.generation.bindings.full_sequence",
             "vrl.generation.ray",
             "vrl.rewards",

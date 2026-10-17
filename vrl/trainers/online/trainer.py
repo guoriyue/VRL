@@ -750,8 +750,8 @@ class OnlineTrainer:
             )
 
         # Parity is a trainer/evaluator fact, not an objective-specific metric.
-        # Measure every replayed segment here so the chunk-autoregressive replay,
-        # trust-region variants and multi-segment signals cannot leave a false zero that
+        # Measure every replayed segment here so trust-region variants and
+        # multi-segment signals cannot leave a false zero that
         # lets the pre-optimizer correctness gate pass.
         fresh_parts: list[torch.Tensor] = []
         old_parts: list[torch.Tensor] = []
@@ -1073,20 +1073,10 @@ class OnlineTrainer:
         return [int(i * step_size) for i in range(train_timestep_count)]
 
     def _train_replay_indices(self, batch: RolloutBatch) -> list[int]:
-        """Return evaluator invocations for one replay batch.
-
-        Existing evaluators replay one denoise step per invocation and retain
-        the configured timestep subset.  Causal policies may instead require
-        one ordered pass over the complete trajectory; index ``0`` is then an
-        API-compatible sentinel and must not be interpreted as a selected
-        temporal chunk or denoise transition.
-        """
+        """Return the denoise-step indices one replay batch trains on."""
         timestep_fraction = self.config.timestep_fraction
         selection = self.config.timestep_selection
 
-        # Evaluator-less objectives replay one step per call like step evaluators.
-        if self.evaluator is not None and self.evaluator.replay_granularity == "trajectory":
-            return [0]
         if selection == "sde_window":
             # Flash-GRPO: train exactly the steps the rollout made stochastic.
             # The window is a GENERATION-time fact recorded in the trajectory,

@@ -46,19 +46,8 @@ def test_family_without_text_length_rejects_max_sequence_length() -> None:
     assert type(parsed.sampling) is VideoSamplingSection
 
 
-@pytest.mark.parametrize(
-    ("family", "field", "value"),
-    [
-        ("magi_1", "guidance_scale", 4.5),
-        ("sana", "fps", 16),
-    ],
-)
-def test_sampling_fields_are_rejected_outside_their_behavior_owner(
-    family: str,
-    field: str,
-    value: object,
-) -> None:
-    cfg = minimal_grpo_cfg(model={"family": family}, sampling={field: value})
+def test_sampling_fields_are_rejected_outside_their_behavior_owner() -> None:
+    cfg = minimal_grpo_cfg(model={"family": "sana"}, sampling={"fps": 16})
 
-    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+    with pytest.raises(ValueError, match=r"unknown sampling\.fps"):
         parse_config(cfg)

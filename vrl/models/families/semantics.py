@@ -12,12 +12,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-# Temporal organization of the selected executable denoise stage:
-# ``full_sequence`` updates all output positions together in each policy step;
-# ``chunk_autoregressive`` advances one temporal chunk from earlier batches.
-# Every registered policy is a continuous denoise step over a denoise-layout
-# trajectory, so the regime is the only routing fact.
-GenerationRegime = Literal["full_sequence", "chunk_autoregressive"]
+# Temporal organization of the selected executable denoise stage. Every
+# registered policy is a continuous denoise step that updates all output
+# positions together; the chunk-autoregressive regime (CausVid, MAGI-1) was
+# removed in 2026-10 and is archived at archive/main-20261016.
+GenerationRegime = Literal["full_sequence"]
 
 
 # ── Family task vocabulary ──────────────────────────────────────────────────

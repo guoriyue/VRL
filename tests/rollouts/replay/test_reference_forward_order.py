@@ -18,14 +18,8 @@ from torch import nn
 from vrl.generation import GenerationRequest
 from vrl.models.weight_snapshot import TrainableWeightsSnapshot
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
-    ChunkAutoregressiveDenoiseLogProbEvaluator,
-)
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
-from vrl.trajectory.builders import (
-    build_chunk_autoregressive_denoise_trajectory,
-    build_diffusion_trajectory,
-)
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 
 class _Scheduler:
@@ -86,31 +80,3 @@ def test_sde_evaluator_backpropagates_after_an_in_place_reference_forward() -> N
 
     assert model.linear.weight.grad is not None
     assert not torch.equal(signals.log_prob, signals.ref_log_prob)
-
-
-def test_chunk_evaluator_backpropagates_after_an_in_place_reference_forward() -> None:
-    request = _request()
-    shape = (2, 1, 2)  # sample, temporal_chunk, denoise_transition
-    trajectory = build_chunk_autoregressive_denoise_trajectory(
-        request=request,
-        sample_rows=request.sample_rows(),
-        observations=torch.ones(*shape, 3),
-        actions=torch.ones(*shape, 3),
-        old_log_prob=torch.zeros(shape),
-        mask=torch.ones(shape),
-        timesteps=torch.zeros(shape),
-        finalized_chunk_latents=torch.zeros(2, 1, 3),
-        replay_tensors={},
-        context={"model_family": "causvid"},
-    )
-    batch = RolloutBatch(rewards=torch.ones(2), group_ids=torch.arange(2), trajectory=trajectory)
-    model = _SnapshotPolicy("log_probs")
-
-    signals = (
-        ChunkAutoregressiveDenoiseLogProbEvaluator()
-        .evaluate(model, batch, 0, ref_model=model, need_ref=True)
-        .primary
-    )
-    (signals.log_prob - signals.ref_log_prob).sum().backward()
-
-    assert model.linear.weight.grad is not None

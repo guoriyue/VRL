@@ -1,8 +1,10 @@
-"""The flow-SDE evaluator's last denoise step receives no loss under any timestep selection.
+"""Which denoise steps one replay batch trains on.
 
-``strided`` with ``timestep_fraction < 1`` never reached the last step by floor
+The flow-SDE evaluator's last denoise step receives no loss under any timestep
+selection: ``strided`` with ``timestep_fraction < 1`` never reached it by floor
 arithmetic; ``timestep_fraction == 1`` and the random draws did. The trainer
-now drops it for the flow-SDE evaluator; other evaluators keep every step.
+now drops it for the flow-SDE evaluator; other evaluators keep every step. The
+step count itself is read off the primary action axis, not the observations.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from tests.trainers.online._helpers import _diffusion_rollout_batch, bare_trainer
 from vrl.math.denoise.flow_matching import flow_sde_scale_terms
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
+from vrl.trajectory.types import TrajectoryTensor
 
 
 def _indices(trainer, batch, fraction: float, selection: str) -> list[int]:
@@ -68,3 +71,21 @@ def test_flow_sde_training_skips_the_last_step_and_other_evaluators_keep_it() ->
     assert _indices(cps, batch, 1.0, "strided") == list(range(20))
     other = bare_trainer(evaluator=None)
     assert _indices(other, batch, 1.0, "strided") == list(range(20))
+
+
+def test_step_count_comes_from_the_primary_action_axis() -> None:
+    trainer = bare_trainer(evaluator=None)
+    batch = _diffusion_rollout_batch(
+        rewards=torch.zeros(1),
+        group_ids=torch.zeros(1, dtype=torch.long),
+        num_steps=4,
+    )
+    assert batch.trajectory is not None
+    batch.trajectory.segments["denoise"].tensors["observations"] = TrajectoryTensor(
+        name="observations",
+        value=torch.zeros(1, 99),
+        axes=("sample",),
+        role="observation",
+    )
+
+    assert _indices(trainer, batch, 0.5, "strided") == [0, 2]

@@ -52,10 +52,10 @@ def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
 
 
 # One row per distinct ``lora_defaults``: the shared ModelSection default
-# (sd3_5), WanModelSection (both wan entries) and CausVidModelSection.
+# (sd3_5) and WanModelSection (both wan entries).
 @pytest.mark.parametrize(
     ("family", "init_lora_weights", "autocast_adapter_dtype"),
-    [("sd3_5", "gaussian", True), ("wan_2_1", True, False), ("causvid", True, True)],
+    [("sd3_5", "gaussian", True), ("wan_2_1", True, False)],
 )
 def test_family_lora_defaults_are_resolved_by_the_build(
     family: str,

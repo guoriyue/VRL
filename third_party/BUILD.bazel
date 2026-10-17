@@ -10,15 +10,12 @@ py_library(
     srcs = glob(
         [
             "videophy/videocon/training/pipeline_video/mplug_owl_video/**/*.py",
-            "CausVid/causvid/**/*.py",
             "vdn-minimax-h3/src/**/*.py",
         ],
         allow_empty = True,
     ),
     data = glob(
         [
-            "CausVid/causvid/**/*.yaml",
-            "CausVid/causvid/**/*.json",
             "vdn-minimax-h3/src/**/*.yaml",
             "vdn-minimax-h3/src/**/*.json",
         ],
@@ -26,14 +23,7 @@ py_library(
     ),
     imports = [
         "videophy/videocon/training/pipeline_video",
-        "CausVid",
         "vdn-minimax-h3",
     ],
 )
 
-# The MAGI-1 official source tree (model.source_path), reached by the
-# adapter's subprocess; the dedicated interpreter is //third_party/magi_1:python.
-filegroup(
-    name = "magi_1_source",
-    srcs = glob(["MAGI-1/**"], exclude = ["MAGI-1/.git/**", "MAGI-1/.venv/**"], allow_empty = True),
-)

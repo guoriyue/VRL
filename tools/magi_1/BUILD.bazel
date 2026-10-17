@@ -1,3 +1,0 @@
-package(default_visibility = ["//visibility:public"])
-
-exports_files(["python.py", "preflight_test.py", "flash_attn_probe.py", "__init__.py"])

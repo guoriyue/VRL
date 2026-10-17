@@ -32,8 +32,6 @@ def test_every_registered_replay_model_satisfies_contract() -> None:
     """
     owners: dict[str, type] = {"DenoiseModelBase": DenoiseModelBase}
     for family, entry in FAMILY_REGISTRY.items():
-        if not entry.supports_policy_replay:
-            continue
         replay_cls = import_from_path(entry.family_build.replay_cls)
         if not issubclass(replay_cls, DenoiseModelBase):
             owners[family] = replay_cls

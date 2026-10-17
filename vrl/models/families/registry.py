@@ -66,33 +66,16 @@ class DenoiseFamilyBuild:
     # Replay model class. With ``transformer_classname`` the shared builder loads
     # its transformer and scheduler; without it the class loads itself through
     # ``replay_cls.from_build`` (non-diffusers loaders, extra schedulers, grafts).
-    replay_cls: str | None = None
+    replay_cls: str
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
-    # Non-diffusers families may own rollout assembly as well as replay
-    # assembly. The registry still carries ``model_cls`` as the importable
-    # family surface, while this hook owns checkpoint/component construction.
-    rollout_runtime_builder: str | None = None
     # Driver-side normalization for deployment inputs that must be resolved
     # before ModelBuild is serialized into a Ray launch config.
     model_build_normalizer: str | None = None
-    # Generation-only denoise families retain their concrete reason so trainer
-    # construction can fail before importing an upstream runtime or weights.
-    replay_unavailable_reason: str | None = None
 
     def __post_init__(self) -> None:
-        unavailable = self.replay_unavailable_reason is not None
-        if unavailable and not self.replay_unavailable_reason.strip():
-            raise ValueError("replay_unavailable_reason must be non-empty when set")
-        if (self.replay_cls is not None) == unavailable:
-            raise ValueError(
-                "denoise family build must declare exactly one of replay_cls "
-                "or replay_unavailable_reason",
-            )
         if self.transformer_classname is None and self.scheduler_classname is not None:
             raise ValueError("scheduler_classname requires transformer_classname")
-        if self.replay_cls is None and self.transformer_classname is not None:
-            raise ValueError("transformer_classname requires replay_cls")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,12 +105,6 @@ class ModelFamilyEntry:
             )
         if not self.gatherer_cls:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
-
-    @property
-    def supports_policy_replay(self) -> bool:
-        """Whether this entry declares a concrete trainer replay recipe."""
-
-        return self.family_build.replay_cls is not None
 
     def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
         """Gate multi-GPU engines on this family's sequence-parallel install.
@@ -310,11 +287,6 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"replay build family {build.family!r} does not match entry {self.family!r}",
             )
-        if not self.supports_policy_replay:
-            raise RuntimeError(
-                f"{self.family} is generation-only: {self.family_build.replay_unavailable_reason}",
-            )
-
         from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
 
         with build.pinned_to(expected_identity):
@@ -332,17 +304,13 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"rollout build family {build.family!r} does not match entry {self.family!r}",
             )
+        from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
         from vrl.utils.config import import_from_path
 
         with build.pinned_to(expected_identity):
-            if self.family_build.rollout_runtime_builder is not None:
-                bundle = import_from_path(self.family_build.rollout_runtime_builder)(build)
-            else:
-                from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
-
-                bundle = build_denoise_runtime_bundle(
-                    build, model_cls=import_from_path(self.family_build.model_cls)
-                )
+            bundle = build_denoise_runtime_bundle(
+                build, model_cls=import_from_path(self.family_build.model_cls)
+            )
         return bundle
 
     def new_gatherer(self) -> Any:
@@ -398,38 +366,6 @@ def _full_sequence_entry(
     )
 
 
-def _chunk_autoregressive_entry(
-    *,
-    family: str,
-    model_section_cls: str,
-    sampling_section_cls: str,
-    executor_cls: str,
-    build: DenoiseFamilyBuild,
-    task: str = "t2v",
-    runtime_capabilities: GenerationRuntimeCapabilities | None = None,
-) -> ModelFamilyEntry:
-    """Construct the shared typed binding for causal temporal-batch denoising."""
-
-    return ModelFamilyEntry(
-        family=family,
-        task=task,
-        generation_regime="chunk_autoregressive",
-        executor_cls=executor_cls,
-        gatherer_cls=(
-            "vrl.generation.bindings.chunk_autoregressive.gather:"
-            "ChunkAutoregressiveDenoiseGatherer"
-        ),
-        model_section_cls=model_section_cls,
-        sampling_section_cls=sampling_section_cls,
-        family_build=build,
-        runtime_capabilities=(
-            runtime_capabilities
-            if runtime_capabilities is not None
-            else GenerationRuntimeCapabilities()
-        ),
-    )
-
-
 _register_model_family(
     _full_sequence_entry(
         family="sd3_5",
@@ -453,43 +389,6 @@ _register_model_family(
     ),
 )
 
-_register_model_family(
-    _chunk_autoregressive_entry(
-        family="causvid",
-        model_section_cls="vrl.models.families.causvid.config:CausVidModelSection",
-        sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
-        executor_cls="vrl.models.families.causvid.runtime:CausVidBatchExecutor",
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.causvid.model:CausVidPipelineModel",
-            replay_cls="vrl.models.families.causvid.model:CausVidModel",
-        ),
-        runtime_capabilities=GenerationRuntimeCapabilities(
-            supports_torch_compile=True,
-        ),
-    ),
-)
-
-_register_model_family(
-    _chunk_autoregressive_entry(
-        family="magi_1",
-        model_section_cls="vrl.models.families.magi_1.config:Magi1ModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:MagiSamplingSection",
-        executor_cls="vrl.models.families.magi_1.runtime:Magi1BatchExecutor",
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.magi_1.model:Magi1SubprocessModel",
-            rollout_runtime_builder=(
-                "vrl.models.families.magi_1.runtime:build_magi_1_runtime_bundle"
-            ),
-            model_build_normalizer=(
-                "vrl.models.families.magi_1.model:normalize_magi_1_model_build"
-            ),
-            replay_unavailable_reason=(
-                "the official 4.5B runtime exposes final-video inference only and no "
-                "replayable transition likelihood or autograd model"
-            ),
-        ),
-    ),
-)
 
 _register_model_family(
     _full_sequence_entry(

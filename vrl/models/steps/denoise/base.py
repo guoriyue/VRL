@@ -422,8 +422,8 @@ class DenoiseModelBase(nn.Module, ABC):
         """Register a replacement trainable transformer (LoRA wrap, compile, …).
 
         Default: ``self.transformer`` is the only handle. Classes that keep a
-        second reference to the same module — the diffusers pipeline base,
-        CausVid's backend — override to keep both in sync.
+        second reference to the same module (the diffusers pipeline base)
+        override to keep both in sync.
         """
 
         self.transformer = transformer
@@ -493,8 +493,8 @@ class DenoiseModelBase(nn.Module, ABC):
     def trainable_modules(self) -> dict[str, Any]:
         """Named modules the trainer optimizes and weight sync targets.
 
-        One transformer is the family-wide shape; Wan (dual expert) and MAGI
-        (no trainable module at all) are the only overrides.
+        One transformer is the family-wide shape; Wan (dual expert) is the
+        only override.
         """
 
         return {"transformer": self._require_transformer()}
@@ -688,7 +688,7 @@ class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
     components, and ``from_build`` — the pipeline load plus the freeze and
     placement of the VAE and prompt encoders. A family overrides only where it
     genuinely differs (FLUX's dual-encoder discovery, SANA's scheduler swap).
-    Families not backed by a diffusers pipeline (CausVid's backend) build on ``DenoisePipelineModelBase`` directly.
+    Families not backed by a diffusers pipeline build on ``DenoisePipelineModelBase`` directly.
     """
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:

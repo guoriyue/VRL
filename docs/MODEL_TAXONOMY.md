@@ -12,20 +12,18 @@ RL actions determines its classification.
 
 | Field | Values | Meaning |
 |---|---|---|
-| `generation_regime` | `full_sequence`, `chunk_autoregressive` | Whether policy generation updates all output positions together or advances one temporal chunk from earlier chunks |
+| `generation_regime` | `full_sequence` | Policy generation updates all output positions together in every denoise step |
 
 Every registered policy is a continuous denoise step over a denoise-layout
 trajectory, so the regime is the only routing fact the registry carries. The
 token-autoregressive regime (Janus-Pro, NextStep-1, Emu3, GLM-Image, LlamaGen)
-was removed in 2026-09; the pre-removal tree is tagged
-`archive/token-ar-20260916`.
+was removed in 2026-09 (tag `archive/token-ar-20260916`); the
+chunk-autoregressive regime (CausVid, MAGI-1) was removed in 2026-10 (branch
+`archive/main-20261016`).
 
 These labels normalize paper-familiar vocabulary; they are not a formal
-standard defined by one paper. [ACDiT](https://arxiv.org/abs/2412.07720)
-uses “full-sequence diffusion”, “token-wise autoregression”, and “blockwise
-autoregressive”; [MAGI-1](https://arxiv.org/abs/2505.13211) uses chunk-wise
-autoregressive denoising. `causal` remains available for an actual dependency or
-attention property such as `causal_attention` or
+standard defined by one paper. `causal` remains available for an actual
+dependency or attention property such as `causal_attention` or
 `block_causal_attention`; it is not a generation-regime value. `full_sequence`
 also does not mean one-shot generation: a denoise policy still takes multiple
 solver steps, with each step updating the full output field.
@@ -35,27 +33,6 @@ solver steps, with each step updating the full output field.
 | Profile | Current families |
 |---|---|
 | `full_sequence` | SD3.5, Flux, Qwen-Image, SANA, Wan, Cosmos variants, MiniMax-H3 / VDN-H3 |
-| `chunk_autoregressive` | CausVid (trainable Gaussian re-noise); MAGI-1 (generation-only trajectory) |
-
-## Chunk-autoregressive support
-
-The first two integrations deliberately share the typed trajectory/executor
-boundary while retaining family-owned temporal schedules:
-
-| Family | Profile | Integration status |
-|---|---|---|
-| [CausVid](https://github.com/tianweiy/CausVid) ([paper](https://arxiv.org/abs/2412.07772), [weights](https://huggingface.co/tianweiy/CausVid/tree/main/autoregressive_checkpoint)) | `chunk_autoregressive` | Executable rollout and differentiable full-prefix GRPO replay. The released schedule performs three x0 predictions per latent chunk and records its two stochastic Gaussian re-noise transitions. Source and weight revisions are immutable; runtime requires an explicit acknowledgement of their CC BY-NC-SA 4.0 / non-commercial terms. DanceGRPO/Flow-DPPO/GRPO-Guard are rejected until their timestep/trust-region semantics are defined for the two policy axes. Real-weight RL promotion is still pending. |
-| [MAGI-1](https://github.com/SandAI-org/MAGI-1) ([paper](https://arxiv.org/abs/2505.13211), [weights](https://huggingface.co/sand-ai/MAGI-1)) | `chunk_autoregressive` | Executable generation through the pinned official 4.5B CLI in an isolated dependency environment. Its 24-video-frame chunks and diagonal multi-chunk denoise schedule are preserved upstream. The release exposes final-video inference under no-grad/inference mode, but no transition likelihood or autograd replay surface, so VRL records no fake actions/log-probs and rejects collector-to-trainer batch construction and replay. |
-
-Both are `FAMILY_REGISTRY` entries. `CausVid` is the RL-capable implementation;
-`MAGI-1` is generation-only until upstream exposes an autograd model
-and replayable transition distribution. Registration therefore does not imply
-identical trainability.
-
-Self-Forcing remains a related candidate only when named by exact executable
-variant. Its released chunk-wise DMD policy fits this profile, while the
-Self-Forcing family name alone does not: the method also includes a frame-wise
-variant with different generation regime.
 
 Two hybrid cases show why this scope matters:
 
@@ -80,8 +57,8 @@ parking, and frozen-component parking.
 The former flattened `collector_kind` has been removed. Production code reads
 `generation_regime` for policy classification and the explicit executor,
 gatherer, or runtime capability for implementation behavior. A future
-chunk-autoregressive denoise entry must therefore register that profile directly; it
-cannot pretend to be conventional full-sequence denoise merely to reuse a branch.
+non-full-sequence entry must register its own regime; it cannot pretend to be
+conventional full-sequence denoise merely to reuse a branch.
 
 ## Physical layout
 
@@ -100,7 +77,6 @@ vrl/models/
 vrl/generation/
   steps/denoise/              denoise config, hot loop, and TeaCache
   bindings/full_sequence/     full-sequence × denoise binding
-  bindings/chunk_autoregressive/ temporal-chunk × denoise contract
   execution/                  step-neutral sample-batch planning, pipelining, and workers
   ray/                        distributed lifecycle and transport
 ```
@@ -112,10 +88,7 @@ as routing directories. A family path is stable even if a later executable
 variant uses different policy semantics.
 
 There is intentionally no generalized `composition/` state-machine layer (the
-one that existed served only the removed token regime). The two causal-chunk families
-now prove a shared typed result/gather/replay-axis boundary, which lives in
-`bindings/chunk_autoregressive`; their cache lifecycles and denoise
-schedules remain family-owned because those algorithms differ materially.
+one that existed served only the removed token regime).
 `GenerationSampleBatch` is execution batching over requests/samples, not an
 autoregressive temporal chunk.
 

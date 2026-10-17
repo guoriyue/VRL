@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import asdict
-from types import SimpleNamespace
 
 import pytest
 from omegaconf import OmegaConf
@@ -203,8 +202,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
                 "vrl.generation.bindings.full_sequence.",
             ),
         )
-        if entry.supports_policy_replay:
-            assert callable(import_from_path(entry.family_build.replay_cls))
+        assert callable(import_from_path(entry.family_build.replay_cls))
 
 
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
@@ -257,39 +255,11 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({}, "exactly one of replay_cls or replay_unavailable_reason"),
-        (
-            {"transformer_classname": "Transformer", "replay_unavailable_reason": "gen only"},
-            "transformer_classname requires replay_cls",
-        ),
-        (
-            {"replay_cls": "example:Replay", "scheduler_classname": "Scheduler"},
-            "scheduler_classname requires transformer_classname",
-        ),
-    ],
-)
-def test_denoise_family_build_rejects_ambiguous_replay_modes(
-    kwargs: dict[str, str], message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        DenoiseFamilyBuild(model_cls="example:Model", **kwargs)
-
-
-def test_generation_only_entry_fails_before_dynamic_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entry = get_model_family_entry("magi_1")
-
-    def fail_import(path: str) -> None:
-        pytest.fail(f"generation-only replay unexpectedly imported {path}")
-
-    monkeypatch.setattr("vrl.utils.config.import_from_path", fail_import)
-
-    with pytest.raises(RuntimeError, match="final-video inference only"):
-        entry.build_replay(SimpleNamespace(family="magi_1"), expected_identity=None)
+def test_denoise_family_build_rejects_scheduler_without_transformer() -> None:
+    with pytest.raises(ValueError, match="scheduler_classname requires transformer_classname"):
+        DenoiseFamilyBuild(
+            model_cls="example:Model", replay_cls="example:Replay", scheduler_classname="Scheduler"
+        )
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:

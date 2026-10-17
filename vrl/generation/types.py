@@ -36,7 +36,7 @@ class GenerationInput:
     task_type: str | None = None
     reference_video: str | None = None
     # Ordered conditioning images. Single-image families (Wan I2V, Cosmos
-    # Video2World, MAGI-1 i2v) require exactly one; Qwen-Image-2.1 takes any number.
+    # Video2World) require exactly one; Qwen-Image-2.1 takes any number.
     reference_images: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:

@@ -65,7 +65,7 @@ There is no second adapter manager. This follows the separation in
 shared run inputs, with real family defaults kept separate.
 
 The lightweight family schemas own defaults: Gaussian initialization and
-PEFT adapter upcasting normally; Wan and CausVid retain `init_lora_weights=true`,
+PEFT adapter upcasting normally; Wan retains `init_lora_weights=true`,
 and Wan retains `autocast_adapter_dtype=false` for weight-sync dtype parity.
 Both initialization choices start with zero B weights; the A distribution
 and RNG recipe differ. `path` loads a trainable PEFT adapter after topology
@@ -115,7 +115,7 @@ registry does not maintain a second list of allowed memory fields. Support is
 checked when building the rollout model: CPU residency must be honored by the
 loader, and VAE decode options require an actual VAE memory target. Unsupported
 options therefore fail during model construction, potentially after loading
-weights. MAGI-1 rejects these options at its subprocess builder boundary.
+weights.
 
 After composition every entrypoint parses the merged config through the same
 typed boundary, and validation is split into three tiers, one module and one

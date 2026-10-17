@@ -16,7 +16,7 @@ The `vrl/models/families/` package root owns the import-light registry, names,
 and policy semantics; its `<family>/` subdirectories own concrete implementations.
 
 Every registry entry classifies the trainable policy by its
-`generation_regime` (`full_sequence` or `chunk_autoregressive`). See
+`generation_regime` (today always `full_sequence`). See
 [`MODEL_TAXONOMY.md`](MODEL_TAXONOMY.md).
 
 The existing `sd3_5` family is the smallest complete example.
@@ -120,9 +120,7 @@ configured family.
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 
-For a temporal-chunk policy, use `_chunk_autoregressive_entry` with an
-explicit family executor under `vrl.models.families.<family>.runtime`. Do not
-infer the generation regime from the checkpoint or selected algorithm.
+Do not infer the generation regime from the checkpoint or selected algorithm.
 
 ## 4. Add bundled config layers
 

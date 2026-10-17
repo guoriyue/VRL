@@ -188,11 +188,6 @@ def main() -> None:
 
     entry = get_model_family_entry(args.family)
     family = entry.family
-    if entry.generation_regime != "full_sequence":
-        raise SystemExit(
-            f"--family {family} does not expose a full-sequence denoise policy; this probe "
-            "drives that execution shape only",
-        )
     device = torch.device(
         args.device
         if args.device is not None

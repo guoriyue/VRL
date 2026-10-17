@@ -18,9 +18,8 @@ from vrl.generation.types import (
 class BatchExecutorBase:
     """Drive a planned request through the family batch step and gather it.
 
-    The two binding bases (full-sequence and chunk-autoregressive denoise)
-    differ in how ONE batch is produced, never
-    in how a request's batches are driven or assembled, so that half lives here:
+    A binding base differs in how ONE batch is produced, never in how a
+    request's batches are driven or assembled, so that half lives here:
 
     - ``forward_request`` is the in-process request entry (local tools, family
       tests, single-process e2e): the same ``forward_batch`` batch step

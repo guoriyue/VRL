@@ -352,35 +352,6 @@ def test_enabled_lora_requires_shape_fields() -> None:
         )
 
 
-def test_causvid_local_checkpoint_file_ignores_unused_member(
-    tmp_path: Path,
-) -> None:
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.write_bytes(b"checkpoint")
-    identity = resolve_checkpoint_model_identity(
-        _build(
-            family="causvid",
-            path=str(checkpoint),
-            revision=None,
-            checkpoint_file="ignored/model.pt",
-            base_model_path="example/base",
-            base_model_revision=_OTHER_COMMIT,
-            causvid_source_path="/location-only",
-            causvid_source_revision="c" * 40,
-            checkpoint_sha256="d" * 64,
-            accept_noncommercial_license=True,
-        ),
-    )
-
-    assert set(identity["sources"]) == {"base_model", "main"}
-    assert identity["build"] == {
-        "causvid_source_revision": "c" * 40,
-        "use_lora": False,
-    }
-    assert "ignored/model.pt" not in repr(identity)
-    assert "location-only" not in repr(identity)
-
-
 @pytest.mark.parametrize(
     ("family", "included", "first", "second"),
     [
@@ -503,28 +474,3 @@ def test_wan_trainable_transformer_topology_changes_identity() -> None:
         "transformer_2",
     ]
     assert low_noise_only != both_experts
-
-
-def test_causvid_protocol_defaults_match_explicit_values() -> None:
-    from vrl.models.families.causvid.config import (
-        CAUSVID_CHECKPOINT_FILE,
-        CAUSVID_SOURCE_REVISION,
-    )
-
-    shared = {
-        "family": "causvid",
-        "base_model_path": "example/base",
-        "base_model_revision": _OTHER_COMMIT,
-    }
-    omitted = resolve_checkpoint_model_identity(_build(**shared))
-    explicit = resolve_checkpoint_model_identity(
-        _build(
-            **shared,
-            checkpoint_file=CAUSVID_CHECKPOINT_FILE,
-            causvid_source_revision=CAUSVID_SOURCE_REVISION,
-        ),
-    )
-
-    assert omitted == explicit
-    assert omitted["build"]["checkpoint_file"] == CAUSVID_CHECKPOINT_FILE
-    assert omitted["build"]["causvid_source_revision"] == CAUSVID_SOURCE_REVISION

@@ -876,7 +876,7 @@ def test_model_not_resident_on_cuda_releases_the_pool_and_parks_by_moving(
     and the worker parks by moving. No family declaration is involved."""
     fake = _FakeCuMem()
     _install_cumem_pool(monkeypatch, fake)
-    core = _core(None, sleep_offload=True, family="magi_1")
+    core = _core(None, sleep_offload=True, family="sana")
     model = _SleepModel(device="cpu")
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
 
@@ -908,7 +908,7 @@ def test_executor_identity_failure_rolls_back_loaded_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_cumem_pool(monkeypatch, _FakeCuMem())
-    core = _core(None, sleep_offload=True, family="magi_1")
+    core = _core(None, sleep_offload=True, family="sana")
     core._build_executor = lambda: _Executor(  # type: ignore[method-assign]
         _SleepModel(),
         family="wrong",

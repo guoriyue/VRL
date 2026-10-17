@@ -7,10 +7,9 @@ Names distinguish the data being handled from the order in which it is generated
 | `Denoise` | Shared denoising execution and replay operations, including flow matching | `DenoiseModelBase`, `DenoiseSamplingParams`, `DenoiseBatchExecutorBase` |
 | `Diffusers` | An adapter to the Diffusers library | `DiffusersPipelineModelBase` |
 
-The generation regime describes execution order: `full_sequence` or
-`chunk_autoregressive`. The policy step kind describes the operation, and every
-remaining family's step is `denoise`. A chunk-autoregressive model denoises each
-chunk, so regime and step kind are separate dimensions.
+The generation regime describes execution order (today only `full_sequence`).
+The policy step kind describes the operation, and every remaining family's step
+is `denoise`; regime and step kind are separate dimensions.
 
 The token-autoregressive regime and its `Token` / `DiscreteToken` /
 `DecoderAttention` vocabulary were removed with the token-AR families

@@ -6,11 +6,7 @@ import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
-from vrl.trajectory.builders import (
-    build_chunk_autoregressive_denoise_trajectory,
-    build_chunk_autoregressive_generation_trajectory,
-    build_diffusion_trajectory,
-)
+from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.trajectory.types import TrajectoryBatch
 from vrl.trajectory.validation import TrajectoryValidationError
 
@@ -109,49 +105,10 @@ def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int
         context={},
     )
 
-    chunk_count = 2
-    transition_count = 3
-    chunk_policy_shape = (batch_size, chunk_count, transition_count)
-    chunk_denoise = build_chunk_autoregressive_denoise_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        observations=torch.zeros(*chunk_policy_shape, 1),
-        actions=torch.ones(*chunk_policy_shape, 1),
-        old_log_prob=torch.zeros(chunk_policy_shape),
-        mask=torch.ones(chunk_policy_shape),
-        timesteps=torch.zeros(chunk_policy_shape),
-        finalized_chunk_latents=torch.zeros(batch_size, chunk_count, 1),
-        replay_tensors={},
-        context={},
-    )
-
-    generation_chunk_count = 4
-    chunk_generation = build_chunk_autoregressive_generation_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        output=torch.zeros(batch_size, 3, 4, 4),
-        temporal_chunk_count=generation_chunk_count,
-        context={},
-    )
-
     return [
         (
             "diffusion",
             diffusion,
             {"sample": batch_size, "denoise": diffusion_steps},
-        ),
-        (
-            "chunk_denoise",
-            chunk_denoise,
-            {
-                "sample": batch_size,
-                "temporal_chunk": chunk_count,
-                "denoise_transition": transition_count,
-            },
-        ),
-        (
-            "chunk_generation",
-            chunk_generation,
-            {"sample": batch_size, "temporal_chunk": generation_chunk_count},
         ),
     ]

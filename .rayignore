@@ -1,23 +1,11 @@
 # Keep Ray runtime_env packages code-shaped. Large local assets are mounted/read
 # from disk when needed, not shipped through GCS to every worker.
-docs/papers/
 datasets/
 outputs/
 
 # Vendored model runtimes are shipped to Ray workers, but their nested Git
-# histories and research-only assets are not runtime inputs. Keep CausVid's
-# ``causvid/models`` code and MAGI-1's inference/config files (including
-# example/assets/special_tokens.npz) inside the package.
+# histories are not runtime inputs.
 **/.git
-third_party/CausVid/causvid/evaluation/
-third_party/CausVid/distillation_data/
-third_party/CausVid/docs/
-third_party/CausVid/sample_dataset/
-third_party/CausVid/tests/
-third_party/MAGI-1/comfyui/
-third_party/MAGI-1/figures/
-third_party/MAGI-1/example/assets/image.jpeg
-third_party/MAGI-1/example/assets/prefix_video.mp4
 
 # Existing benchmark submodules contain documentation/demo media that is never
 # imported by rollout workers. Excluding it leaves durable headroom under Ray's

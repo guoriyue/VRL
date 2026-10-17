@@ -21,11 +21,9 @@ from vrl.config.model_schema import (
 from vrl.config.schema import (
     parse_config,
 )
-from vrl.models.families.causvid.config import CausVidModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
     CosmosPredict25ModelSection,
 )
-from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.names import _FAMILY_BY_ALIAS
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
@@ -159,49 +157,17 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
     assert parsed.model.skip_text_encoder is True
 
 
-@pytest.mark.parametrize(
-    ("family", "section_cls", "payload"),
-    [
-        (
-            "causvid",
-            CausVidModelSection,
-            {
-                "accept_noncommercial_license": True,
-                "base_model_path": "Wan-AI/Wan2.1-T2V-1.3B",
-                "base_model_revision": "base-revision",
-                "causvid_source_path": "third_party/CausVid",
-                "causvid_source_revision": "source-revision",
-                "checkpoint_file": "autoregressive_checkpoint/model.pt",
-                "checkpoint_sha256": "digest",
-            },
-        ),
-        (
-            "magi_1",
-            Magi1ModelSection,
-            {
-                "checkpoint_path": None,
-                "config_path": "example/4.5B/4.5B_base_config.json",
-                "python_executable": "third_party/MAGI-1/.venv/bin/python",
-                "source_path": "third_party/MAGI-1",
-                "source_revision": "source-revision",
-                "t5_pretrained_path": None,
-                "timeout_seconds": 3600,
-                "vae_pretrained_path": None,
-            },
-        ),
-    ],
-)
-def test_family_owned_denoise_keys_select_their_public_sections(
-    family: str,
-    section_cls: type[ModelSection],
-    payload: dict[str, object],
-) -> None:
-
-    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+def test_family_owned_denoise_keys_select_their_public_sections() -> None:
+    payload = {
+        "vdn_checkpoint": "OpenVDN/vdn-h3",
+        "vdn_revision": "revision",
+        "softmax_backend": "ref",
+    }
+    cfg = OmegaConf.create({"model": {"family": "vdn_h3", **payload}})
 
     assert unknown_keys(cfg) == []
     parsed = parse_config(cfg)
-    assert type(parsed.model) is section_cls
+    assert type(parsed.model) is VDNH3ModelSection
     assert parsed.model is not None
     parsed_payload = parsed.model.model_dump(exclude_unset=True)
     assert {key: parsed_payload[key] for key in payload} == payload

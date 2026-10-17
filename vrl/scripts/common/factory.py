@@ -30,12 +30,6 @@ class AlgorithmEvaluatorPair:
     ) -> AlgorithmEvaluatorPair:
         """Build the algorithm/evaluator pair for a strict online recipe."""
 
-        family_entry = built.family
-        if not family_entry.supports_policy_replay:
-            raise RuntimeError(
-                f"{family_entry.family} is generation-only: its runtime exposes no "
-                "trainable actions, transition likelihoods, or policy replay evaluator",
-            )
         algorithm_config = built.algorithm
         # BuiltConfigs.from_cfg requires the algorithm section (and a reward for every
         # online kind); run_online_recipe refuses an offline kind's missing online trainer
@@ -56,7 +50,6 @@ class AlgorithmEvaluatorPair:
             # trainer's random timestep selection + multi-reward); flow_dppo /
             # grpo_guard are trust-region variants whose loss reads the rollout
             # proposal mean (config rules require it to be stored).
-            is_chunk_autoregressive = family_entry.generation_regime == "chunk_autoregressive"
             denoise = (
                 RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()
             )
@@ -66,40 +59,6 @@ class AlgorithmEvaluatorPair:
                 algorithm = algorithm_class(kind)(algorithm_config, scheduler=scheduler)
             else:
                 algorithm = algorithm_class(kind)(algorithm_config)
-            if is_chunk_autoregressive:
-                if algorithm.sft_weight > 0:
-                    raise ValueError(
-                        f"{family_entry.family} grouped causal-chunk replay does not "
-                        "implement the full-sequence scheduler target required by "
-                        "algorithm.sft_weight; set sft_weight=0",
-                    )
-                if precision.denoise_math != "fp32":
-                    raise ValueError(
-                        f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
-                        "policy; precision.denoise_math.dtype overrides are not "
-                        "implemented for grouped causal-chunk replay",
-                    )
-                if kind == "dance_grpo":
-                    raise ValueError(
-                        f"{family_entry.family} uses one ordered full-trajectory replay; "
-                        "DanceGRPO's random denoise-timestep subset is not defined for "
-                        "the [temporal_chunk, denoise_transition] policy axes. Use grpo.",
-                    )
-                if kind in {"flash_grpo", "flow_dppo", "grpo_guard"}:
-                    raise ValueError(
-                        f"{family_entry.family} uses grouped causal-chunk replay; "
-                        f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "
-                        "the batch re-noise policy does not expose. Use grpo.",
-                    )
-                from vrl.rollouts.evaluators.denoise import (
-                    ChunkAutoregressiveDenoiseLogProbEvaluator,
-                )
-
-                return cls(
-                    algorithm=algorithm,
-                    evaluator=ChunkAutoregressiveDenoiseLogProbEvaluator(),
-                )
-
             math_dtype = resolve_torch_dtype(precision.denoise_math)
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
                 DenoiseSDELogProbEvaluator,

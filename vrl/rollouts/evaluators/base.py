@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
@@ -19,15 +19,11 @@ class Evaluator(ABC):
     Replay ownership lives on the model; evaluators never route train-time
     replay through collectors.
 
-    ``replay_granularity`` is ``'step'`` for evaluators that recompute one
-    denoise transition per call and ``'trajectory'`` when causal state requires
-    one ordered replay over every policy action.
     ``supports_deferred_replay_tensor_move`` says the evaluator moves the replay
     tensors it reads to the device itself, so the trainer can skip the eager
     whole-batch move.
     """
 
-    replay_granularity: ClassVar[Literal["step", "trajectory"]] = "step"
     supports_deferred_replay_tensor_move: ClassVar[bool] = False
 
     @abstractmethod

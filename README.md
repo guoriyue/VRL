@@ -3,19 +3,18 @@
 RL post-training for visual generative models.
 
 `visual-rl` trains visual generative policies with one layered-config trainer and
-one Collector -> Evaluator -> Algorithm loop. Every policy is a denoise step;
-policies are classified by generation regime (`full_sequence` or
-`chunk_autoregressive`), which fixes the trajectory schema and per-batch control
-flow. Token-autoregressive image families were removed in 2026-09 (archived at
-tag `archive/token-ar-20260916`).
+one Collector -> Evaluator -> Algorithm loop. Every policy is a full-sequence
+denoise step, which fixes the trajectory schema and per-batch control flow.
+Token-autoregressive image families were removed in 2026-09 (tag
+`archive/token-ar-20260916`); the chunk-autoregressive video families in
+2026-10 (branch `archive/main-20261016`).
 Recipes are marked as validated only after real training runs show optimizer
 updates, non-flat rewards, generated artifacts, and changed weights.
 
 ## Why It Exists
 
-- **One training loop.** The same online RL loop drives full-sequence and
-  chunk-autoregressive denoise policies instead of keeping a separate training
-  script per model.
+- **One training loop.** The same online RL loop drives every denoise policy
+  instead of keeping a separate training script per model.
 - **Layered configs.** Model, sampling, reward, dataset, algorithm, rollout, and
   distributed choices are composed from bundled YAML layers under
   `vrl/config/presets/`.
@@ -70,8 +69,6 @@ positioning and roadmap.
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
 | **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: needs multi-GPU FSDP; CPU tiny-real parity only; diffusers>=0.40) |
 | **VDN-H3** (VideoDeltaNet on MiniMax-H3) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (hybrid window-softmax + linear attention grafted on the H3 backbone; 8-NFE distilled artifact; vendored submodule; CPU tiny-real only) |
-| **CausVid** | text -> video | chunk_autoregressive / denoise | GRPO | 🔌 Integrated (real-weight proof pending; non-commercial weights) |
-| **MAGI-1 4.5B** | text/image/video -> video | chunk_autoregressive / denoise | generation only | 🔌 Integrated (isolated upstream runtime; no replay API) |
 
 `FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing
 recipe readiness as well, so a registered family remains Integrated until a complete
@@ -152,7 +149,7 @@ environment any more.
 ### Vendored submodules
 
 Some model/reward backends are upstream code that ships no Python packaging
-(videophy's `mplug_owl_video`, CausVid, VDN-H3). They
+(videophy's `mplug_owl_video`, VDN-H3). They
 live as git submodules under `third_party/`; `//third_party:vendored` puts their
 source roots on the import path of every `vrl` target, so `vrl/` contains no
 `sys.path` injection. See [`third_party/README.md`](third_party/README.md).
@@ -170,18 +167,6 @@ stack at fetch time (`tools/dependencies/uv_exports.bzl`) and builds the same
 | `//:vrl_shared_gpu` | both of the above (identical shared pins) | shared-GPU topologies: model stack plus vLLM's allocator (real-weight lane) |
 | `//:vrl_videoeval` | core + videoeval + test (tokenizers 0.13.3 built from source with a pinned Rust toolchain) | `//:video_reward_suite` (VBench) |
 
-Not migrated: **MAGI-1** (its official code needs a flash-attn 2.4.2 / torch 2.4 source build;
-create `third_party/MAGI-1/.venv` from that submodule's requirements and point
-`model.python_executable` at it). Ray never uploads virtual environments: the
-driver resolves a path-like executable to an absolute path before launch, and
-every rollout node must provide that path through a shared mount or container
-image. The official MAGI 4.5B process fixes the DiT to BF16 and T5 to FP32, so
-its launch config must use rollout `dtype: bf16`, `outer_autocast: false`,
-prompt-encoder `dtype: fp32`, and `float32_precision: ieee`.
-
-CausVid stays in the main stack, but its pinned Wan cross-attention calls
-FlashAttention directly, which is not in the lock; CausVid rollouts need a
-CUDA-compatible `flash-attn` build in the environment that runs them.
 
 ### Commands
 

@@ -26,21 +26,13 @@ def test_previous_policy_requirements_belong_to_algorithm(kind: str) -> None:
                 algorithm={"kind": kind},
             ),
         )
-    # Any full-sequence family with a replay recipe qualifies; a chunk-autoregressive
-    # policy has no full-sequence replay forward to evaluate the clean latent through.
+    # Any full-sequence family with a replay recipe qualifies.
     parse_config(
         minimal_grpo_cfg(
             model={"family": "sana", "use_lora": True},
             algorithm={"kind": kind},
         ),
     )
-    with pytest.raises(ValueError, match="full-sequence denoise replay forward"):
-        parse_config(
-            minimal_grpo_cfg(
-                model={"family": "causvid", "use_lora": True},
-                algorithm={"kind": kind},
-            ),
-        )
 
 
 def test_previous_adapter_is_not_a_user_model_setting() -> None:

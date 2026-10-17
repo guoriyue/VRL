@@ -42,13 +42,12 @@ from tests import ci_envs
 # The vendored submodule source roots. Bazel puts these on the import path
 # through `imports` in third_party/BUILD.bazel (which replaced the editable
 # third_party install); plain `pytest` from the synced venv has to do the
-# same, or every CausVid / VDN test that imports the vendored code
+# same, or every VDN test that imports the vendored code
 # fails on an import that CI never sees. Kept as the same list, in the same
 # order, so the two stay one contract.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDORED_SOURCE_ROOTS = (
     "videophy/videocon/training/pipeline_video",
-    "CausVid",
     "vdn-minimax-h3",
 )
 for _root in VENDORED_SOURCE_ROOTS:

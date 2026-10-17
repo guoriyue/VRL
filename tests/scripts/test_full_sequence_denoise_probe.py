@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -54,30 +53,6 @@ def test_probe_uses_existing_cosmos_lora_preset():
     assert build.lora.rank == 32
     assert build.model_name_or_path == "/local/pinned/cosmos"
     assert build.model_config["skip_text_encoder"] is False
-
-
-def test_generate_rejects_non_full_sequence_family_before_build(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "generate",
-            "--family",
-            "magi_1",
-            "--path",
-            "unused",
-            "--dtype",
-            "bf16",
-            "--float32-precision",
-            "tf32",
-            "--outer-autocast",
-        ],
-    )
-
-    with pytest.raises(SystemExit, match="does not expose a full-sequence denoise policy"):
-        generate.main()
 
 
 def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -> None:

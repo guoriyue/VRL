@@ -104,19 +104,8 @@ class MiniMaxH3SamplingSection(TextEncodedVideoSamplingSection):
     guidance_scale: Literal[1.0] | None = None
 
 
-class MagiSamplingSection(SamplingSection):
-    """Inputs mapped into MAGI-1's isolated official inference runtime."""
-
-    fps: Any = None
-    height: Any = None
-    num_frames: Any = None
-    num_steps: Any = None
-    width: Any = None
-
-
 __all__ = [
     "DenoiseImageSamplingSection",
-    "MagiSamplingSection",
     "MiniMaxH3SamplingSection",
     "QwenImage21SamplingSection",
     "SamplingSection",
