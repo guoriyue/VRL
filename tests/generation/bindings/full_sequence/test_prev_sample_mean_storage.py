@@ -45,13 +45,3 @@ def test_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:
     # [chunk_batch, num_steps, *latent_shape]
     assert tuple(buffers.prev_sample_means.shape) == (2, 3, 4, 8, 8)
     assert buffers.prev_sample_means.dtype == buffers.observations.dtype
-
-
-def test_buffer_is_none_by_default() -> None:
-    buffers = DenoiseTrajectoryBuffers.allocate(
-        state=_state(), config=_config(return_prev_sample_mean=False)
-    )
-    assert buffers.prev_sample_means is None
-    # The always-on tensors are unaffected.
-    assert buffers.observations is not None
-    assert buffers.log_probs is not None

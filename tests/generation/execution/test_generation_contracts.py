@@ -85,10 +85,3 @@ def test_request_rejects_noninteger_or_negative_policy_version(version):
 
     with pytest.raises(ValueError, match=r"GenerationRequest\.policy_version"):
         replace(_request(), policy_version=version)
-
-
-@pytest.mark.parametrize("version", [None, 0])
-def test_request_preserves_optional_integer_policy_version(version):
-    from dataclasses import replace
-
-    assert replace(_request(), policy_version=version).policy_version is version

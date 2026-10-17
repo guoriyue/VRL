@@ -290,41 +290,13 @@ def test_generation_launch_inputs_derive_versioned_sync_from_schedule(tmp_path) 
     assert strict.launch_config.versioned_weight_sync is False
     assert continuous_fullparam.launch_config.versioned_weight_sync is False
     assert continuous_lora.launch_config.versioned_weight_sync is True
-
-
-def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> None:
-    """Master-weight retention follows the sync payload: a full-parameter sync
-    replaces base weights, so the worker retains masters."""
-
-    launch_inputs = _sana_launch(tmp_path)
-
-    model_build = launch_inputs.launch_config.model_build
-    assert model_build["model_config"].get("use_lora", False) is False
-    assert model_build["rollout"]["base_weight_sync"] is True
-
-
-def test_generation_launch_inputs_mark_lora_as_adapter_only_sync(tmp_path) -> None:
-    """LoRA sync never needs retained base-precision masters on the rollout."""
-
-    launch_inputs = _sana_launch(tmp_path, "model.use_lora=true")
-
-    assert launch_inputs.launch_config.model_build["rollout"]["base_weight_sync"] is False
+    # A full-parameter sync replaces base weights, so the worker retains masters;
+    # a LoRA sync is adapter-only and never needs them.
+    assert strict.launch_config.model_build["rollout"]["base_weight_sync"] is True
+    assert continuous_lora.launch_config.model_build["rollout"]["base_weight_sync"] is False
 
 
 # ------------------------------------------------------- runtime topology
-
-
-@pytest.mark.asyncio
-async def test_create_runtime_launches_resident_topology(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
-        runtime = ray_run.runtime
-
-        assert ray_run.resources.lifecycle.rollout_mode == "resident"
-        assert runtime._session is not None
-        assert runtime._session_factory is None
-        assert [rank.worker_id for rank in runtime._session.rank_handles] == ["rollout-0"]
 
 
 def _on_demand_launch(

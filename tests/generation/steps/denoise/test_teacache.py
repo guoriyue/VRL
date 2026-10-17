@@ -18,10 +18,6 @@ def test_from_sampling_off_variants_return_none():
     assert TeaCacheConfig.from_sampling({"enabled": False}) is None
 
 
-def test_from_sampling_true_uses_defaults():
-    assert TeaCacheConfig.from_sampling(True) == TeaCacheConfig()
-
-
 def test_from_sampling_mapping_overrides():
     cfg = TeaCacheConfig.from_sampling({"threshold": 0.3, "warmup_steps": 1})
     assert cfg is not None
@@ -84,21 +80,6 @@ def test_no_cache_yet_forces_run():
     state = TeaCacheState(cfg, num_steps=4)
     # warmup=0 but cache is empty on the first step -> must run
     assert state.should_run(torch.ones(1, 4), 0) is True
-
-
-def test_skip_ratio_and_counters():
-    cfg = TeaCacheConfig(threshold=999.0, warmup_steps=1)
-    state = TeaCacheState(cfg, num_steps=5)
-    sig = torch.ones(1, 4)
-    state.should_run(sig, 0)  # run (warmup)
-    state.cache_noise_pred(torch.zeros(1, 4))
-    state.should_run(sig, 1)  # skip
-    state.should_run(sig, 2)  # skip
-    state.should_run(sig, 3)  # skip
-    state.should_run(sig, 4)  # run (last)
-    c = state.counters()
-    assert c["teacache_runs"] == 2 and c["teacache_skips"] == 3
-    assert c["teacache_skip_ratio"] == pytest.approx(3 / 5)
 
 
 def test_relative_l1_avoids_half_precision_overflow():

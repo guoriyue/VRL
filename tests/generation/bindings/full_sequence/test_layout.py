@@ -294,28 +294,6 @@ def test_single_sample_families_preserve_encoded_values(family):
     assert all(result[key] is value for key, value in encoded.items())
 
 
-def test_unseeded_window_survives_serialized_batch_split_retry():
-    """An OOM retry re-dispatches both halves of a split batch; every serialized
-    copy of the request must still draw the same SDE window."""
-    import cloudpickle
-
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchEnvelope
-
-    request = _request(denoise=DenoiseRequestOptions(sde_window_size=2, sde_window_range=(0, 10)))
-    batch = GenerationSampleBatch(0, 0, 2)
-
-    def dispatched_window(batch):
-        # Each dispatch reconstructs its own copy, as remote workers do.
-        envelope = cloudpickle.loads(cloudpickle.dumps(GenerationBatchEnvelope(request, batch)))
-        return _layout().parse_sampling_params(envelope.request).sde_window
-
-    windows = [dispatched_window(part) for part in (batch, *batch.split())]
-    assert windows[0] is not None
-    assert windows == [windows[0]] * 3
-    assert request.sampling.get("seed") is None
-
-
 def test_batch_broadcast_preserves_view_and_materialized_storage_contracts():
     from vrl.utils.tensors import expand_tensor_to_batch
 

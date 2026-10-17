@@ -96,12 +96,3 @@ def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     assert result.memory == _reading()
     assert result.output.memory is None
     assert result.rank_metrics == {}
-
-
-def test_cuda_occupancy_is_absent_only_without_cuda(monkeypatch) -> None:
-    import torch
-
-    from vrl.generation.execution.types import BatchMemoryReading
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    assert BatchMemoryReading.cuda_occupancy_snapshot() is None

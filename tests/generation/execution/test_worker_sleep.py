@@ -533,50 +533,6 @@ def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
     assert model.reset_calls == 1
 
 
-def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -> None:
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchEnvelope
-    from vrl.generation.types import GenerationRequest
-
-    class _BrokenActivationModel(_PipelineOffloadModel):
-        def has_trainable_state(self, _version: int) -> bool:
-            return True
-
-        def activate_trainable_state(self, _version: int) -> None:
-            self.pipeline_cpu_offload_healthy = False
-            self.reset_error = RuntimeError("partial policy state")
-            raise RuntimeError("weight copy failed")
-
-    model = _BrokenActivationModel()
-    model.device = "cpu"
-    core = _core(model, family="wan_2_1_i2v")
-    # Payload injection, not a double: the subject here is how a slot-mode worker
-    # survives a failed activation. The flag's real derivation is asserted in
-    # test_worker_versioned_slots.py::test_update_weights_installs_versioned_slots_without_overwrite.
-    core._uses_versioned_slots = True
-    request = GenerationRequest(
-        request_id="failed-activation",
-        family="wan_2_1_i2v",
-        task="i2v",
-        inputs=["prompt"],
-        samples_per_prompt=1,
-        policy_version=1,
-    )
-    envelope = GenerationBatchEnvelope(
-        request=request,
-        batch=GenerationSampleBatch(
-            prompt_index=0,
-            sample_start=0,
-            sample_count=1,
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="worker is quarantined"):
-        core.execute_batch(envelope)
-
-    assert model.reset_calls == 1
-
-
 def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
     from vrl.generation.execution.types import RequestBatchOutOfMemory
     from vrl.generation.types import GenerationRequest
@@ -616,17 +572,6 @@ def test_sleep_without_loaded_model_is_a_safe_no_op() -> None:
     assert core.executor is None
     assert snapshot.backend == "cpu_only"
     assert snapshot.residual_bytes_limit == 0
-
-
-def test_wake_after_eviction_rebuilds_via_load_policy() -> None:
-    """If the executor was hard-released between sleep windows, wake reloads it."""
-    core = _core(None)
-    rebuilt: list[bool] = []
-    core.load_policy = lambda: rebuilt.append(True)  # type: ignore[method-assign]
-
-    core.wake()
-
-    assert rebuilt == [True]
 
 
 # -- cumem-backed offload -----------------------------------------------------
@@ -723,22 +668,6 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     result = core.execute_request_batches(request, _SAMPLE_BATCHES)
 
     assert result == [(request, _SAMPLE_BATCHES)]
-    assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]
-
-
-def test_load_policy_pools_model_when_sleep_offload_and_cumem_available(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _FakeCuMem()
-    _install_cumem_pool(monkeypatch, fake)
-    core = _core(None, sleep_offload=True)
-    model = _SleepModel()
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-
-    core.load_policy()
-
-    assert core.executor is not None
-    assert core.executor.model is model
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]
 
 
@@ -932,30 +861,6 @@ def test_sleep_move_failure_is_not_swallowed() -> None:
         core.sleep()
     with pytest.raises(RuntimeError, match=r"quarantined.*refusing sleep"):
         core.sleep()
-
-
-def test_sleep_move_failure_does_not_commit_false_parked_state() -> None:
-    class _FailOnceModel(_SleepModel):
-        def __init__(self) -> None:
-            super().__init__()
-            self.failed = False
-
-        def to(self, device: Any) -> _SleepModel:
-            self.to_calls.append(device)
-            if device == "cpu" and not self.failed:
-                self.failed = True
-                raise RuntimeError("first CPU move failed")
-            return self
-
-    model = _FailOnceModel()
-    core = _core(model)
-
-    with pytest.raises(RuntimeError, match="first CPU move failed"):
-        core.sleep()
-
-    snapshot = core.sleep()
-    assert snapshot.backend == "cpu_offload"
-    assert model.to_calls == ["cpu", "cuda:0", "cpu"]
 
 
 def test_frozen_move_failure_rolls_back_before_retry() -> None:

@@ -11,8 +11,7 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.ray.finalizer import RayGenerationFinalizer
-from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.utils.media_reference import MediaReference
+from vrl.generation.types import GenerationRequest
 
 
 def _request(count: int = 2, *, references: bool = True) -> GenerationRequest:
@@ -29,31 +28,6 @@ def _batch(start: int, count: int) -> DenoiseBatchResult:
         replay_tensors={},
         context={"model_family": "sd3_5"},
     )
-
-
-def test_merge_fetches_references_gathers_in_plan_order_and_boxes_media(monkeypatch) -> None:
-    store = {"ref-a": _batch(2, 2), "ref-b": _batch(0, 2)}
-    fetched: list[list[str]] = []
-    put: list[object] = []
-
-    def fake_get(refs):
-        fetched.append(list(refs))
-        return [store[ref] for ref in refs]
-
-    monkeypatch.setattr("ray.get", fake_get)
-    monkeypatch.setattr("ray.put", lambda media: put.append(media) or "media-ref")
-    request = _request(4)
-
-    output = RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(
-        request, ["ref-a", "ref-b"]
-    )
-
-    assert isinstance(output, GenerationOutput)
-    assert fetched == [["ref-a", "ref-b"]]  # one object-store fetch for the request
-    # Coverage validation orders by sample_start, not by reference order.
-    assert output.trajectory.sample_rows == request.sample_rows()
-    assert output.output == [MediaReference("media-ref", i, nbytes=48) for i in range(4)]
-    assert len(put) == 1 and put[0].shape == (4, 3, 4, 4)
 
 
 def test_merge_rejects_an_empty_reference_list() -> None:

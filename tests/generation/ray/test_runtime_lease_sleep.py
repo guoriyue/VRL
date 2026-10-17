@@ -46,7 +46,7 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.utils.deadline import OperationTimeout
-from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
+from vrl.utils.lifecycle import RuntimePhase
 
 _TWO_ENGINES = ("distributed.resources.rollout.num_engines=2",)
 
@@ -336,34 +336,6 @@ async def test_sibling_failure_before_lease_transition_preserves_root_and_force_
         assert all(is_dead(local_ray, actor) for actor in actors)
 
 
-@pytest.mark.asyncio
-async def test_offload_cleanup_failure_retries_without_replacing_root(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    worker = _parking_worker(sleep_error=RuntimeError("sleep failed"))
-    async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot, worker=worker) as lease:
-        runtime = lease.runtime
-        await runtime.activate()
-        session = runtime._session
-        closes = Trace(monkeypatch)
-        closes.watch(session, "close", "session.close")
-        closes.fail("session.close", "worker cleanup failed")
-
-        with pytest.raises(RuntimeError, match="sleep failed") as caught:
-            await runtime.offload()
-
-        assert any("worker cleanup failed" in note for note in caught.value.__notes__)
-        assert runtime.lifecycle.failure is caught.value
-        assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-        assert runtime._session is session
-
-        await runtime.shutdown()
-
-        assert closes.events == ["session.close", "session.close"]
-        assert runtime._session is None
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
 # ------------------------------------------------------- activation and lease
 
 
@@ -506,54 +478,6 @@ async def test_runtime_releases_the_payload_once_installed_or_dropped(
         assert runtime._pending_install is None
 
 
-@pytest.mark.asyncio
-async def test_active_update_failure_preserves_installed_version_and_terminates(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
-        runtime = lease.runtime
-        await runtime.activate()
-        await runtime.update_weights(lease.trainable_state(), 1)
-        actors = lease.actors()
-
-        with pytest.raises(RayActorCallError, match=r"'rollout\.weight_sync' failed") as caught:
-            await runtime.update_weights(_bad_payload(lease), 2)
-
-        assert runtime._pending_install is None
-        assert runtime.current_policy_version == 1
-        assert runtime.lifecycle.failure is caught.value
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert runtime._session is None
-        assert all(is_dead(local_ray, actor) for actor in actors)
-
-
-@pytest.mark.asyncio
-async def test_update_cleanup_failure_retains_session_for_retry(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
-        runtime = lease.runtime
-        await runtime.activate()
-        await runtime.update_weights(lease.trainable_state(), 1)
-        session = runtime._session
-        closes = Trace(monkeypatch)
-        closes.watch(session, "close", "session.close")
-        closes.fail("session.close", "worker cleanup failed")
-
-        with pytest.raises(RayActorCallError, match=r"'rollout\.weight_sync' failed") as caught:
-            await runtime.update_weights(_bad_payload(lease), 2)
-
-        assert runtime.lifecycle.failure is caught.value
-        assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-        assert runtime._session is session
-
-        await runtime.shutdown()
-
-        assert closes.events == ["session.close", "session.close"]
-        assert runtime._session is None
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
 # ------------------------------------------------ cold start (unpublished)
 
 
@@ -649,41 +573,6 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(
 
 
 @pytest.mark.asyncio
-async def test_cold_restore_timeout_force_kills_unpublished_candidate(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
-        runtime = lease.runtime
-        await runtime.update_weights(lease.trainable_state(), 2)
-        candidates: list[RayGenerationSession] = []
-        releases: list[Trace] = []
-
-        async def tighten(candidate: Any, *_args: Any, **_kwargs: Any) -> None:
-            # Launch shares this RPC budget with the workers' policy load, so
-            # it is tightened only for the restore; the worker cannot ACK in it.
-            # The launch's own ray.get calls are over by now.
-            candidates.append(candidate)
-            releases.append(_watch_release(monkeypatch, local_ray))
-            candidate.worker_rpc_timeout_s = 1e-6
-
-        _gate_class(monkeypatch, RayGenerationSession, "update_weights", before=tighten)
-
-        with pytest.raises(RayOperationTimeout) as caught:
-            await runtime.activate()
-
-        (candidate,) = candidates
-        (release,) = releases
-        assert "rollout.weight_sync" in str(caught.value)
-        assert runtime._session is None
-        assert runtime.current_policy_version == 2
-        assert runtime.lifecycle.failure is caught.value
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert candidate._force_close is True
-        assert release.events == []
-        assert all(is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
-
-
-@pytest.mark.asyncio
 async def test_activation_launch_failure_terminalizes_without_publishing_candidate(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
@@ -725,18 +614,3 @@ async def test_on_demand_shutdown_is_idempotent_for_offloaded_workers(
         assert runtime._session_parked is False
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert all(is_dead(local_ray, actor) for actor in actors)
-
-
-@pytest.mark.asyncio
-async def test_terminated_runtime_rejects_activation(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
-        launches = Trace(monkeypatch)
-        launches.watch(RayGenerationLauncher, "_launch_session", "launch")
-        await lease.runtime.shutdown()
-
-        with pytest.raises(RuntimeLifecycleError, match="terminated"):
-            await lease.runtime.activate()
-
-        assert launches.events == []

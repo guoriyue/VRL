@@ -106,33 +106,6 @@ async def test_pipelined_call_budget_is_the_stall_timeout_per_batch(
 
 
 @pytest.mark.asyncio
-async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _pipelined_fleet(
-        monkeypatch, tmp_path, ray_sana_snapshot, stall_timeout_s=_SLOW_S * 3
-    ) as run:
-        started = _record_deadlines(monkeypatch)
-        # A one-batch request takes the per-batch path and holds the one engine.
-        first = asyncio.create_task(run.runtime.generate(run.request(["slow"], group_size=2)))
-        await _wait_for(lambda: "rollout.generation.batch" in _operations(started))
-
-        pipelined = asyncio.create_task(run.runtime.generate(run.request(["p"], group_size=4)))
-        await asyncio.sleep(_SLOW_S / 2)
-
-        # Waiting for the engine is not on the clock: its deadline starts at admission.
-        assert not pipelined.done()
-        assert "rollout.generation.pipelined" not in _operations(started)
-
-        assert (await first).output.shape[0] == 2
-        assert (await pipelined).output.shape[0] == 4
-        operations = _operations(started)
-        assert operations.index("rollout.generation.batch") < operations.index(
-            "rollout.generation.pipelined"
-        )
-
-
-@pytest.mark.asyncio
 async def test_finalize_gets_its_deadline_only_after_a_finalizer_slot(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:

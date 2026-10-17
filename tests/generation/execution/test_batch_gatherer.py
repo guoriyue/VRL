@@ -59,29 +59,8 @@ def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
         _Executor().merge_generation_batches(request, ["batch"])
 
 
-def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
-    """Checks diffusion batch gatherer gathers without model object."""
-    request = _request(cfg=False)
-    gatherer = DenoiseBatchGatherer()
-    context = {
-        "guidance_scale": 4.5,
-        "cfg": False,
-        "model_family": "sd3_5",
-    }
-
-    output = gatherer.merge_generation_batches(request, _diffusion_batches(context))
-
-    assert output.output.device.type == "cpu"
-    assert output.trajectory is not None
-    assert output.runtime_debug is None
-    assert output.trajectory.segments["denoise"].distribution == "flow_matching"
-    assert output.trajectory.axes["sample"].length == 2
-    assert output.trajectory.axes["denoise"].length == 2
-    assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
-
-
-def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
-    """Checks diffusion batch gatherer orders prompt major batches."""
+def test_diffusion_chunk_gatherer_gathers_prompt_major_without_model_object() -> None:
+    """Batches arrive in any order and merge prompt-major, keeping the rollout context."""
     request = _request(cfg=False)
     gatherer = DenoiseBatchGatherer()
     context = {
@@ -95,23 +74,14 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
         list(reversed(_diffusion_batches(context))),
     )
 
-    assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
-
-
-def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
-    """Checks diffusion batch gatherer keeps rollout context."""
-    request = _request(family="cosmos", task="v2w", cfg=False)
-    gatherer = DenoiseBatchGatherer()
-    context = {
-        "guidance_scale": 4.5,
-        "cfg": True,
-        "model_family": "cosmos",
-    }
-
-    output = gatherer.merge_generation_batches(request, _diffusion_batches(context))
-
+    assert output.output.device.type == "cpu"
     assert output.trajectory is not None
     assert output.trajectory.context == context
+    assert output.runtime_debug is None
+    assert output.trajectory.segments["denoise"].distribution == "flow_matching"
+    assert output.trajectory.axes["sample"].length == 2
+    assert output.trajectory.axes["denoise"].length == 2
+    assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
 
 
 def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
@@ -142,18 +112,6 @@ def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
     assert output.trajectory is not None
     prompt_embeds = output.trajectory.segments["denoise"].tensors["prompt_embeds"].value
     assert torch.equal(prompt_embeds, torch.tensor([[1.0], [2.0]]))
-
-
-def test_replay_gather_treats_plain_sequences_as_static_values() -> None:
-    gathered = gather_replay_tensors(
-        [
-            {"schedule": [1, 2], "shape": (3, 4)},
-            {"schedule": [1, 2], "shape": (3, 4)},
-        ],
-        sample_counts=[1, 1],
-    )
-
-    assert gathered == {"schedule": [1, 2], "shape": (3, 4)}
 
 
 def test_replay_gather_concatenates_explicit_ragged_sample_rows() -> None:

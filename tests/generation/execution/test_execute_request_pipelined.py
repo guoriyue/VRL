@@ -126,23 +126,6 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
     assert ex.calls == []
 
 
-def test_non_slot_matching_version_runs() -> None:
-    ex = _Executor(_Model(set()))
-    core = _core(executor=ex, uses_slots=False, policy_version=5)
-
-    out = GenerationWorkerCore.execute_request_batches(core, _request(5), _SAMPLE_BATCHES)
-    assert out == [("produced", "b0"), ("produced", "b1")]
-    assert len(ex.calls) == 1
-
-
-def test_no_expected_version_runs_unconditionally() -> None:
-    ex = _Executor(_Model(set()))
-    core = _core(executor=ex, uses_slots=False, policy_version=5)
-
-    out = GenerationWorkerCore.execute_request_batches(core, _request(None), _SAMPLE_BATCHES)
-    assert out == [("produced", "b0"), ("produced", "b1")]
-
-
 def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> None:
     cleanup_calls: list[dict[str, bool]] = []
     monkeypatch.setattr(

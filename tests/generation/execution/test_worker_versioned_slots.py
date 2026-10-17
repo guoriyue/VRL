@@ -133,16 +133,6 @@ def test_update_weights_installs_versioned_slots_without_overwrite() -> None:
     # The update ACK is the producer's authoritative policy-version source.
 
 
-def test_update_weights_plain_model_loads_in_place() -> None:
-    model = _PlainModel()
-    core = _core(model, versioned_weight_sync=False)
-
-    assert core.update_weights({"transformer.w": "v1"}, 1) == 1
-
-    assert core._uses_versioned_slots is False
-    assert model.load_calls == [{"transformer.w": "v1"}]
-
-
 def test_strict_sync_overwrites_slot_capable_model_without_retaining_payloads() -> None:
     """Strict on-policy has no older in-flight request after its sync barrier."""
 

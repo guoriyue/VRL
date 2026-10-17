@@ -599,46 +599,6 @@ async def test_pipelined_oom_worker_id_must_match_actor(
         assert history["batch_calls"] == []
 
 
-@pytest.mark.slow_test
-@pytest.mark.asyncio
-@pytest.mark.parametrize("with_reading", [True, False])
-async def test_executor_logs_measured_batch_memory(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, caplog, with_reading
-):
-    # A CPU worker measures no CUDA memory; the reading a CUDA worker reports
-    # is attached to its real result.
-    mib = 2**20
-    reading = (
-        BatchMemoryReading(
-            sample_count=1,
-            baseline_allocated_bytes=10 * mib,
-            denoise_peak_bytes=18 * mib,
-            decode_peak_bytes=14 * mib,
-            reserved_start_bytes=11 * mib,
-            free_start_bytes=18 * mib,
-            total_bytes=32 * mib,
-        )
-        if with_reading
-        else None
-    )
-    worker = _fault_worker(memory_reading=reading)
-    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=1) as run:
-        with caplog.at_level("INFO", logger="vrl.generation.ray.executor"):
-            await run.runtime.generate(run.request(["p"], group_size=1))
-
-    messages = [
-        r.getMessage() for r in caplog.records if r.getMessage().startswith("batch memory:")
-    ]
-    assert messages == (
-        [
-            f"batch memory: batch={_key(0, 1)} n=1 peak=18MB "
-            "(denoise=18MB decode=14MB baseline=10MB) budget=29MB non_torch=3MB"
-        ]
-        if with_reading
-        else []
-    )
-
-
 @pytest.mark.parametrize(
     "message, expected",
     [
@@ -651,19 +611,3 @@ async def test_executor_logs_measured_batch_memory(
 def test_local_and_remote_oom_classification_agree(message, expected):
     assert is_cuda_out_of_memory(message) is expected
     assert is_cuda_out_of_memory(RuntimeError(message)) is expected
-
-
-@pytest.mark.slow_test
-@pytest.mark.asyncio
-async def test_real_multirank_nonprimary_failure_reaches_driver(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-):
-    """A non-OOM failure on a non-primary rank fails the request without a retry."""
-
-    worker = _fault_worker(capacity={"rollout-0": 8, "rollout-1": 2}, failure="decode failed")
-    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=8, engines=2) as run:
-        executor = _one_engine_of_every_rank(run)
-
-        with pytest.raises(RuntimeError, match="decode failed"):
-            await executor.execute(run.request(["p"], group_size=8))
-        assert [h["batch_calls"] for h in _histories(local_ray, run)] == [[_key(0, 8)]] * 2

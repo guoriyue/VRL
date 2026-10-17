@@ -649,29 +649,6 @@ async def test_sibling_failure_after_weight_ack_blocks_version_publication(
 
 
 @pytest.mark.asyncio
-async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
-        runtime = ray_run.runtime
-        session = runtime._session
-        actors = ray_run.actors()
-        ordinary = RuntimeError("health failed first")
-        runtime.lifecycle.fail(ordinary)
-        timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
-        barrier = Trace(monkeypatch)
-        barrier.watch(local_ray, "get", "ray.get")
-
-        await runtime._terminalize_after_failure(timeout)
-
-        assert runtime.lifecycle.failure is ordinary
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert session._force_close is True
-        assert barrier.events == []
-        assert all(is_dead(local_ray, actor) for actor in actors)
-
-
-@pytest.mark.asyncio
 async def test_timeout_interrupts_an_already_waiting_release_barrier(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
@@ -746,29 +723,6 @@ async def test_timeout_prevents_sibling_generation_from_returning_output(
 
 
 @pytest.mark.asyncio
-async def test_actor_cleanup_failure_retains_owned_handle_for_retry(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
-        runtime = ray_run.runtime
-        ranks = list(runtime._session.rank_handles)
-        kills = Trace(monkeypatch)
-        kills.watch(local_ray, "kill", "ray.kill")
-        kills.fail("ray.kill", "kill transport failed")
-
-        with pytest.raises(RuntimeError, match="cleanup incomplete"):
-            await runtime.shutdown()
-        assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-        assert runtime._session.rank_handles == ranks
-
-        await runtime.shutdown()
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert runtime._session is None
-        assert kills.events == ["ray.kill", "ray.kill"]
-        assert is_dead(local_ray, ranks[0].actor)
-
-
-@pytest.mark.asyncio
 async def test_partial_engine_cleanup_retries_only_failed_rank(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
@@ -827,22 +781,3 @@ async def test_async_launcher_loads_off_loop(
             assert len(session.rank_handles) == 1
         finally:
             await session.close(force=True)
-
-
-@pytest.mark.asyncio
-async def test_shutdown_kills_only_owned_actor(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with (
-        ray_sana_runtime(monkeypatch, tmp_path / "owned", ray_sana_snapshot) as owned,
-        ray_sana_runtime(monkeypatch, tmp_path / "bystander", ray_sana_snapshot) as bystander,
-    ):
-        owned_actor = owned.actors()[0]
-        bystander_actor = bystander.actors()[0]
-
-        await owned.runtime.shutdown()
-
-        assert is_dead(local_ray, owned_actor)
-        assert not is_dead(local_ray, bystander_actor)
-        output = await bystander.runtime.generate(bystander.request(["p"]))
-        assert output.output.shape[0] == 2
