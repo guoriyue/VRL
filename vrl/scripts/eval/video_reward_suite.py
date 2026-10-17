@@ -38,8 +38,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vrl.config.loading import load_config
+from vrl.config.schema import RewardConfig
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.cuda_memory import release_cuda_memory
@@ -203,10 +203,14 @@ def _score_kling(
 ) -> dict[str, dict[str, float]]:
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    worker_config = reward_worker_config(
-        load_config(kling_config),
-        "kling_video_reward",
-        default_reward_model_name="KlingTeam/VideoReward@main",
+    # Score on training's terms: the run's own Kling worker config, its model
+    # name when it set one, and the evaluation device.
+    reward_cfg = (
+        RewardConfig.from_cfg(load_config(kling_config)).kwargs.get("kling_video_reward") or {}
+    )
+    worker_config = dict(reward_cfg.get("worker_config") or {})
+    worker_config.setdefault(
+        "reward_model_name", str(reward_cfg.get("reward_name") or "KlingTeam/VideoReward@main")
     )
     worker_config.setdefault("device", str(device))
     logger.info("loading Kling VideoReward for %d videos", len(videos))

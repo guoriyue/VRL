@@ -1,9 +1,8 @@
 # Cosmos Predict2.5 + Kling DiffusionNFT across 2 servers (1 GPU each)
 
 > Evaluation is no longer embedded in online training. Saved checkpoints are
-> evaluated separately with
-> `python -m vrl.scripts.eval.cosmos_predict25_kling_eval`; this runbook covers
-> training placement only.
+> evaluated separately (`python -m vrl.scripts.eval.video_reward_suite` scores
+> their generations); this runbook covers training placement only.
 
 Runbook for `experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node`.
 

@@ -44,7 +44,8 @@ adapter 生成，固定 prompt/seed，确定性 20 步采样。未优化分项 M
   `vrl/scripts/perf/wan22_generation_quality_probe.py`。
 - **Kling MQ 在 17 帧下反向**（加噪只在 9-25% 的视频上降低 MQ），overall_reward
   不能作训练目标；VQ、TA 方向正确。与 Cosmos 480p/33f 的发现一致，是 Kling 在短
-  片上的通病。探针：`wan22_kling_checkpoint_eval.py probe`。
+  片上的通病。探针：`wan22_kling_checkpoint_eval.py probe`（脚本已归档：
+  `archive/main-20261016:vrl/scripts/eval/wan22_kling_checkpoint_eval.py`）。
 - **4 rank 主机内存峰值 351-354 GB / 372 GB。** 4 个 rollout worker 各 56-62 GB
   （两个 bf16 专家全驻主机）+ 4 个 trainer 各 28 GB（FSDP CPU 分片）。Ray 默认 95%
   阈值（354 GB）杀过一次 resume；改 `RAY_memory_usage_threshold=0.98` 后稳定，最

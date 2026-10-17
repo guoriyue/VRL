@@ -72,7 +72,8 @@ trainer:
   # smaller value for a quick smoke.
   total_epochs: 256
   # 8 checkpoints across the run (e32,e64,...,e256) for a fixed-prompt reward
-  # curve via vrl/scripts/eval/cosmos_predict25_kling_eval.py.
+  # curve (score them with vrl/scripts/eval/video_reward_suite.py; the
+  # per-family curve script was removed on 2026-10-16, see archive/main-20261016).
   save_freq: 32
   # Step-0 generation runtime diagnostics, recorded with the first rollout.
   debug:
