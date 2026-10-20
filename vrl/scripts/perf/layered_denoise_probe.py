@@ -70,6 +70,12 @@ def main(argv: list[str] | None = None) -> int:
         "--compile", action="store_true", help="regional torch.compile of the blocks"
     )
     parser.add_argument("--trace", type=Path, default=None, help="chrome trace output")
+    parser.add_argument(
+        "--dump-transformer-inputs",
+        type=Path,
+        default=None,
+        help="save the first transformer call's args and kwargs (CPU tensors) for group_offload_compare",
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("overrides", nargs="*", help="dotlist config overrides")
     args = parser.parse_args(argv)
@@ -162,6 +168,21 @@ def main(argv: list[str] | None = None) -> int:
             captured["kwargs"] = kwargs
 
     capture_hook = blocks[0].register_forward_pre_hook(capture, with_kwargs=True)
+    transformer_inputs: dict[str, Any] = {}
+
+    def capture_transformer(
+        _module: torch.nn.Module, inputs: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        if transformer_inputs:
+            return
+
+        def to_cpu(value: Any) -> Any:
+            return value.detach().cpu() if isinstance(value, torch.Tensor) else value
+
+        transformer_inputs["args"] = tuple(to_cpu(value) for value in inputs)
+        transformer_inputs["kwargs"] = {key: to_cpu(value) for key, value in kwargs.items()}
+
+    transformer_hook = transformer.register_forward_pre_hook(capture_transformer, with_kwargs=True)
 
     with torch.no_grad():
         for index in range(args.warmup):
@@ -170,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     for hook in hooks:
         hook.remove()
     capture_hook.remove()
+    transformer_hook.remove()
+    if args.dump_transformer_inputs is not None:
+        args.dump_transformer_inputs.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(transformer_inputs, args.dump_transformer_inputs)
+        print(f"transformer inputs -> {args.dump_transformer_inputs}", flush=True)
     if args.compile:
         # The counting hooks' closures made dynamo recompile every call until
         # it gave up on the block frame; forget that and warm the compiled
