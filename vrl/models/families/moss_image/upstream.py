@@ -1,33 +1,58 @@
-"""MOSS-Image DiT, scheduler and reference pipeline, vendored from the released checkpoint.
+"""MOSS-Image's model code, copied from the checkpoint repository because diffusers has none.
 
-Source: ``pipeline_moss_image.py`` in the Hugging Face repository
-``OpenMOSS-Team/MOSS-Image-SFT`` at revision ``2c7954437269461767f533b006823e8f85973a60``
-(Apache License 2.0, Copyright OpenMOSS). The model code is not part of diffusers:
-the checkpoint's ``model_index.json`` names this module as a remote-code
-component, which a training stack must not fetch at run time, so the classes
-live here under their upstream names with the state-dict layout unchanged.
+WHY THIS FILE EXISTS. ``OpenMOSS-Team/MOSS-Image-SFT`` is a diffusers-layout checkpoint
+whose ``model_index.json`` points the transformer and scheduler at a Python file
+shipped in the repo (``pipeline_moss_image.py``, "remote code") instead of at
+diffusers classes. Loading it the official way means ``trust_remote_code=True`` and
+executing a file fetched from the Hub at run time. A trainer cannot depend on that, so
+the classes the checkpoint needs live here, under their upstream names, with the
+parameter names unchanged so ``from_pretrained(subfolder="transformer")`` loads the
+weights straight into them.
 
-Edits against upstream, all else is verbatim apart from formatting:
+WHAT VRL CALLS, AND FROM WHERE (everything else in this file is an internal of these):
 
-- the component-path loader ``MOSSImagePipeline.from_components_pretrained`` and
-  ``MOSSImageTransformer.load_training_state_dict`` are dropped (the family
-  loads through ``vrl.models.loader``);
-- ``MOSSImagePipeline.encode_prompt`` takes an explicit ``device`` so the frozen
-  encoder can run on the host while the DiT lives on the GPU;
-- the VAE-input denormalization and 2x2 unpatchify that ``__call__`` did inline
-  are the module function ``latents_to_vae_input`` so the family's
-  ``decode_latents`` shares it with the reference sampler.
+    MOSSImageTransformer   the 5B DiT: the trainable policy.
+                           Loaded by the registry's ``transformer_classname`` through
+                           ``vrl.models.loader.load_diffusers_transformer`` (replay, and
+                           the meta skeleton for FSDP) and by
+                           ``MossImagePipelineModel.from_build`` (rollout). Called once
+                           per denoise step in ``MossImageModel.forward_step``; LoRA
+                           attaches to its ``_Block.proj.{q,k,v,o}`` linears.
+    MOSSImageScheduler     the sampling grid (shift 5 snapped to the training grid).
+                           Loaded through ``scheduler_classname`` /
+                           ``load_diffusers_scheduler``; ``set_timesteps`` runs in
+                           ``MossImagePipelineModel.prepare_sampling`` and the shared SDE
+                           step reads its ``sigmas`` / ``timesteps``.
+    MOSSImagePipeline      only ``encode_prompt``: the Qwen3.5 chat-template encoding
+                           (unpadded per prompt, bool mask) that
+                           ``MossImagePipelineModel._encode`` runs on the frozen encoder.
+                           The ``__init__`` registers the five components so the shared
+                           freeze / placement / offload rules see them as ``.components``.
+    latents_to_vae_input   batch-norm denormalization + 2x2 unpatchify of the DiT latent
+                           into the FLUX.2 VAE's input, run by
+                           ``MossImagePipelineModel.decode_latents``.
 
-Upstream sampling recipe: CFG 3.0, 50 flow-matching Euler steps with shift 5
-snapped to the 1000-point training grid, and the unconditional branch skipping
-DiT block 22 (``uncond_skip_layers=(22,)``; two forwards per step). bf16 DiT and
-text-encoder weights, fp32 RoPE frequencies, fp32 initial noise, fp32 CFG and
-Euler updates, fp32 VAE decode.
+Source: ``pipeline_moss_image.py`` of ``OpenMOSS-Team/MOSS-Image-SFT`` at revision
+``2c7954437269461767f533b006823e8f85973a60`` (Apache License 2.0, Copyright OpenMOSS).
+Edits against that file, all else verbatim apart from formatting:
+
+- the official sampler ``MOSSImagePipeline.__call__``, the component-path loader
+  ``from_components_pretrained`` and ``MOSSImageTransformer.load_training_state_dict``
+  are dropped (nothing in VRL calls them; the upstream file keeps the reference sampler);
+- ``MOSSImagePipeline.encode_prompt`` takes an explicit ``device`` so the frozen encoder
+  can run on the host while the DiT lives on the GPU;
+- the VAE-input denormalization and unpatchify that ``__call__`` did inline are the module
+  function ``latents_to_vae_input``.
+
+Upstream sampling recipe, which the family reproduces: CFG 3.0, 50 flow-matching Euler
+steps with shift 5 snapped to the 1000-point training grid, and the unconditional branch
+skipping DiT block 22 (``uncond_skip_layers=(22,)``; two forwards per step). bf16 DiT and
+text-encoder weights, fp32 RoPE frequencies, fp32 initial noise, fp32 CFG and Euler
+updates, fp32 VAE decode.
 """
 
 from __future__ import annotations
 
-import math
 from typing import ClassVar
 
 import torch
@@ -36,8 +61,6 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
-from diffusers.utils.torch_utils import randn_tensor
 from torch import nn
 from torch.nn import functional as F
 
@@ -388,150 +411,6 @@ class MOSSImagePipeline(DiffusionPipeline):
             embeds[index, : row.shape[0]] = row
             mask[index, : row.shape[0]] = True
         return embeds, mask
-
-    @torch.no_grad()
-    def __call__(
-        self,
-        prompt=None,
-        *,
-        height=1024,
-        width=1024,
-        num_inference_steps=50,
-        guidance_scale=3.0,
-        negative_prompt="",
-        num_images_per_prompt=1,
-        generator=None,
-        latents=None,
-        prompt_embeds=None,
-        prompt_attention_mask=None,
-        negative_prompt_embeds=None,
-        negative_prompt_attention_mask=None,
-        max_sequence_length=4096,
-        output_type="pil",
-        return_dict=True,
-        uncond_skip_layers=(22,),
-        slg_layers=None,
-        slg_scale=0.0,
-        slg_start=0.0,
-        slg_stop=1.0,
-    ):
-        """Generate images with optional full-block skipping (zero-based indices).
-
-        uncond_skip_layers defaults to (22,) and replaces CFG's negative-prompt
-        prediction with a skipped-block prediction, retaining two forwards per
-        step. Pass None or an empty sequence to disable skipping. slg_layers
-        adds a skipped positive-prompt forward and the fp32 correction
-        slg_scale * (cond - cond_skip) to CFG. With guidance_scale=1, active
-        SLG uses cond_skip + slg_scale * (cond - cond_skip), matching Diffusers'
-        default SkipLayerGuidance formulation, with two forwards and no negative
-        branch. Both options can combine. slg_scale=1 then gives normal cond.
-        Both uncond skipping and SLG are active where
-        slg_start <= step_index / num_steps < slg_stop;
-        the interval follows denoising order, from initial noise to final image.
-        Outside it, inference uses normal CFG without skipping.
-        slg_scale=0 or empty slg_layers disables the additional forward.
-        """
-        uncond_skip_layers = _validate_skip_layers(
-            uncond_skip_layers, len(self.transformer.layers), "uncond_skip_layers"
-        )
-        slg_layers = _validate_skip_layers(slg_layers, len(self.transformer.layers), "slg_layers")
-        if not math.isfinite(slg_scale) or slg_scale < 0:
-            raise ValueError("slg_scale must be finite and nonnegative.")
-        if not 0 <= slg_start <= slg_stop <= 1:
-            raise ValueError("Require 0 <= slg_start <= slg_stop <= 1.")
-        if height <= 0 or width <= 0 or height % 16 or width % 16:
-            raise ValueError("height and width must be positive multiples of 16.")
-        if output_type not in {"pil", "np", "pt", "latent"}:
-            raise ValueError("output_type must be pil, np, pt or latent.")
-        if num_images_per_prompt < 1 or not math.isfinite(guidance_scale) or guidance_scale < 0:
-            raise ValueError("Invalid image count or guidance scale.")
-        if not 1 <= max_sequence_length <= 4096:
-            raise ValueError("max_sequence_length must be between 1 and 4096.")
-        if (prompt is None) == (prompt_embeds is None):
-            raise ValueError("Provide exactly one of prompt and prompt_embeds.")
-        device = self._execution_device
-        if prompt_embeds is None:
-            prompt_embeds, prompt_attention_mask = self.encode_prompt(prompt, max_sequence_length)
-        batch = prompt_embeds.shape[0]
-
-        def prepare(embeds, mask):
-            if embeds.ndim != 3 or embeds.shape[0] != batch:
-                raise ValueError("Prompt embeddings must be [B, S, C] with matching batch size.")
-            if mask is None:
-                mask = torch.ones(embeds.shape[:2], dtype=torch.bool, device=embeds.device)
-            return (
-                embeds.to(device).repeat_interleave(num_images_per_prompt, 0),
-                mask.to(device).repeat_interleave(num_images_per_prompt, 0),
-            )
-
-        positive, positive_mask = prepare(prompt_embeds, prompt_attention_mask)
-        do_cfg = guidance_scale != 1.0
-        if do_cfg:
-            if negative_prompt_embeds is None:
-                negatives = (
-                    [negative_prompt] * batch
-                    if isinstance(negative_prompt, str)
-                    else negative_prompt
-                )
-                if len(negatives) != batch:
-                    raise ValueError("negative_prompt must match prompt batch size.")
-                negative_prompt_embeds, negative_prompt_attention_mask = self.encode_prompt(
-                    negatives, max_sequence_length
-                )
-            negative, negative_mask = prepare(
-                negative_prompt_embeds, negative_prompt_attention_mask
-            )
-        shape = (
-            batch * num_images_per_prompt,
-            self.transformer.config.latent_channels,
-            height // 16,
-            width // 16,
-        )
-        if latents is None:
-            # Sample in fp32: promoting bf16 noise afterward cannot restore its precision.
-            latents = randn_tensor(shape, generator=generator, device=device, dtype=torch.float32)
-        elif tuple(latents.shape) != shape:
-            raise ValueError(f"latents must have shape {shape}.")
-        else:
-            latents = latents.to(device=device, dtype=torch.float32)
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
-        num_steps = len(self.scheduler.timesteps)
-        for step_index, timestep in enumerate(self.progress_bar(self.scheduler.timesteps)):
-            skip_active = slg_start <= step_index / num_steps < slg_stop
-            # CFG must combine fp32 predictions, even when the DiT runs in bf16.
-            # Converting only the combined velocity would preserve rounding errors.
-            prediction = self.transformer(
-                latents, timestep, positive, positive_mask
-            ).sample.float()
-            conditional = prediction
-            if do_cfg:
-                skip_kwargs = (
-                    {"skip_layers": uncond_skip_layers}
-                    if uncond_skip_layers and skip_active
-                    else {}
-                )
-                uncond = self.transformer(
-                    latents, timestep, negative, negative_mask, **skip_kwargs
-                ).sample.float()
-                prediction = uncond + guidance_scale * (prediction - uncond)
-            if slg_layers and slg_scale > 0 and skip_active:
-                skipped = self.transformer(
-                    latents, timestep, positive, positive_mask, skip_layers=slg_layers
-                ).sample.float()
-                if not do_cfg:
-                    prediction = skipped
-                prediction = prediction + slg_scale * (conditional - skipped)
-            latents = self.scheduler.step(prediction, timestep, latents, return_dict=False)[0]
-        if output_type == "latent":
-            images = latents
-        else:
-            if self.vae is None:
-                raise ValueError("A FLUX.2 VAE is required for decoded output.")
-            z = latents_to_vae_input(latents, self.vae)
-            images = self.vae.decode(z, return_dict=False)[0].clamp(-1, 1)
-            images = self.image_processor.postprocess(images, output_type=output_type)
-        self.maybe_free_model_hooks()
-        return ImagePipelineOutput(images=images) if return_dict else (images,)
 
 
 __all__ = [
