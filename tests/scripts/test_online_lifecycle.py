@@ -522,6 +522,33 @@ async def test_online_preview_matches_the_next_epoch_prompt_batch(
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
+async def test_caller_prompt_items_replace_the_manifest_items(
+    monkeypatch, tmp_path, preinitialized_ray, ray_snapshot
+) -> None:
+    """A caller above vrl hands the run its own items; the manifest is not read."""
+
+    from vrl.trainers.data.prompts import PromptExample
+
+    run = _RealRun(monkeypatch, tmp_path, snapshot=ray_snapshot, prompts=("a cat",))
+    roles = _roles(monkeypatch)
+    roles.watch(online, "load_prompt_examples_from_config", "prompts.load")
+    trained: list[str] = []
+    real_step = online.OnlineTrainer.step
+
+    async def step(self, example_batch, *, next_prompts=None):
+        trained.extend(example.prompt for example in example_batch)
+        return await real_step(self, example_batch, next_prompts=next_prompts)
+
+    monkeypatch.setattr(online.OnlineTrainer, "step", step)
+
+    await online.run_online_recipe(run.cfg, prompt_items=[PromptExample("a dog")])
+
+    assert trained == ["a dog"]
+    assert "prompts.load" not in roles.events
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
 async def test_rollout_sync_getter_routes_through_strategy(
     monkeypatch, tmp_path, preinitialized_ray, ray_snapshot
 ) -> None:

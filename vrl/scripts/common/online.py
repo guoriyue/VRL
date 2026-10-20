@@ -45,7 +45,7 @@ from vrl.trainers.checkpointing import (
     validate_rng_state,
 )
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-from vrl.trainers.data.prompts import load_prompt_examples_from_config
+from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_config
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
     TrainerProcessGroup,
@@ -424,8 +424,17 @@ class OnlineRecipeRun:
         )
 
 
-async def run_online_recipe(cfg: DictConfig) -> None:
-    """Run a family online training job through shared recipe glue."""
+async def run_online_recipe(
+    cfg: DictConfig, *, prompt_items: Sequence[PromptExample | OwnedCollection] | None = None
+) -> None:
+    """Run a family online training job through shared recipe glue.
+
+    ``prompt_items`` replaces the items ``cfg.data`` would load, for a caller
+    above vrl whose items a manifest row cannot express (an owned collection,
+    such as a multi-step edit chain). ``cfg.data`` still declares the sampler.
+    No caller inside vrl passes it: the sibling agentic repo's
+    ``train_edit_chains`` does, so a vrl-only reference scan must keep it.
+    """
 
     built = BuiltConfigs.from_cfg(cfg)
     reward_config = built.reward
@@ -545,7 +554,11 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                 generator_names=("prompt_generator",),
             )
 
-    examples = load_prompt_examples_from_config(data_config)
+    examples = (
+        list(prompt_items)
+        if prompt_items is not None
+        else load_prompt_examples_from_config(data_config)
+    )
     roots = RootedPaths.data_root(
         data_config.artifact_data_root if data_config is not None else None, allow_absolute=True
     )
