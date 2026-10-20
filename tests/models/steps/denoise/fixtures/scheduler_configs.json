@@ -181,7 +181,7 @@
     "revision": "2c7954437269461767f533b006823e8f85973a60",
     "scheduler_config_path": "scheduler/scheduler_config.json",
     "scheduler_repo_id": "OpenMOSS-Team/MOSS-Image-SFT",
-    "note": "MOSSImageScheduler is vendored (vrl/models/families/moss_image/upstream.py), not a diffusers export; shift 5 snapped to the 1000-point training grid."
+    "note": "MOSSImageScheduler is vendored (vrl/models/families/moss_image/pipeline_moss_image.py), not a diffusers export; shift 5 snapped to the 1000-point training grid."
   },
   "qwen_image": {
     "config": {

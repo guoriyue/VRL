@@ -10,7 +10,7 @@ the text encoder, latent preparation and VAE decode on top of it.
 
 MOSS-Image specifics vs SD3 (the reference family):
 - The DiT, its scheduler and the reference pipeline are not in diffusers; the
-  checkpoint ships them as remote code, vendored in ``upstream.py``. The registry
+  checkpoint ships them as remote code, vendored in ``pipeline_moss_image.py``. The registry
   names them by import path and the shared component loaders resolve it.
 - Latents are UNPACKED 4D ``[B, 128, H/16, W/16]``: the FLUX.2 VAE's 32-channel
   f8 latent with its 2x2 patches folded into channels. Noise is drawn directly in
@@ -51,8 +51,8 @@ from vrl.models.steps.denoise.common import (
     predict_with_cfg,
 )
 
-TRANSFORMER_CLS = "vrl.models.families.moss_image.upstream:MOSSImageTransformer"
-SCHEDULER_CLS = "vrl.models.families.moss_image.upstream:MOSSImageScheduler"
+TRANSFORMER_CLS = "vrl.models.families.moss_image.pipeline_moss_image:MOSSImageTransformer"
+SCHEDULER_CLS = "vrl.models.families.moss_image.pipeline_moss_image:MOSSImageScheduler"
 # f8 VAE x 2x2 patch fold: one DiT latent cell covers 16x16 pixels.
 PIXELS_PER_LATENT = 16
 # Released sampling recipe: the negative branch skips this DiT block (zero-based).
@@ -164,7 +164,7 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
         from diffusers import AutoencoderKLFlux2
         from transformers import AutoModel, AutoTokenizer
 
-        from vrl.models.families.moss_image.upstream import MOSSImagePipeline
+        from vrl.models.families.moss_image.pipeline_moss_image import MOSSImagePipeline
         from vrl.models.loader import load_diffusers_scheduler, load_diffusers_transformer
 
         prompt_encoder_dtype, _ = cls._pipeline_load_dtypes(build)
@@ -317,7 +317,7 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode 4D latents -> image via the FLUX.2 VAE (denormalize, unfold, decode)."""
-        from vrl.models.families.moss_image.upstream import latents_to_vae_input
+        from vrl.models.families.moss_image.pipeline_moss_image import latents_to_vae_input
 
         pipe = self.pipeline
         vae = pipe.vae

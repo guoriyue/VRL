@@ -1,7 +1,7 @@
 # MOSS-Image-SFT (OpenMOSS 5B single-stream DiT, Qwen3.5-9B encoder, FLUX.2 VAE)
 # — checkpoint, LoRA, compile, memory. Sampling shape and denoise defaults live
 # under sampling/. Apache-2.0 weights; the DiT and scheduler code the checkpoint
-# ships as remote code is vendored in vrl/models/families/moss_image/upstream.py.
+# ships as remote code is vendored in vrl/models/families/moss_image/pipeline_moss_image.py.
 model:
   family: moss_image
   executor:

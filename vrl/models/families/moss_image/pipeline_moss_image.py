@@ -1,4 +1,4 @@
-"""MOSS-Image's model code, copied from the checkpoint repository because diffusers has none.
+"""``pipeline_moss_image.py`` of the MOSS-Image checkpoint repository, copied here because diffusers has none of it.
 
 WHY THIS FILE EXISTS. ``OpenMOSS-Team/MOSS-Image-SFT`` is a diffusers-layout checkpoint
 whose ``model_index.json`` points the transformer and scheduler at a Python file

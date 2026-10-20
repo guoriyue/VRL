@@ -482,14 +482,14 @@ _register_model_family(
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         # MOSS-Image: OpenMOSS 5B single-stream DiT in the FLUX.2 latent space with
         # a Qwen3.5-9B encoder. The checkpoint ships its DiT and scheduler as
-        # remote code, vendored in moss_image/upstream.py and named here by path.
+        # remote code, vendored in moss_image/pipeline_moss_image.py and named here by path.
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.moss_image.model:MossImagePipelineModel",
             replay_cls="vrl.models.families.moss_image.model:MossImageModel",
-            transformer_classname="vrl.models.families.moss_image.upstream:MOSSImageTransformer",
+            transformer_classname="vrl.models.families.moss_image.pipeline_moss_image:MOSSImageTransformer",
             # Replay recomputes log-probs on the training-grid schedule the rollout
             # sampled; the plain flow-match scheduler would rebuild a different grid.
-            scheduler_classname="vrl.models.families.moss_image.upstream:MOSSImageScheduler",
+            scheduler_classname="vrl.models.families.moss_image.pipeline_moss_image:MOSSImageScheduler",
         ),
     ),
 )

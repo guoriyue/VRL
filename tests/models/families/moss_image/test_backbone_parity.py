@@ -215,7 +215,7 @@ def test_moss_scheduler_loads_by_import_path_onto_the_training_grid() -> None:
 
     from vrl.config.precision import RolePrecision
     from vrl.models.families.moss_image.model import SCHEDULER_CLS
-    from vrl.models.families.moss_image.upstream import MOSSImageScheduler
+    from vrl.models.families.moss_image.pipeline_moss_image import MOSSImageScheduler
     from vrl.models.interfaces.runtime import ModelBuild
     from vrl.models.loader import load_diffusers_scheduler
 

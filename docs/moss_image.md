@@ -14,7 +14,7 @@ it. The preset keeps the 18 GB encoder on the host for a 32 GB card.
 
 - The checkpoint ships its DiT, scheduler and pipeline as remote code
   (`pipeline_moss_image.py`), not as diffusers classes. That file is vendored
-  verbatim as `vrl/models/families/moss_image/upstream.py`, and the registry
+  verbatim as `vrl/models/families/moss_image/pipeline_moss_image.py`, and the registry
   names its classes by import path (`module:Class`), which the shared component
   loaders resolve. Nothing is fetched at run time beyond the weights.
 - Latents are unpacked `[B, 128, H/16, W/16]` tensors (32 VAE channels with the
