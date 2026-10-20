@@ -62,6 +62,8 @@ positioning and roadmap.
 | **Qwen-Image** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Qwen-Image-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **SANA** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **MOSS-Image** (OpenMOSS 5B, text rendering) | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable (vendored remote-code DiT; GPU rollout + replay-parity probe passed) |
+| **Krea 2** (Raw, 12B) | text -> image | full_sequence / denoise | GRPO | 🔌 Integrated (diffusers-native; gated weights, CPU tiny-real only until the probe runs) |
 | **Wan2.1** | text/image -> video | full_sequence / denoise | GRPO, DPO | 🧪 Runnable |
 | **Wan2.2** | image -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |
