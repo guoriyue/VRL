@@ -328,3 +328,19 @@ def test_block_stream_offload_with_nothing_to_stream_is_an_error() -> None:
 
     with pytest.raises(RuntimeError, match="streamed nothing"):
         apply_rollout_optimizations(model, build)
+
+
+def test_block_stream_offload_refuses_rollout_quantization() -> None:
+    """The pass itself refuses the pairing, whatever the quantization pass did before it."""
+
+    import torch
+
+    from vrl.nn.offload import Offload
+    from vrl.nn.optimization.passes import OffloadPass
+
+    model = SimpleNamespace(trainable_modules={}, device=torch.device("cpu"))
+    build = _build(quantization="fp8")
+    build.rollout = SimpleNamespace(base_weight_sync=True, offload=Offload())
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        OffloadPass().apply(model, build)

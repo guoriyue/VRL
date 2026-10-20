@@ -292,6 +292,11 @@ class OffloadPass:
         return getattr(getattr(build, "rollout", None), "offload", None) is not None
 
     def apply(self, model: Any, build: Any) -> PassResult:
+        if getattr(getattr(build, "precision", None), "quantization", None) is not None:
+            raise ValueError(
+                "model.offload streams the policy's own frozen weights from the host; "
+                "it cannot be combined with precision.rollout.quantization",
+            )
         streamed = build.rollout.offload.place(model.trainable_modules, device=model.device)
         if not streamed:
             raise RuntimeError(
