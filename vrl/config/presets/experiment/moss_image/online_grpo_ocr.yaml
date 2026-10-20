@@ -1,0 +1,36 @@
+# MOSS-Image-SFT + OCR GRPO. Legible Chinese/English text rendering is the
+# checkpoint's headline capability, so the verifiable OCR reward is the first RL
+# target. Upstream samples 50 steps at CFG 3 with the negative branch skipping
+# DiT block 22; the rollout keeps CFG 3 and the skip on a 10-step SDE schedule.
+#
+# Single 32 GB card (bf16 DiT ~10 GB, encoder on the host). The batch shapes
+# below are the sd3_5 OCR recipe's; MOSS-Image's own memory ceiling has not
+# been measured yet, so lower samples_per_generation_batch first on an OOM.
+#
+#   CUDA_VISIBLE_DEVICES=0 vrl-train --config experiment/moss_image/online_grpo_ocr
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/moss_image/sft
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_3
+  - /reward/ocr
+  - /dataset/ocr
+
+
+actor:
+  optim:
+    lr: 3.0e-4
+  prompts_per_collection: 2
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  # Two DiT forwards per step (CFG); 8 x 512px keeps the rollout under the
+  # trainer-shared card's budget until a measured value replaces this.
+  samples_per_generation_batch: 8
+
+trainer:
+  output_dir: outputs/moss_image_ocr_grpo
+  save_freq: 60
+  debug:
+    first_step: true

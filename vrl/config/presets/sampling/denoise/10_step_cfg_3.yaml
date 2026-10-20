@@ -1,0 +1,4 @@
+# Shared diffusion denoise preset: 10 steps, CFG 3.0 (MOSS-Image's released guidance).
+sampling:
+  num_steps: 10
+  guidance_scale: 3.0
