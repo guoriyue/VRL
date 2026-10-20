@@ -99,6 +99,10 @@ Use the canonical family name in `cfg.model.family`. Functional conditioning
 such as a reference image or video belongs on each `GenerationInput`; it is not
 registry metadata or an executor-constructor setting. Set `scheduler_classname`
 when replay must load a scheduler other than the shared flow-match scheduler.
+Both class names are diffusers exports; a checkpoint whose model code ships as
+remote code is vendored under the family package and named by import path
+(`vrl.models.families.moss_image.upstream:MOSSImageTransformer`) instead, never
+loaded with `trust_remote_code`.
 
 When replay cannot be expressed as one diffusers transformer plus one scheduler
 (a non-diffusers loader, a second scheduler, a weight graft), omit

@@ -213,11 +213,11 @@ def build_tiny_transformer(name: str, *, seed: int = 0, **overrides: Any) -> Any
     replace single config fields (e.g. ``guidance_embeds=False`` for FLUX).
     """
 
-    import diffusers
+    from vrl.models.loader import resolve_component_class
 
     class_name, config = _TINY_TRANSFORMERS[name]
     torch.manual_seed(seed)
-    return getattr(diffusers, class_name)(**{**config, **overrides})
+    return resolve_component_class(class_name)(**{**config, **overrides})
 
 
 def add_lora_adapters(

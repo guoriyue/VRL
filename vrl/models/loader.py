@@ -11,6 +11,24 @@ from typing import Any
 from vrl.models.interfaces.runtime import ModelBuild
 
 
+def resolve_component_class(class_name: str) -> Any:
+    """A diffusers class by bare name, or a family-vendored one by ``module:Class``.
+
+    Registry descriptors name upstream components by their diffusers export.
+    A checkpoint whose model code ships as remote code (MOSS-Image) is vendored
+    under a family package instead, and its descriptor names that class by the
+    import-path grammar every other config-declared callable uses.
+    """
+
+    if ":" in class_name:
+        from vrl.utils.config import import_from_path
+
+        return import_from_path(class_name)
+    import diffusers
+
+    return getattr(diffusers, class_name)
+
+
 def load_diffusers_transformer(
     build: ModelBuild,
     class_name: str,
@@ -27,9 +45,7 @@ def load_diffusers_transformer(
     host memory. Nothing under ``subfolder`` but its config is opened.
     """
 
-    import diffusers
-
-    transformer_cls = getattr(diffusers, class_name)
+    transformer_cls = resolve_component_class(class_name)
     if materialize_weights:
         return transformer_cls.from_pretrained(
             build.model_name_or_path,
@@ -61,9 +77,7 @@ def load_diffusers_scheduler(
 ) -> Any:
     """Load only a diffusers scheduler component from a model repository."""
 
-    import diffusers
-
-    scheduler_cls = getattr(diffusers, class_name)
+    scheduler_cls = resolve_component_class(class_name)
     scheduler = scheduler_cls.from_pretrained(
         build.model_name_or_path,
         subfolder=subfolder,
@@ -111,4 +125,5 @@ __all__ = [
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",
+    "resolve_component_class",
 ]
