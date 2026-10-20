@@ -1,0 +1,53 @@
+# Krea 2 Raw PickScore GRPO — single-GPU smoke recipe (validation + naive profiling).
+#
+# Smallest end-to-end probe: tiny resolution, few denoise steps, 1 sample/batch,
+# LoRA-only. Proves the family runs encode -> prepare -> denoise -> decode ->
+# reward -> LoRA grad on one card. Krea 2 is an aesthetics-first 12B model, so
+# the preference reward is its natural first target; the 26 GB bf16 DiT leaves
+# little room on a 32 GB card (record peak + the budget, do not fake a pass).
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/krea2/online_grpo_pickscore_smoke_single_gpu
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/krea2/raw
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/pickscore
+  - /dataset/pickscore_sfw
+  - _self_
+
+
+sampling:
+  height: 256
+  width: 256
+  num_steps: 4
+  max_sequence_length: 64
+
+actor:
+  optim:
+    lr: 1.0e-4
+  prompts_per_collection: 2
+  gradient_checkpointing: true
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 2
+  samples_per_generation_batch: 1
+  # Clamp the SDE window to the 4-step budget (base preset is [0,10]); must live
+  # under rollout.sde, not sampling.
+  sde:
+    window_range: [0, 4]
+
+trainer:
+  output_dir: outputs/krea2_pickscore_grpo_smoke_single_gpu
+  total_epochs: 1
+  save_freq: 9999
+  profile: true
+  debug:
+    first_step: true
+
+model:
+  torch_compile:
+    enable: false
