@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-preset", default=None, help="optional existing model YAML preset")
     parser.add_argument("--prompt", default="a photo of a red fox sitting in fresh snow")
     parser.add_argument("--negative-prompt", default="")
+    parser.add_argument(
+        "--reference-image",
+        default=None,
+        help="conditioning image for a reference-conditioned family (loaded as RGBA)",
+    )
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--width", type=int, default=512)
@@ -201,6 +206,11 @@ def main() -> None:
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}
     if args.max_sequence_length is not None:
         encode_kwargs["max_sequence_length"] = args.max_sequence_length
+    if args.reference_image is not None:
+        from PIL import Image
+
+        with Image.open(args.reference_image) as reference:
+            encode_kwargs["reference_image"] = reference.convert("RGBA")
     encoded = model.encode_prompt(
         [args.prompt],
         [args.negative_prompt] if args.guidance_scale > 1.0 else None,
@@ -215,6 +225,7 @@ def main() -> None:
                 "model_path": args.path,
                 "prompt": args.prompt,
                 "negative_prompt": args.negative_prompt,
+                "reference_image": args.reference_image,
                 "encoded": to_cpu_snapshot(encoded),
             },
             artifact_dir / "conditioning.pt",
