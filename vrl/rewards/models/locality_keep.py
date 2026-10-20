@@ -2,8 +2,10 @@
 
 Metadata ``locality_keep = {"source": path, "boxes": [[x0, y0, x1, y1], ...]}``
 names the image every state of an edit sequence must match away from the
-regions an edit may touch (absolute pixel boxes on the source's canvas). The
-axes are plain measurements against that source over the outside pixels:
+regions an edit may touch (absolute pixel boxes on the source's canvas). A
+relative ``source`` resolves under ``worker_config.data_root`` (``VRL_DATA_ROOT``
+when unset), as ``local_edit`` resolves its source. The axes are plain
+measurements against that source over the outside pixels:
 
 * ``locality_psnr``: peak signal-to-noise ratio in dB (capped at 60 for an
   identical image);
@@ -46,6 +48,7 @@ from typing import Any
 import numpy as np
 
 from vrl.rewards.inference import RewardInferenceArtifact
+from vrl.utils.paths import RootedPaths
 
 PSNR_CAP = 60.0
 PSNR_UNIT = 40.0
@@ -54,6 +57,9 @@ PSNR_UNIT = 40.0
 class LocalityKeepRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self._sources: dict[str, np.ndarray] = {}
+        # The declared source resolves like local_edit's: under ``data_root``
+        # (``VRL_DATA_ROOT`` when unset), absolute paths taken as written.
+        self.roots = RootedPaths.data_root(worker_config.get("data_root"), allow_absolute=True)
         self._detail_weights = worker_config.get("detail_penalty_weights")
         self._local_texture: dict[str, Any] | None = None
         if self._detail_weights is not None:
@@ -103,7 +109,7 @@ class LocalityKeepRewardModel:
         if path not in self._sources:
             from PIL import Image
 
-            with Image.open(path) as image:
+            with Image.open(self.roots.resolve(path)) as image:
                 self._sources[path] = np.asarray(image.convert("RGB"), dtype=np.float64)
         return self._sources[path]
 
