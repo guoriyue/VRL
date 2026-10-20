@@ -460,6 +460,22 @@ _register_model_family(
 
 _register_model_family(
     _full_sequence_entry(
+        family="krea2",
+        task="t2i",
+        model_section_cls="vrl.config.model_schema:ModelSection",
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
+        # Krea 2 (Raw): 12B single-stream MMDiT in the Qwen-Image VAE latent space
+        # conditioned on stacked Qwen3-VL hidden states; diffusers-native classes.
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.krea2.model:Krea2PipelineModel",
+            replay_cls="vrl.models.families.krea2.model:Krea2Model",
+            transformer_classname="Krea2Transformer2DModel",
+        ),
+    ),
+)
+
+_register_model_family(
+    _full_sequence_entry(
         family="moss_image",
         task="t2i",
         model_section_cls="vrl.config.model_schema:ModelSection",

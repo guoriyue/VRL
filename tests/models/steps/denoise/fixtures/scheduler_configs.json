@@ -121,6 +121,30 @@
     "scheduler_config_path": "scheduler/scheduler_config.json",
     "scheduler_repo_id": "black-forest-labs/FLUX.1-dev"
   },
+  "krea2": {
+    "config": {
+      "_class_name": "FlowMatchEulerDiscreteScheduler",
+      "_diffusers_version": "0.39.0.dev0",
+      "base_image_seq_len": 256,
+      "base_shift": 0.5,
+      "invert_sigmas": false,
+      "max_image_seq_len": 6400,
+      "max_shift": 1.15,
+      "num_train_timesteps": 1000,
+      "shift": 1.0,
+      "shift_terminal": null,
+      "stochastic_sampling": false,
+      "time_shift_type": "exponential",
+      "use_beta_sigmas": false,
+      "use_dynamic_shifting": true,
+      "use_exponential_sigmas": false,
+      "use_karras_sigmas": false
+    },
+    "model_repo_id": "krea/Krea-2-Raw",
+    "revision": "6b0ece7fffb640c5e3bcbe0a7f10f66b8e60a603",
+    "scheduler_config_path": "scheduler/scheduler_config.json",
+    "scheduler_repo_id": "krea/Krea-2-Raw"
+  },
   "minimax_h3": {
     "model_repo_id": "MiniMaxAI/MiniMax-H3",
     "scheduler_repo_id": "MiniMaxAI/MiniMax-H3",

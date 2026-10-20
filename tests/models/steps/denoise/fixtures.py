@@ -76,6 +76,12 @@ TINY_QWEN21_CONTEXT_DIM = 16
 TINY_MOSS_LATENT_SHAPE = (2, 16, 2, 2)
 TINY_MOSS_TEXT_DIM = 16
 
+# Krea 2 feeds PACKED latents [B, seq, C*4] with C=4 -> 16 in_channels, and a STACK
+# of tapped text-encoder layers per token: [B, S, TINY_KREA2_TEXT_LAYERS, TEXT_DIM].
+TINY_KREA2_IN_CHANNELS = 16
+TINY_KREA2_TEXT_DIM = 16
+TINY_KREA2_TEXT_LAYERS = 2
+
 _TINY_WAN_CONFIG: dict[str, Any] = dict(
     patch_size=(1, 2, 2),
     num_attention_heads=2,
@@ -203,6 +209,29 @@ _TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
             context_in_dim=TINY_QWEN21_CONTEXT_DIM,
             mlp_ratio=2,
             axes_dims_rope=(4, 6, 6),
+        ),
+    ),
+    # Grouped-query attention (2 query heads over 1 kv head) and one block of each
+    # text-fusion stage keep every code path. axes_dims_rope sums to
+    # attention_head_dim (8); each axis dim must be even for the rotary pairs.
+    "krea2": (
+        "Krea2Transformer2DModel",
+        dict(
+            in_channels=TINY_KREA2_IN_CHANNELS,
+            num_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            intermediate_size=32,
+            timestep_embed_dim=8,
+            text_hidden_dim=TINY_KREA2_TEXT_DIM,
+            num_text_layers=TINY_KREA2_TEXT_LAYERS,
+            text_num_attention_heads=2,
+            text_num_key_value_heads=2,
+            text_intermediate_size=32,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=1,
+            axes_dims_rope=(2, 2, 4),
         ),
     ),
     # Vendored (not a diffusers export), hence the import path. head_dim must be

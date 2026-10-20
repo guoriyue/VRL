@@ -1,0 +1,45 @@
+# Krea 2 Raw (12B single-stream MMDiT, Qwen3-VL-4B encoder, Qwen-Image VAE) —
+# checkpoint, LoRA, compile, memory. Sampling shape and denoise defaults live
+# under sampling/. Krea 2 Community License (gated Hub repo: accept the license
+# on the model page before the first download). Raw is the undistilled,
+# CFG-guided checkpoint Krea recommends for LoRA training; Turbo is distilled.
+#
+# Guidance: Krea writes CFG as cond + g * (cond - uncond); VRL's
+# sampling.guidance_scale is the standard scale 1 + g, so Krea's Raw default
+# g=3.5 is the shared /sampling/denoise/*_cfg_4_5 preset.
+model:
+  family: krea2
+  executor:
+    # Prompts are padded to this fixed length inside the chat template and
+    # padded keys are masked out everywhere, so a shorter block changes nothing
+    # for prompts that fit; it only bounds the [B, S, 12, 2560] conditioning
+    # stack every trajectory sample stores (16 MB per sample at 256, bf16).
+    max_sequence_length: 256
+  path: krea/Krea-2-Raw
+  revision: 6b0ece7fffb640c5e3bcbe0a7f10f66b8e60a603
+
+  memory:
+    # The 9 GB Qwen3-VL-4B encoder does not fit beside the 26 GB bf16 DiT on a
+    # 32 GB card; it encodes on the host. Drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+    # Video VAE decode is memory-heavy; tile + slice per-image at scale.
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    # Attention projections of the DiT blocks and of the text-fusion blocks
+    # (both use to_q/k/v/out.0); the SwiGLU MLPs and the sigmoid gate stay frozen.
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: true
+    mode: default
