@@ -116,3 +116,11 @@ collector 的生成／评分／组装边界。现有 schedule protocol 和 reque
 **非目标**：重写 GRPO loss、改模型架构、合并各 family 文件以减少行数、把 NGU
 强加给 NFT/DPO、自动覆盖连续奖励语义、永久删除简单题，或默认开启 NGU。
 跨 family 一致性优先于局部 LOC 缩减。
+
+## 补充（2026-10-20）：PyTorch Conference 的相关输入
+
+- **065 Modal（slime / PFSP）**：
+  - 每个 prompt 只采 1 个样本，用"每难度一个 EMA baseline"代替 GRPO 组；
+  - 按 `p(1−p)` 加权采样难度。
+  - 本 sprint 的二元 OCR 范围可以拿 `p(1−p)` 作为重采概率的参考形式，但必须和"全对跳过、全错按概率重采"的现有设计比较后再选，不要叠加。
+- **099 SkyRL**：继承 AReaL 的容量准入，生成前先申请名额，保证 `accepted + running ≤ (S + step)·B`。如果 NGU 的重采进入 continuous producer，预算上限应在 producer 侧准入，而不是消费时才丢弃。

@@ -72,3 +72,15 @@
 - 不做"通用的奖励质量分"：每个奖励只对它声称的维度负责，卡上明写盲区。
 - 不用奖励自己生成的分数当标注（GPT/VLM 判官的分不是人判断；上游 reliability 报告也这么写）。
 - 不把 `qualify` receipt 当有效性证据：它只证明训练用的和离线验的是同一套打分。
+
+## 8. 补充（2026-10-20）：PyTorch Conference 证据与现状更正
+
+**现状更正（HEAD a914644c6 核对）**：§5 里列的 `reward card`、`fit/evaluate`、`qualify`、`review-export/import`、`calibration.md` 都已删除。`c14cd7f48` 删除了 reward card，`f469d7055` 删除了离线偏好校准。现在的 `python -m reward` 只有 `health / stress / compare / paired / repeat / stress-manifest / shortcut-manifest / agreement / spread`（`reward/__main__.py:50-89`）。在代码里落地的阈值只有 `agreement --gate 0.85`，没有把五道关汇总成一个判定的地方。执行本 sprint 前，先把 §5 按现状重写。
+
+**会上的三项补充**（004 Shopify judge 资格门、041 judge 置信度）：
+
+1. **关 2 增加"标注员一致性上限"**：两名标注员对 ≥25 条随机样本做独立盲标，计算 Cohen's kappa。judge 和人的一致性不应高于人和人之间的一致性；kappa 太低，说明这个维度本身定义不清，应先修订标注协议，而不是继续调 judge。
+2. **关 2 增加"历史 A/B 回测"**：对已有结论的 checkpoint 对比（盲评定过胜负的历史 run），检查 judge 的排序和历史结论是否一致。
+3. **关 1 或关 2 增加"置信度校准"**：对能输出概率的 judge（例如 `qwen3vl_preference` 的 Yes 概率），按概率分箱，比较每箱的实际准确率（reliability diagram / ECE）。这一项对应 Luna judge 60% tie 的问题：置信度和准确率不相关的 judge，其组内差异大部分是噪声。
+
+关 3 已经覆盖 Shopify 的"定向退化测试"（人为制造一种失败，确认只有对应维度下降），不另加。三项都只在下一个新 reward 上线时按实际需要加，并且加在 `reward/` 包已有的 `agreement` / `repeat` 报告里，不新建命令族。

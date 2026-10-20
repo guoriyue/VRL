@@ -139,3 +139,25 @@ CPU topology was terminated by Ray's host-memory monitor and published no report
 record both outcomes. This closes real full-parameter bucket byte acceptance for
 two CPU replicas; it does not establish GPU/fabric performance or a controlled
 peak-memory improvement. The default remains unchanged.
+
+## 2026-10-20: PyTorch Conference NA 2026 transport options (evidence only)
+
+Read the existing `weight_sync.state_to_cpu` / `weight_sync.push` ranges before
+choosing; LoRA payloads (tens of MB) do not justify a new transport. Options
+reported on Day 1, in order of fit for VRL:
+
+- Colocated: CUDA IPC handle on one reused packed buffer (SkyRL / vLLM native
+  RL API, session 099/039). LoRA in-memory sync measured 12-14x faster than disk.
+- Ray Direct Transport (NCCL/NIXL/CUDA_IPC/Gloo, Ray 2.56-2.59, session 007):
+  object-store baseline 188 ms vs nixl 81 ms per step on B200. Check asyncio
+  support before using it from the async syncer, and make the trainer wait for
+  receive completion before `optimizer.step` (RDT objects are mutable).
+- `torch.distributed._transport` one-sided RDMA, CUDA-graph capturable, built
+  for RL weight sync (session 093; experimental).
+- vLLM `sharded_rdt` / Monarch WeightBridge: discover each worker's shard layout
+  by dry-running the loader on shape-only tensors, then pull only the local
+  slice (Qwen3-235B 64.7 s -> 3.49 s; session 039/024).
+
+Independent of transport: after install, recompute the trainable digest on the
+rollout side and compare with the trainer's (zero-risk correctness check; SkyRL
+also reports "first divergent parameter" and a logprob-gap-unchanged check).

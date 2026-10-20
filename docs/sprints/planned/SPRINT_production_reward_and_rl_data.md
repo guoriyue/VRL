@@ -183,3 +183,9 @@ knob 规则照旧：G1 的失败策略只在出现第一个需要非默认策略
 - 不为"与 verl 同构"重写 reward 层；本仓的 Ray actor / HTTP / 同卡 parking 三档已覆盖，
   差距是策略与观测，不是形状。
 - 不在单机上做多副本 reward 路由与两级恢复（G8）。
+
+## 6. 补充（2026-10-20）：PyTorch Conference 对 G4/G5 的输入
+
+- **G4/G5**（043 Nemotron 3 RL）：训练前先过滤掉 SFT 模型总是答对的 prompt。换到连续视觉 reward 上，就是在目标 checkpoint 上组内极差或方差约等于 0 的 prompt。这一条直接佐证 G4 的离线难度剖面。阈值仍由本仓库实测决定。
+- **G5 采样权重**（065 Modal Street Fighter，PFSP 课程）：按 `p(1−p)` 加权采样难度，优先选通过率接近 0.5 的 prompt。这只适用于有二元通过率的 reward（OCR、GenEval），连续 reward 用组内方差代替 `p(1−p)`。
+- **数据量参考**：043 训了 21 个环境，每个 prompt 只用其所属环境的 reward。见 `SPRINT_multi_objective_reward_routing_and_teachers.md` 的实验 A，以及与 G2 合并实现的联合指标。
