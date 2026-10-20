@@ -67,10 +67,16 @@ _SCHEDULER_FIXTURES: dict[str, dict[str, object]] = json.loads(
 def _scheduler_for(family: str):
     diffusers = pytest.importorskip("diffusers")
     config = dict(_SCHEDULER_FIXTURES[family]["config"])
-    scheduler_cls = getattr(diffusers, config.pop("_class_name"))
-    scheduler = scheduler_cls.from_config(config)
+    class_name = config.pop("_class_name")
+    scheduler_cls = getattr(diffusers, class_name, None)
+    if scheduler_cls is None:
+        # A vendored scheduler (MOSS-Image): the registry names the class the
+        # production replay loads, and the fixture's ``_class_name`` must be it.
+        from vrl.utils.config import import_from_path
 
-    return scheduler
+        scheduler_cls = import_from_path(FAMILY_REGISTRY[family].family_build.scheduler_classname)
+        assert scheduler_cls.__name__ == class_name
+    return scheduler_cls.from_config(config)
 
 
 def _parity_cases() -> list[object]:

@@ -183,3 +183,35 @@ def test_transformer_skeleton_reads_only_the_config(tmp_path, monkeypatch) -> No
     }
     assert all(p.is_meta and p.dtype is torch.bfloat16 for p in skeleton.parameters())
     assert all(not b.is_meta for b in skeleton.buffers())
+
+
+def test_component_loaders_resolve_a_vendored_class_by_import_path(tmp_path) -> None:
+    """A ``module:Class`` descriptor loads a family-vendored transformer the same two
+    ways a diffusers export does: materialized from its saved weights, and as a
+    meta skeleton read from the config alone."""
+    from tests.models.steps.denoise.fixtures import build_tiny_transformer
+    from vrl.models import loader
+    from vrl.models.families.moss_image.model import TRANSFORMER_CLS
+
+    reference = build_tiny_transformer("moss_image", seed=3)
+    reference.save_pretrained(tmp_path / "transformer")
+    build = ModelBuild(
+        model_name_or_path=str(tmp_path),
+        revision=None,
+        device=torch.device("cpu"),
+        parameter_dtype=torch.float32,
+        family="moss_image",
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+    )
+
+    loaded = loader.load_diffusers_transformer(build, TRANSFORMER_CLS)
+    skeleton = loader.load_diffusers_transformer(build, TRANSFORMER_CLS, materialize_weights=False)
+
+    assert type(loaded) is type(reference) is type(skeleton)
+    for name, tensor in reference.state_dict().items():
+        torch.testing.assert_close(loaded.state_dict()[name], tensor)
+        assert tuple(skeleton.state_dict()[name].shape) == tuple(tensor.shape)
+    assert all(p.is_meta for p in skeleton.parameters())
+    # The vendored RoPE recomputes its fp32 frequency buffer instead of trusting
+    # whatever a loader installed.
+    assert skeleton.rope.bands.dtype is torch.float32 and not skeleton.rope.bands.is_meta

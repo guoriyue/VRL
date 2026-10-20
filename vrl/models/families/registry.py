@@ -67,6 +67,8 @@ class DenoiseFamilyBuild:
     # its transformer and scheduler; without it the class loads itself through
     # ``replay_cls.from_build`` (non-diffusers loaders, extra schedulers, grafts).
     replay_cls: str
+    # A diffusers export name, or ``module:Class`` for a component the checkpoint
+    # ships as remote code and a family package vendors (``resolve_component_class``).
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
     # Driver-side normalization for deployment inputs that must be resolved
@@ -452,6 +454,26 @@ _register_model_family(
             model_cls="vrl.models.families.qwen_image_21.model:QwenImage21PipelineModel",
             replay_cls="vrl.models.families.qwen_image_21.model:QwenImage21Model",
             transformer_classname="QwenImage21Transformer2DModel",
+        ),
+    ),
+)
+
+_register_model_family(
+    _full_sequence_entry(
+        family="moss_image",
+        task="t2i",
+        model_section_cls="vrl.config.model_schema:ModelSection",
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
+        # MOSS-Image: OpenMOSS 5B single-stream DiT in the FLUX.2 latent space with
+        # a Qwen3.5-9B encoder. The checkpoint ships its DiT and scheduler as
+        # remote code, vendored in moss_image/upstream.py and named here by path.
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.moss_image.model:MossImagePipelineModel",
+            replay_cls="vrl.models.families.moss_image.model:MossImageModel",
+            transformer_classname="vrl.models.families.moss_image.upstream:MOSSImageTransformer",
+            # Replay recomputes log-probs on the training-grid schedule the rollout
+            # sampled; the plain flow-match scheduler would rebuild a different grid.
+            scheduler_classname="vrl.models.families.moss_image.upstream:MOSSImageScheduler",
         ),
     ),
 )

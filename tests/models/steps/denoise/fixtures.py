@@ -71,6 +71,11 @@ TINY_QWEN_JOINT_DIM = 16
 TINY_QWEN21_IN_CHANNELS = 8
 TINY_QWEN21_CONTEXT_DIM = 16
 
+# MOSS-Image feeds UNPACKED 4D latents [B, C, h, w]; C is the FLUX.2 VAE's latent
+# channels x the 2x2 patch fold (4 x 4 here, 32 x 4 released).
+TINY_MOSS_LATENT_SHAPE = (2, 16, 2, 2)
+TINY_MOSS_TEXT_DIM = 16
+
 _TINY_WAN_CONFIG: dict[str, Any] = dict(
     patch_size=(1, 2, 2),
     num_attention_heads=2,
@@ -198,6 +203,21 @@ _TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
             context_in_dim=TINY_QWEN21_CONTEXT_DIM,
             mlp_ratio=2,
             axes_dims_rope=(4, 6, 6),
+        ),
+    ),
+    # Vendored (not a diffusers export), hence the import path. head_dim must be
+    # a multiple of 8 (dim 16 / 2 heads); 24 blocks so the released negative-branch
+    # skip index 22 exists and the production default runs unchanged.
+    "moss_image": (
+        "vrl.models.families.moss_image.upstream:MOSSImageTransformer",
+        dict(
+            dim=16,
+            ffn_dim=32,
+            num_heads=2,
+            num_layers=24,
+            text_dim=TINY_MOSS_TEXT_DIM,
+            freq_dim=8,
+            latent_channels=TINY_MOSS_LATENT_SHAPE[1],
         ),
     ),
 }
