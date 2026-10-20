@@ -1,4 +1,9 @@
-"""pytest-backed test targets that run from Bazel runfiles only."""
+"""pytest-backed test targets that run from Bazel runfiles only.
+
+The runner and its pytest dependency are this repository's, so downstream
+modules can load the macro; pyproject.toml and the support library stay the
+caller's.
+"""
 
 load("@rules_python//python:defs.bzl", "py_test")
 
@@ -18,9 +23,9 @@ def vrl_pytest(name, srcs, deps = [], data = [], args = [], env = {}, support = 
     test_files = [s for s in srcs if s.endswith(".py") and "/test_" in ("/" + s)]
     py_test(
         name = name,
-        srcs = srcs + ["//tools/pytest:main.py"],
-        main = "//tools/pytest:main.py",
-        deps = deps + ["//tools/pytest:main", support],
+        srcs = srcs + [Label("//tools/pytest:main.py")],
+        main = Label("//tools/pytest:main.py"),
+        deps = deps + [Label("//tools/pytest:main"), support],
         data = data + ["//:pyproject.toml"],
         args = args + ["$(location %s)" % s for s in test_files],
         env = env,

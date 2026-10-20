@@ -24,3 +24,5 @@ py_test(
     data = ["//:python_sources"],
     deps = [":ruff_bin"],
 )
+
+exports_files(["ruff_check.py"])
