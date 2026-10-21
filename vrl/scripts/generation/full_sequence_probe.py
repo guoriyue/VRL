@@ -133,6 +133,7 @@ def resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any)
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
+    from vrl.models.families.names import normalize_model_family
 
     role_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
     precision: dict[str, Any] = {
@@ -162,7 +163,7 @@ def resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any)
         preset = OmegaConf.load(args.model_preset)
         if not OmegaConf.is_dict(preset) or not OmegaConf.is_dict(preset.get("model")):
             raise ValueError("model preset must contain a model mapping")
-        if preset.model.get("family", entry.family) != entry.family:
+        if normalize_model_family(preset.model.get("family", entry.family)) != entry.family:
             raise ValueError("model preset family must match --family")
         cfg.model = OmegaConf.merge(
             cfg.model, preset.model, {"family": entry.family, "path": args.path}
