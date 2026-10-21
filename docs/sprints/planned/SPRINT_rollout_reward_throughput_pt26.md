@@ -88,7 +88,7 @@
 
 | 项 | 先测的结果 | 决定 |
 |---|---|---|
-| T1 negative prompt 编码缓存 | 一个 generation batch 中 prompt + negative 编码的占比：SANA 512px batch 8 为 3.0%，SD3.5 512px batch 16 为 0.66%，Wan 480p 33 帧为 0.19%。能缓存的只是其中 negative 那一半 | 不做：上限约 1.5% |
+| T1 negative prompt 编码缓存 | 一个 generation batch 中 prompt + negative 编码的占比：SANA 512px batch 8 为 3.0%，SD3.5 512px batch 16 为 0.66%，Wan 480p 33 帧为 0.19%。能缓存的只是其中 negative 那一半 | 当时不做：上限约 1.5%。2026-10-21 **改为已做**：LoRA run 必须 gen batch == replay batch（parity sprint §5），SD3.5 两个 pilot arm 改成 `samples_per_generation_batch: 1` 后，每个 prompt 的编码在组内重复 group_size 次，正向 prompt 复用的估计收益约 11%（按 batch 1 的编码占比推算，没有在 GPU 上实测）。`generation(executor): encode each prompt once across its batches`：`DenoiseBatchExecutorBase` 按 request id、prompt 下标、prompt 输入、sampling 和 denoise 参数做 key，只缓存最近一个 prompt 的编码；tiny SANA 上与每个 batch 重新编码的输出和轨迹逐位一致（`tests/generation/bindings/full_sequence/test_prompt_encode_reuse.py`） |
 | T2 judge 图像只编码一次 | Qwen3-VL-2B，1024px，4 个问题的耗时是 1 个问题的 3.68 倍 | **已做**：`rewards(qwen3vl_preference): encode the shared images once per judgment`。共享图像前缀的 KV cache：297 ms → 98 ms/图（3.0 倍），峰值 5.8 → 4.6 GB。相对每个问题单独 batch=1 前向的参照值，新实现偏差 ≤3.9e-3，旧的 batched 实现 ≤2.0e-3（都在关掉 reduced-precision reduction 的条件下） |
 | T3 NVFP4 four-over-six | SD3.5 MLP 权重 MSE 降到 0.85 倍（16 个矩阵的中位数） | **已做**：`nn(quantization): choose NVFP4 block scales four over six`。rollout 对 bf16 master replay 的平均 \|Δlogprob\| 在 8 步上全部下降（0.82 → 0.73，batch 8），步时不变（329 ms，batch 2，1024px）。kernel 与 CPU 参考实现逐字节一致的 GPU 测试通过。reward 对比没有做 |
 | T4 跨卡 CFG parallel | 需要多卡 rollout | 不做：触发条件不满足，单卡也测不了 |
