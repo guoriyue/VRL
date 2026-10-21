@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
-    "torch>=2.5.0",
+    # vLLM 0.32 (the ar-vllm extra, installed --no-deps into shared-GPU envs)
+    # pins torch==2.13.0, so the core stack tracks the same minor.
+    "torch>=2.13.0,<2.14",
     "triton>=3.0.0",
     "numpy>=1.26.0",
     "einops>=0.7.0",
@@ -23,7 +25,7 @@ dependencies = [
     "pydantic>=2",
     # Walked by every training path — declared explicitly instead of leaning on a
     # pre-baked .venv.
-    "ray>=2.9.0",          # distributed rollout/reward backend
+    "ray>=2.59.0",         # distributed rollout/reward backend
     # vLLM's CuMem allocator imports its distributed package even when VRL uses
     # only memory parking. Shared-GPU installs add vLLM with --no-deps, so this
     # small dependency must remain in the core environment explicitly.
@@ -51,8 +53,9 @@ cosmos = [
     # 0.40.0 release; tool.uv.sources pins the qualified implementation below.
     "diffusers>=0.40.0,<0.42",
     # 5.17 is Qwen-Image-2.1's floor (Qwen3-VL text encoder); the model stack
-    # and its tiny-real CPU parity tests are qualified against it.
-    "transformers>=5.17.0,<6",
+    # and its tiny-real CPU parity tests are qualified against it. vLLM 0.32,
+    # co-installed with --no-deps in shared-GPU envs, caps it below 5.20.
+    "transformers>=5.17.0,<5.20",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for the denoise model families
@@ -73,7 +76,7 @@ cosmos = [
 # `uv sync --extra reward`.
 reward = [
     "aesthetic-predictor-v2-5==2024.12.18.1",  # SigLIP scorer (upstream AGPL-3.0)
-    "transformers>=5.17.0,<6",
+    "transformers>=5.17.0,<5.20",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
     "decord>=0.6.0",
@@ -113,12 +116,11 @@ ocr = [
 # with the diffusers model/reward stack; the public extra keeps its historical
 # ar-vllm name from the removed token-autoregressive families. The conflicts
 # below keep the ABI isolated, so shared-GPU run envs install vllm directly
-# (--no-deps) plus the additional dependencies its imported entry points need and
-# the core closure lacks (cbor2, gguf, mistral-common[image], openai,
-# openai-harmony, cloudpickle, py-cpuinfo, uvloop) rather than through this
-# extra. See README "Shared-GPU topologies".
+# (--no-deps) rather than through this extra; with vLLM 0.32 the CuMem allocator
+# import needs nothing beyond the core + cosmos closure (pyzmq is declared in
+# core). See README "Shared-GPU topologies".
 ar-vllm = [
-    "vllm>=0.21.0,<0.22",
+    "vllm>=0.32.0,<0.33",
 ]
 # VBench video-eval stack (Bazel target //:vrl_videoeval). VBench is
 # PyPI-packaged so it is a dependency here; the other motion-eval benchmarks

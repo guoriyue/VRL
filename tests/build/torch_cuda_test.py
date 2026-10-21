@@ -17,7 +17,7 @@ PRELOADED = preload()
 
 class TorchCudaTest(unittest.TestCase):
     def test_torch_matches_lock_and_runs_on_gpu(self):
-        self.assertEqual(torch.__version__, "2.11.0+cu130")
+        self.assertEqual(torch.__version__, "2.13.0+cu130")
         self.assertEqual(torch.version.cuda, "13.0")
         self.assertNotIn(".venv", pathlib.Path(torch.__file__).parts)
         self.assertNotIn(".venv", pathlib.Path(sys.executable).parts)
