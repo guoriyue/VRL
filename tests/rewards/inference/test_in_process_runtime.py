@@ -56,6 +56,28 @@ async def test_in_process_runtime_empty_request_returns_empty() -> None:
     assert await runtime.score_batch(request) == []
 
 
+def test_reward_process_reduces_half_precision_gemms_in_full_precision() -> None:
+    # A sample's score must not depend on the batch it shares: with cuBLAS
+    # reduced-precision split-K reductions on, a Qwen3-VL judge answer moved by
+    # up to 2e-2 with the other images in its batch (RTX 5090, torch 2.11).
+    matmul = torch.backends.cuda.matmul
+    original = (
+        matmul.allow_fp16_reduced_precision_reduction,
+        matmul.allow_bf16_reduced_precision_reduction,
+    )
+    try:
+        matmul.allow_fp16_reduced_precision_reduction = True
+        matmul.allow_bf16_reduced_precision_reduction = True
+        InProcessRewardScorer(model=_SumMediaModel())
+        assert matmul.allow_fp16_reduced_precision_reduction is False
+        assert matmul.allow_bf16_reduced_precision_reduction is False
+    finally:
+        (
+            matmul.allow_fp16_reduced_precision_reduction,
+            matmul.allow_bf16_reduced_precision_reduction,
+        ) = original
+
+
 class _FakeCumemAllocator:
     """Record CuMem calls made by a parked in-process reward runtime."""
 

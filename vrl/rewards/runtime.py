@@ -305,6 +305,16 @@ class InProcessRewardScorer:
         model: Any | None = None,
         media_temp_dir: str | None = None,
     ) -> None:
+        import torch
+
+        # Every in-process reward model, locally, in a Ray actor or behind the
+        # HTTP service, starts here, and none of them runs
+        # apply_float32_precision. With cuBLAS reduced-precision reductions on,
+        # a Qwen3-VL judge's answer probability for one image moved by up to
+        # 2e-2 with the other images in its batch (RTX 5090, torch 2.11); off,
+        # it stays within 4e-3 of its batch-1 value.
+        torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
         # Typed runtime contract; the verbatim bag still feeds the factory.
         self._worker_config = RewardWorkerConfig.from_mapping(worker_config)
         self._parking = RewardParking(self._worker_config)
