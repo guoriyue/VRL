@@ -2,6 +2,8 @@
 
 状态：**planned（2026-10-20），实验优先**。两个实验都通过后才考虑合入库结构。
 
+**两个实验的代码都没有入库**：试点都是零结果（§4）。实验 A 的路由（`metadata_filter`、`metadata.source_manifest` 标签、路由 reward preset、`dataset/pickscore_safety_mixture` 和两组实验 preset）与实验 B 的蒸馏脚本按用户决定撤掉。§4 保留为试点记录，其中引用的代码和 preset 已不存在。`--joint-min` 保留。
+
 来源：PyTorch Conference NA 2026 Day 1：043 Nemotron 3 技术报告 §3.2、海报 P83 MOPD、031 联合指标、091/109 gate 语义。
 
 ## 0. 背景与结论先行
@@ -99,3 +101,28 @@
   2. **路由组每个 prompt 只有一路信号**：安全 prompt 的信号几乎全是常数 0，等于一半样本白跑，PickScore 的有效更新也只有加权组的一半左右。
   3. **共同的干扰**：LoRA 起作用之后，gen batch 8 → replay batch 1 的瘦 GEMM 带来约 8e-3 的 logprob 差，第一轮 PPO 有 17–29% 的样本在 1e-4 的 clip 下被裁剪，各组都受影响（见 parity sprint §5 的更正）。
 - 想要一个有意义的结论，需要一对在 SD3.5 上真正有张力、而且约束没有饱和的目标，加上更长的训练和 gen batch == replay batch。
+
+### 收尾核对（2026-10-21，CPU，未用 GPU）
+
+逐项核对计划与源码后的状态：
+
+| 项 | 状态 | 依据 |
+|---|---|---|
+| P0 联合指标 | 已完成 | `vrl/scripts/eval/score_report.py` 的 `joint_min` / `--joint-min`，测试在 `tests/scripts/eval/test_score_report.py`。τ 取 base 的中位数，要先打完分才知道，所以不往 `image_checkpoint_eval.py` 加阈值参数，而是对它产出的 `report/scores.jsonl` 再跑一次 `score_report`（命令见下）。 |
+| P1.1 环境标签 | 已撤掉（用户决定） | 原来在 `vrl/trainers/data/prompts.py` 写 `metadata.source_manifest`。 |
+| P1.2 metadata 过滤 | 已撤掉（用户决定） | 原来在 `MultiReward.from_mapping` / `score_batch`。 |
+| P1.3 对照组 preset | 已撤掉（用户决定） | 原来是 `experiment/sd3_5/online_grpo_pickscore_safety_{weighted,routed}.yaml`。 |
+| P1.4 判据 | 试点为零结果；复跑随路由代码一起取消 | — |
+| P2.1 两个 specialist | 试点用的是 scratch 里的 YAML；路由组 preset 撤掉后，复跑要另写 preset | — |
+| P2.2 蒸馏脚本 | 已撤掉（用户决定） | 一次性脚本，试点为零结果，不入库 |
+| P2.3 判据 | 试点为零结果；B 的复跑没有排队 | 见下方"待用户决定"。 |
+| P3 采纳 | 已决定 | 都没有胜出：路由和蒸馏都撤掉，只保留联合指标 |
+| §3 不做项 | 维持不做 | Lagrangian / hard floor / gating 已试过或撤回；零方差过滤和 pass-rate 课程归 `SPRINT_production_reward_and_rl_data.md` G4/G5 等计划，补充段落已在（该文件 §6、`SPRINT_ngu_adaptive_sampling.md` 065 条）。 |
+
+#### 不做（有测量结论）
+- 不加 Lagrangian、hard floor、gating 或新的固定权重 combiner：§0 和 §3 的结论不变，固定权重已证明推不开前沿。
+- 不把路由或蒸馏做成正式 algorithm：P1/P2 的判据在试点里都没过。
+- 不给 `image_checkpoint_eval` 加 `--joint-min`：τ 依赖 base 的打分结果，先评估、再用 `score_report` 出联合指标正好是两步，加参数只会多一条路径。
+
+#### 待用户决定
+- **饱和问题**：gen batch 1 只消除第 3 个干扰，安全约束在 danbooru 训练 prompt 上饱和（97% 的组 advantage 为 0）的问题仍在。要换成 SD3.5 上真正会违规的 prompt 集，得先在 base 上测每个 prompt 的违规率，这属于 `SPRINT_production_reward_and_rl_data.md` G4 的离线难度剖面，不在本 sprint 里做。
