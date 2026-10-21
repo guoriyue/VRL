@@ -113,3 +113,53 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 - 不把 batch-invariant 设成生产默认。
 - 不自写 OpGuard 式的 kernel 指纹框架：用现成的 DebugMode 或 OpGuard。
 - 训练侧 FP8 前向是 P56 指出的根本解法，但它依赖 Blackwell 硬件和训练量化 seam。等 P2 测出 FP8 rollout 的后期漂移确实存在，再单独立项。
+
+## 5. 实施记录（2026-10-20，RTX 5090，torch 2.11）
+
+### 已落地
+| 项 | commit 主题 | 结论 |
+|---|---|---|
+| P0 探针 | `scripts(generation): add a rollout/replay parity divergence probe` | `vrl/scripts/generation/parity_divergence_probe.py`：逐模块定位第一个分歧点，按步给出 max/mean \|Δlogprob\|；对照开关 `--replay-batch`、`--replay-compile`/`--rollout-compile`、`--quantize ... --replay-dequantize`、`--rollout-sdpa/--replay-sdpa`、`--reduced-precision-reduction`、`--batch-invariant` |
+| P1 第 0 步 | `models(precision): reduce fp16/bf16 GEMMs in full precision` | 生产默认关掉 cuBLAS reduced-precision reduction |
+| 奖励进程同样处理 | `rewards(runtime): reduce half-precision GEMMs in full precision in reward processes` | Qwen3-VL judge 的分数不再随同 batch 的其他图变化 2e-2 |
+| P3.1 FSDP cast | `trainers(fsdp): compute in the stored dtypes and leave inputs to the model` | 根因比计划里设想的大：除了 root 的输入 cast，actor 策略还把 diffusers 固定为 fp32 的模块（Wan 的 norm 和 `scale_shift_table`、SANA）降成了 bf16/fp16 |
+
+### 实测（gen batch 4 → replay batch 1，除注明外 8 步）
+| 家族 | 对照 | max \|Δlogprob\| | 第一个分歧点 |
+|---|---|---|---|
+| SD3.5 Medium bf16 | reduced-precision reduction 开 | 1.1e-1 | `context_embedder`（K=4096 的长 K GEMM） |
+| SD3.5 | 关（现在的默认） | 3.7e-9 | 无 |
+| SD3.5 | 关，batch 8→1、4→3 | 3.0e-8 | 无 |
+| SANA 1600M fp16 | 开 / 关 | 1.5e-3 / 7.5e-4 | LoRA 的 `to_q.lora_A`（N=32 的瘦 GEMM） |
+| SANA | 关 + batch_invariant_ops | 1.1e-3 | `ff.conv_point`（1x1 卷积，batch_invariant_ops 不覆盖） |
+| Wan2.1 1.3B（不 compile，6 步） | 开 / 关 | 5.0e-3 / 3.7e-9 | — |
+| SD3.5 | SDPA flash vs cudnn / flash vs efficient | 8.8e-2 / 8.8e-2 | attention 之后第一个 Linear |
+| SD3.5 | 只 replay compile（regional） | 1.4e-1 | — |
+| SD3.5 | 两侧 compile，replay 不开 grad，batch 相同 | 0（逐位一致） | — |
+| SD3.5 | 两侧 compile，replay 不开 grad，batch 4→1 | 4.3e-2 | — |
+| SD3.5 | 两侧 compile，replay 开 grad（真实训练），batch 相同 | 6.9e-2 | inference 图和 autograd 图不是同一张图 |
+| Wan2.1 1.3B preset（默认开 compile） | 同 batch、replay 开 grad | 1.3e-2 | 超过 0.01 的 gate |
+| SD3.5 | FP8 rowwise rollout vs bf16 master replay | 9.2e-1（最后一步） | 第 0 块 `attn.to_q` |
+| SANA | FP8 rollout vs fp16 master replay | 6.1e2 | `caption_projection.linear_1`；排除它后仍有 5.1e2，SANA 的 fp16 激活接近上限，不适合 FP8 |
+| SD3.5 | NVFP4 max scaling / four-over-six | 平均 0.82 / 0.73 | 见吞吐 sprint T3 |
+
+所有差异都集中在最后一两步（R5 的放大效应）：例如 SD3.5 在 reduction 开着时，第 0–5 步只有 8e-5 到 1e-3，第 7 步才到 1.1e-1。
+
+### P1 判定
+- SD3.5 和 Wan 只靠"关掉 reduced-precision reduction"就达到了 ≤1e-6 的目标，不需要 batch_invariant_ops，所以**不做** batch-invariant 诊断开关。
+- SANA 剩余约 1e-3 来自 cuBLAS 瘦 GEMM 和 cuDNN 1x1 卷积的选核，在 0.01 的 gate 之下。要逐位一致，需要卷积也 batch-invariant，代价不值得。
+- batch_invariant_ops 原版的 Triton 配置在 sm120 上超出 shared memory，探针里用的是把 `num_stages` 改成 2 的本地副本。
+
+### 对现有约束的影响
+- "gen batch == replay batch"这条约束：SD3.5 和 Wan 在默认设置下已经可以放开（3.7e-9），SANA 也在 gate 内（7.5e-4）。preset 里的 `samples_per_generation_batch: 1` 大多出于显存考虑，没有改。
+- "compile off"这条约束仍然成立：compile 后的 replay（开 grad）和任何 rollout 都不是同一张图，SD3.5 差 7e-2，Wan 差 1.3e-2。所以开 compile 的 preset（SD3.5 PickScore、Wan 1.3B）首步 parity gate 会失败，或者需要 TIS/RS 兜底。
+
+### R4（logprob 归约）
+fp32 `.mean` 在真实流程里的误差底是 3e-9 到 3e-8（上面"关"的几行），不需要改成固定顺序。
+
+### P2 长跑漂移
+- 500 次 update 的 FP8 长跑**没有做**：单卡和另一会话共享，GPU 时间优先给了多目标实验。FP8 在 SD3.5 上第 0 次 update 前就已经差 0.9（最后一步），已经足够说明 FP8 rollout 必须开 TIS/RS。
+
+### P3
+- P3.2：attention 后端之间差 8.8e-2（SD3.5），已写进本表；ring CP 和 SP 只能在多卡上测。
+- P3.3（SDC）：按计划不做。

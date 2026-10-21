@@ -68,3 +68,45 @@ FSDP replay 能 compile 之后，有两个好处：大视频家族的 replay 会
 
 - 不引入 CUDA graph 和 reduce-overhead。这一块归 `SPRINT_rollout_reward_throughput_pt26.md` 的 CUDA graph 探针。
 - 不做 TorchTitan GraphTrainer 那种整步成图。
+
+## 4. 实施记录（2026-10-20，单卡 RTX 5090，torch 2.11）
+
+### P0 重测（replay 前向 + 反向，6 个 SDE 步，LoRA，单 rank NCCL）
+SD3.5 Medium，batch 2，512px：
+
+| 组合 | 能否运行 | 每次 replay（warm） | 峰值显存 | 相对 eager rollout 的 \|Δlogprob\|（最后一步） |
+|---|---|---|---|---|
+| eager，无 FSDP | 是 | 1.25 s | 25.4 GB | 0 |
+| eager + FSDP | 是 | 1.35 s | 25.4 GB | 0 |
+| regional compile，无 FSDP | 是 | 0.91 s | 21.8 GB | 9.7e-2 |
+| compile → FSDP（VRL 现有顺序） | 是 | 1.00 s | 21.8 GB | 1.0e-1 |
+| FSDP → compile | 是 | 0.98 s | 21.7 GB | 9.8e-2 |
+| root compile + FSDP | 是 | 0.97 s | 21.7 GB | 1.0e-1 |
+| eager + full AC + FSDP | 是 | 1.85 s | 16.6 GB | 0 |
+| regional compile + full AC + FSDP | 是 | 1.30 s | 16.4 GB | 1.0e-1 |
+| root compile + full AC | 是 | 1.11 s | 16.3 GB | 1.2e-1 |
+| regional compile + selective AC（±FSDP） | 是 | 1.14–1.24 s | 16.7–16.9 GB | 1.0e-1 |
+
+另外两个家族：
+- Cosmos-Predict2.5 2B（256px，9 帧）：regional 和 root compile 加 full AC、regional 加 selective AC 都能跑。
+- Wan2.1 1.3B：regional compile 加 full AC 能跑；**regional compile 加 selective AC 复现了** `InternalTorchDynamoError: checkpoint not implemented for NestedUserFunctionVariable context_fn`。
+
+冷编译 16.6–18.6 s（regional）、62–72 s（root）；同机 warm 缓存是 3.9–6.1 s。
+
+### P1 放开的冲突（`config(validation): allow torch.compile with full activation checkpointing`）
+- compile × full AC：放开。
+- compile × selective / full_cpu：保留。selective 在 Wan 上失败；full_cpu 没有测过。
+- compile × FSDP：**保留**，但报错信息改成实测结论：单 rank 上两种包装顺序都能跑，多 rank 的 reshard-after-forward all-gather 还没验证（这台机器只有一张卡）。
+- 删掉了 `enable_transformer_gradient_checkpointing` 和 `build_strategy` 里重复的运行时检查。所有入口都经过 `BuiltConfigs.from_cfg` → `require_training_config`，配置加载时就会拒绝。
+- 两个 Cosmos preset 里过时的注释已更新。
+
+### 数值上的限制（决定了 compile 能用在哪里）
+compile 后的 replay 和 eager rollout 不是同一张图，最后一步差 0.1。两侧都 compile 也不行：replay 开 grad 时是 autograd 图，和 rollout 的 inference 图仍差 7e-2（Wan 1.3e-2）。所以：
+- 只在开了 TIS/RS（精度标签不同）的配方里，replay compile 是安全的；
+- 严格 on-policy 且要求首步 parity 的配方，应该 replay 用 eager。
+
+### P2 冷编译缓存（`scripts(train): keep the torch.compile cache across reboots`）
+`vrl-train` 在 Ray 启动前把 `TORCHINDUCTOR_CACHE_DIR` 默认设为 `~/.cache/vrl/torchinductor`，launcher 已设置的值优先。`save_cache_artifacts` / mega-cache 没有做：它解决的是跨机器分发，目前没有多机。
+
+### P3 graph break 普查
+SD3.5、SANA、Wan2.1 1.3B 的 regional compile 都是 **0 个 graph break**（`TORCH_LOGS=graph_breaks`）。所以 `fullgraph=True` 不会带来速度收益；按家族加开关又属于保护性机制，不做。

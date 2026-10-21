@@ -68,3 +68,31 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 
 - 不把 `torch.cuda.*` 改成 `torch.accelerator.*`（042）：VRL 只跑 CUDA，这只是改名，按 CLAUDE.md 的清理规则不做。
 - 这一轮不加 GPU CI lane。GPU 主机不在 CI 里；预检清单写在本文件，手动执行。
+
+## 4. 实施记录（2026-10-20）
+
+### P0
+- **`device_id`**：`fix(distributed): bind NCCL default groups to the rank device`。trainer 在 `set_device` 之后传 `context.device`；多卡 engine 的 nccl 组传当前设备；`tools/delivery/node_rank.py` 也一样。gloo 路径不变。
+  - 风险：绑定设备后 NCCL 会提前建好通信器，之后建子组会走 `ncclCommSplit`。CP 的 gloo 子组只含部分 rank，不在组内的 rank 会做一次 nocolor split；每个 rank 的 split 次数相同，理论上不会死锁，但 cp≥2 且 dp≥2 时必须在多卡上确认。
+- **torchcomms**：torch 2.11 确实读取 `TORCH_DISTRIBUTED_USE_TORCHCOMMS`，但只有 `torchcomms` 包能 import 时才生效。这个包不在 venv 里，也不在 `uv.lock` 里，所以现在设这个变量既没效果也不报错。P0 第 2 步要先把这个包加进 lock。
+
+### P1 升级分支（独立分支，不合入 main）
+- 分支 `worktree-agent-afc02c2a4afb728e9`，commit `6628b1e97 build(deps): torch 2.13, vLLM 0.32, Ray 2.59, transformers <5.20`。
+- vLLM 0.32.0 要求 `torch==2.13.0`、`torchvision==0.28.0`、`transformers>=5.16.1,<5.20`；lock 解析结果是 torch 2.13.0+cu130、triton 3.7.1、ray 2.59.0、transformers 5.17.0（不变）、pillow 13.0.0。
+- 独立环境在 scratch 目录的 `venv_upgrade`，`.venv` 没有动。
+- CPU 测试在新旧环境下结果**完全一致**：主要几组都是 1822 passed / 8 skipped；其余目录 787 passed / 1 failed；Ray slow 113 passed / 1 failed。两个失败在 main 上同样存在，与升级无关。
+- `bazel test //...` 在本机下载依赖时 `Unknown host`，没有跑成。
+- GPU 测试：见下方补充。
+
+### P2 Ray 2.59 token 认证（实测）
+- `ray.init(address="local")` 新建集群时，Ray 会在 driver 里写入 `RAY_AUTH_MODE=token`（`ray.shutdown()` 之后也不清除），在 `~/.ray/auth_token` 生成 token，并打一条 WARNING。运行不会失败。
+- 用显式地址连接已有集群时不会自动开启认证。不带 token 去连一个有 token 的集群，报的是普通的 `ConnectionError`，错误信息里不提认证。
+- 跨节点时，head、worker 节点和 driver 上都要设 `RAY_AUTH_MODE=token` 并共享同一个 token，或者全局设 `RAY_AUTH_MODE=disabled`。VRL 是否显式设置这个变量，需要用户决定。
+
+### 私有 API 核对（torch 2.13 / vLLM 0.32）
+- FSDP2 的 `_get_fsdp_state`、`_fsdp_param_groups`、`reset_sharded_param`，DTensor 的 `_local_tensor`，以及 `torch._scaled_mm` 和 `OptimizedModule` 都还在。
+- 2.13 的单数 `_fsdp_param_group` 变成了弃用 property；`parking.py:174` 先取复数形式，所以不受影响。
+- vLLM 0.32 的 `allocator_and_pools` 从"每个 tag 一个元组"改成"每个 tag 一个列表"；`wake_up(tags)` 现在还会唤醒所有不在 `DEFERRABLE_TAGS` 里的 tag。目前一个进程只有一个 owner，所以基本等价，但要用 GPU 测试确认。
+
+### 顺带发现
+`.venv` 里已经没有 vllm 了（memory 里记录的手动安装被某次 sync 清掉了），所以 colocated 的 CuMem parking 在 `.venv` 下跑不起来。这次 GPU 运行用的是 scratch 目录里按 lock 同步、再单独装了 vllm 0.21 的 `venv_main`。按 CLAUDE.md 不能手动装进 `.venv`，需要用户决定要不要恢复。

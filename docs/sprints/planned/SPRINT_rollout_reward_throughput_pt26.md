@@ -83,3 +83,17 @@
 - 不接入 SGLang-Diffusion 或 vLLM-Omni 作为 rollout 后端；它们只用作性能基准。
 - 不做流水线化的 Ulysses all-to-all：只有 SD3 有 SP，`sequence_parallel.py` 的 docstring 说明图像 token 量级下 all-to-all 受延迟限制。等出现视频家族的 SP rollout 需求再说。
 - 不做"精确 / 无损 / 近似"三级质量档：目前没有两种近似同时启用的场景。
+
+## 4. 实施记录（2026-10-20，RTX 5090，torch 2.11）
+
+| 项 | 先测的结果 | 决定 |
+|---|---|---|
+| T1 negative prompt 编码缓存 | 一个 generation batch 中 prompt + negative 编码的占比：SANA 512px batch 8 为 3.0%，SD3.5 512px batch 16 为 0.66%，Wan 480p 33 帧为 0.19%。能缓存的只是其中 negative 那一半 | 不做：上限约 1.5% |
+| T2 judge 图像只编码一次 | Qwen3-VL-2B，1024px，4 个问题的耗时是 1 个问题的 3.68 倍 | **已做**：`rewards(qwen3vl_preference): encode the shared images once per judgment`。共享图像前缀的 KV cache：297 ms → 98 ms/图（3.0 倍），峰值 5.8 → 4.6 GB。相对每个问题单独 batch=1 前向的参照值，新实现偏差 ≤3.9e-3，旧的 batched 实现 ≤2.0e-3（都在关掉 reduced-precision reduction 的条件下） |
+| T3 NVFP4 four-over-six | SD3.5 MLP 权重 MSE 降到 0.85 倍（16 个矩阵的中位数） | **已做**：`nn(quantization): choose NVFP4 block scales four over six`。rollout 对 bf16 master replay 的平均 \|Δlogprob\| 在 8 步上全部下降（0.82 → 0.73，batch 8），步时不变（329 ms，batch 2，1024px）。kernel 与 CPU 参考实现逐字节一致的 GPU 测试通过。reward 对比没有做 |
+| T4 跨卡 CFG parallel | 需要多卡 rollout | 不做：触发条件不满足，单卡也测不了 |
+| T5 CUDA graph 探针 | 去噪循环里 GPU 的空闲比例：SANA 512px batch 1 为 21%，SD3.5 512px batch 1 为 11%；生产配置下 SANA 512px batch 8 为 5.2%，SD3.5 batch 16 为 1.1%，SANA 1024px batch 4 为 2.7% | 不做：生产配置低于 15% 的门槛 |
+| T6 交接计时 + 少一次 put | — | 少一次 put **已做**：`feat(rollout): stage pipelined reward media once, on the rank`（pipelined 下 media 在 object store 里从两份变一份）。它只减少工作，不需要先测。交接计时不做：没有决定要读它 |
+| T7 trainer 阶段计时常开 | 不做 sync 的计时器每个阶段约 1.3 µs，每步约 0.4 ms | **已做**：`feat(trainer): record host wall-clock trainer phases on every step`。tiny SANA CPU bench 上，各阶段之和覆盖步时的 91% |
+
+顺带发现：reward 进程从来不调用 `apply_float32_precision`，所以 judge 的分数会随同 batch 的其他图变化最多 2e-2。现在 `InProcessRewardScorer` 构造时会关掉 reduced-precision reduction（见 parity sprint §5）。

@@ -1,6 +1,8 @@
 # SPRINT：用 Claude 开发 VRL 的护栏——仓库内 review skill 与确定性 hook
 
-状态：**planned（2026-10-20）**。P2 会修改 `.claude/` 下的配置，需要用户逐项同意后才执行。
+状态：**P0–P2 已实施（2026-10-20/21），只剩一项等用户决定**：要不要把 CLAUDE.md 的编码规则搬进 review skill（见 §4 "待用户决定"）。用户拍板后，按决定执行完这一项，就删除本文件。
+
+**2026-10-21 用户决定：`.claude/` 下的东西一律不进 git。** 本文原计划把 skill 和 hook 放进仓库（P2 写的是项目级 `.claude/settings.json`），这一条作废，见 §5。
 
 来源：PyTorch Conference NA 2026 Day 1：046《Fighting Agents with Agents: Claude in PyTorch CI》、016 PyTorch AI coding playbook BoF、061 KernelAgent、032 vLLM nightly triage。
 
@@ -52,3 +54,25 @@ CLAUDE.md 只保留这份 skill 的入口和少数硬规则，避免两处重复
 
 - 不在 GitHub 上部署 `@claude` workflow、triage bot 或 CI Advisor：这是单人仓库，没有外部 PR 洪流（046 的场景是每天上百个 PR）。
 - 不加 `AGENTS.md` 软链接：目前只用 Claude Code。
+
+## 3. 实施记录（2026-10-20/21）
+
+规则：`.claude/` 下的 skill、hook、settings 都留在本机，不提交，`.gitignore` 整体忽略 `.claude/`。所以下面的 skill 和 hook 只在本机，仓库里只有 CLAUDE.md 指向 skill 的一行入口和空参数化的 pytest 配置。
+
+| 条目 | 状态 | 证据 |
+| --- | --- | --- |
+| P0 review skill 的检查项 | 已实施（本机） | `.claude/skills/review/SKILL.md` §1：CLAUDE.md 的规则改写成检查项，另加 device-to-host 同步、空参数化、数值、所有权、commit 形状几条 |
+| P0 CLAUDE.md 只留入口 | 换了做法，见"待用户决定" | `CLAUDE.md` 最后一条 bullet；skill 开头写明"不重述 CLAUDE.md" |
+| P0 memory 中可用代码/配置表达的规则迁入 | 已实施 | skill 第 2、4、9 条（单调用方 helper、不做投机机制、config/state/command）；空参数化改成 pytest 配置 `empty_parameter_set_mark = "fail_at_collect"`（`build(pytest): fail collection on an empty parametrize`） |
+| P0 验收 | 已实施 | 用 skill 让 subagent 回审 10 个 commit，找出 5 条应修的问题（静默变 0 的 reward、空操作的设置、测量和语义改变混在一个 commit、注释引用后面才有的行为、死代码），都已修复 |
+| P1 审计 JSON 输出 | 已实施（本机） | skill §2：`{item, verdict: keep\|delete\|unsure, evidence_paths, callers_counted, reason}` |
+| P2.1 拦 `git push` / P2.2 拦往 `.venv` 装包 | 已实施（本机） | `.claude/hooks/guard_bash.py`，登记在 `.claude/settings.json` 的 PreToolUse(Bash)；只在命令位置匹配，解析出错时放行；测试在 `.claude/hooks/test_bash_guard_hook.py` |
+| P2.3 时间预算提醒 | 不做 | 没有对应需求 |
+
+`vrl/trainers` + `vrl/algorithms` 里的 `.item()` 现在是 45 处（立项时 44 处），按计划留在 skill 第 7 条作为 AI lint，不加计数门禁。
+
+**待用户决定**：
+
+1. CLAUDE.md 是否瘦身到"只留 skill 入口 + 少数硬规则"。现在的做法反过来：编码规则仍放在 CLAUDE.md，skill 只引用、不重述，两处也没有重复。CLAUDE.md 每个会话都会加载，skill 要按需加载；把签名、helper、测试规则搬进 skill，写代码时就不一定能看到这些规则。所以没有照计划搬。
+2. CLAUDE.md 那一行入口指向的 `.claude/skills/review/` 只在本机，别的 checkout 里不存在。保留这一行，还是删掉。
+3. origin 上已有的 `.claude/skills/reward`（指向 `reward/skills/reward` 的软链接）是这条规则之前提交的，还在跟踪。要不要也撤掉。
