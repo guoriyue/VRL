@@ -26,6 +26,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
@@ -221,13 +222,17 @@ class TrainerProcessGroup(DefaultProcessGroup):
         self._cpu_coordination_group: Any = None
 
     @classmethod
-    def open(cls, context: DistributedTrainingContext) -> TrainerProcessGroup:
+    def open(
+        cls, context: DistributedTrainingContext, *, output_dir: str | Path
+    ) -> TrainerProcessGroup:
         """Create this rank's groups; ``single_process`` creates none.
 
         A failure after the default group exists tears down what was built
         before it propagates. ``DistributedTrainingContext.from_root``
         validates rank and world-size identity; torch's environment rendezvous
         validates ``MASTER_ADDR`` and ``MASTER_PORT`` when creating the group.
+        An NCCL group dumps its flight recorder under ``output_dir`` when a
+        collective times out.
         """
 
         import torch.distributed as dist
@@ -243,6 +248,21 @@ class TrainerProcessGroup(DefaultProcessGroup):
             # device-mesh subgroups split from it; torch 2.15's torchcomms
             # default requires a bound device.
             device_kwargs["device_id"] = context.device
+            # NCCL flight recorder: torch records the recent collectives by
+            # default (2000 entries); on a collective timeout each rank writes
+            # them to <dump_dir>/rank_<rank>, which shows the collective every
+            # rank is stuck in. Every trainer rank passes here before NCCL
+            # starts, whatever launched it; torch reads these at group creation
+            # and at dump time. A value the launcher set, under either of
+            # torch's names for it, wins.
+            os.environ.setdefault("TORCH_NCCL_DUMP_ON_TIMEOUT", "1")
+            if (
+                not {"TORCH_FR_DUMP_TEMP_FILE", "TORCH_NCCL_DEBUG_INFO_TEMP_FILE"}
+                & os.environ.keys()
+            ):
+                dump_dir = Path(output_dir) / "nccl_flight_recorder"
+                dump_dir.mkdir(parents=True, exist_ok=True)
+                os.environ["TORCH_FR_DUMP_TEMP_FILE"] = f"{dump_dir}/rank_"
         # Symmetric runs keep torch's default timeout and its exact call shape;
         # only context-parallel runs lengthen it (see collective_timeout).
         timeout_kwargs = {"timeout": collective_timeout(context)} if context.cp_size > 1 else {}
@@ -281,7 +301,7 @@ class TrainerProcessGroup(DefaultProcessGroup):
         if not dist.is_initialized():
             raise RuntimeError(
                 f"{context.strategy} needs a process group: open "
-                "TrainerProcessGroup.open(context) before preparing the model",
+                "TrainerProcessGroup.open(context, output_dir=...) before preparing the model",
             )
         if dist.get_rank() != context.rank or dist.get_world_size() != context.world_size:
             raise RuntimeError(

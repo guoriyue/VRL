@@ -665,8 +665,10 @@ def test_fsdp_prepare_model_without_a_process_group_is_refused(monkeypatch) -> N
         )
 
 
-def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) -> None:
+def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch, tmp_path) -> None:
     """Physical rank 3 still owns logical cuda:0 after launcher masking."""
+
+    import os
 
     import torch.distributed as dist
 
@@ -682,8 +684,10 @@ def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) ->
     monkeypatch.setattr(torch.cuda, "set_device", bound_devices.append)
     monkeypatch.setattr(dist, "init_process_group", lambda **kwargs: init_calls.append(kwargs))
     monkeypatch.setattr(dist, "new_group", lambda **kwargs: None)
+    # Opening an NCCL group writes flight-recorder settings into the environment.
+    monkeypatch.setattr(os, "environ", dict(os.environ))
 
-    TrainerProcessGroup.open(context).shutdown()
+    TrainerProcessGroup.open(context, output_dir=tmp_path).shutdown()
 
     assert bound_devices == [torch.device("cuda:0")]
     assert init_calls == [

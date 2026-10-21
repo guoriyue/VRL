@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -110,8 +112,21 @@ def test_fsdp_local_rank_must_be_in_range() -> None:
 # ── TrainerProcessGroup: the process owns its groups ────────────────────────
 
 
+_FLIGHT_RECORDER_ENV = (
+    "TORCH_NCCL_TRACE_BUFFER_SIZE",
+    "TORCH_FR_BUFFER_SIZE",
+    "TORCH_NCCL_DUMP_ON_TIMEOUT",
+    "TORCH_FR_DUMP_TEMP_FILE",
+    "TORCH_NCCL_DEBUG_INFO_TEMP_FILE",
+)
+
+
 class _FakeTorchDistributed:
-    """torch.distributed's group lifecycle, recorded instead of performed."""
+    """torch.distributed's group lifecycle, recorded instead of performed.
+
+    The process environment is a private copy without flight-recorder keys;
+    ``init_env`` holds those keys as group creation saw them.
+    """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail_subgroup: bool = False):
         from types import SimpleNamespace
@@ -122,6 +137,12 @@ class _FakeTorchDistributed:
         self.events: list[str] = []
         self._fail_subgroup = fail_subgroup
         self.group = SimpleNamespace(WORLD=None)
+        self.init_env: dict[str, str] = {}
+        monkeypatch.setattr(
+            os,
+            "environ",
+            {key: value for key, value in os.environ.items() if key not in _FLIGHT_RECORDER_ENV},
+        )
         monkeypatch.setattr(dist, "is_initialized", lambda: self.live)
         monkeypatch.setattr(dist, "init_process_group", self._init)
         monkeypatch.setattr(dist, "new_group", self._new_group)
@@ -134,6 +155,7 @@ class _FakeTorchDistributed:
 
     def _init(self, **kwargs):
         self.events.append(f"init:{kwargs['backend']}")
+        self.init_env = {key: os.environ[key] for key in _FLIGHT_RECORDER_ENV if key in os.environ}
         self.live = True
         self.group.WORLD = "world-group"
 
@@ -155,10 +177,10 @@ def _rank(device: str = "cuda:0") -> DistributedTrainingContext:
     )
 
 
-def test_process_group_lives_until_its_owner_shuts_it_down(monkeypatch) -> None:
+def test_process_group_lives_until_its_owner_shuts_it_down(monkeypatch, tmp_path) -> None:
     fake = _FakeTorchDistributed(monkeypatch)
 
-    group = TrainerProcessGroup.open(_rank())
+    group = TrainerProcessGroup.open(_rank(), output_dir=tmp_path)
     assert fake.events == ["init:nccl", "subgroup:gloo"]
     assert TrainerProcessGroup.cpu_group() == "cpu-group"
     TrainerProcessGroup.require(_rank())
@@ -170,58 +192,101 @@ def test_process_group_lives_until_its_owner_shuts_it_down(monkeypatch) -> None:
     assert TrainerProcessGroup.cpu_group() is None
 
 
-def test_a_failed_run_still_destroys_the_process_group(monkeypatch) -> None:
+def test_an_nccl_group_dumps_its_flight_recorder_under_the_run_directory(
+    monkeypatch, tmp_path
+) -> None:
     fake = _FakeTorchDistributed(monkeypatch)
 
-    with pytest.raises(ValueError, match="run failed"), TrainerProcessGroup.open(_rank()):
+    TrainerProcessGroup.open(_rank(), output_dir=tmp_path).shutdown()
+
+    assert fake.init_env == {
+        "TORCH_NCCL_DUMP_ON_TIMEOUT": "1",
+        "TORCH_FR_DUMP_TEMP_FILE": f"{tmp_path}/nccl_flight_recorder/rank_",
+    }
+    assert (tmp_path / "nccl_flight_recorder").is_dir()
+
+
+def test_launcher_flight_recorder_settings_win_under_either_torch_name(
+    monkeypatch, tmp_path
+) -> None:
+    fake = _FakeTorchDistributed(monkeypatch)
+    launcher = {
+        "TORCH_NCCL_DUMP_ON_TIMEOUT": "0",
+        "TORCH_NCCL_DEBUG_INFO_TEMP_FILE": "/shared/fr/rank_",
+    }
+    os.environ.update(launcher)
+
+    TrainerProcessGroup.open(_rank(), output_dir=tmp_path).shutdown()
+
+    assert fake.init_env == launcher
+    assert not (tmp_path / "nccl_flight_recorder").exists()
+
+
+def test_a_gloo_group_sets_no_flight_recorder(monkeypatch, tmp_path) -> None:
+    fake = _FakeTorchDistributed(monkeypatch)
+
+    TrainerProcessGroup.open(_rank("cpu"), output_dir=tmp_path).shutdown()
+
+    assert fake.events == ["init:gloo", "destroy"]
+    assert fake.init_env == {}
+    assert not (tmp_path / "nccl_flight_recorder").exists()
+
+
+def test_a_failed_run_still_destroys_the_process_group(monkeypatch, tmp_path) -> None:
+    fake = _FakeTorchDistributed(monkeypatch)
+
+    with (
+        pytest.raises(ValueError, match="run failed"),
+        TrainerProcessGroup.open(_rank(), output_dir=tmp_path),
+    ):
         raise ValueError("run failed")
 
     assert fake.events[-1] == "destroy"
     assert not fake.live
 
 
-def test_a_half_built_process_group_is_destroyed(monkeypatch) -> None:
+def test_a_half_built_process_group_is_destroyed(monkeypatch, tmp_path) -> None:
     """The default group exists when the CPU subgroup fails; open tears it down."""
 
     fake = _FakeTorchDistributed(monkeypatch, fail_subgroup=True)
 
     with pytest.raises(RuntimeError, match="gloo subgroup failed"):
-        TrainerProcessGroup.open(_rank())
+        TrainerProcessGroup.open(_rank(), output_dir=tmp_path)
 
     assert fake.events == ["init:nccl", "destroy"]
     assert not fake.live
     assert TrainerProcessGroup.cpu_group() is None
 
 
-def test_an_existing_process_group_is_refused_not_adopted(monkeypatch) -> None:
+def test_an_existing_process_group_is_refused_not_adopted(monkeypatch, tmp_path) -> None:
     fake = _FakeTorchDistributed(monkeypatch)
     fake.live = True
 
     with pytest.raises(RuntimeError, match="already initialized"):
-        TrainerProcessGroup.open(_rank())
+        TrainerProcessGroup.open(_rank(), output_dir=tmp_path)
 
     # Someone else's group is left alone.
     assert fake.events == []
     assert fake.live
 
 
-def test_single_process_owns_no_process_group(monkeypatch) -> None:
+def test_single_process_owns_no_process_group(monkeypatch, tmp_path) -> None:
     fake = _FakeTorchDistributed(monkeypatch)
     single = DistributedTrainingContext(
         strategy="single_process", rank=0, world_size=1, device=torch.device("cpu")
     )
 
-    with TrainerProcessGroup.open(single):
+    with TrainerProcessGroup.open(single, output_dir=tmp_path):
         TrainerProcessGroup.require(single)
 
     assert fake.events == []
 
 
-def test_a_strategy_refuses_a_group_with_another_identity(monkeypatch) -> None:
+def test_a_strategy_refuses_a_group_with_another_identity(monkeypatch, tmp_path) -> None:
     _FakeTorchDistributed(monkeypatch)
 
     with (
-        TrainerProcessGroup.open(_rank()),
+        TrainerProcessGroup.open(_rank(), output_dir=tmp_path),
         pytest.raises(RuntimeError, match="does not match"),
     ):
         TrainerProcessGroup.require(

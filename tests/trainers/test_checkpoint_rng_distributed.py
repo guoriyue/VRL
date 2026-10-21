@@ -56,7 +56,9 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
     if backend == "nccl":
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(rendezvous)
-        process.enter_context(TrainerProcessGroup.open(context))
+        process.enter_context(
+            TrainerProcessGroup.open(context, output_dir=os.path.dirname(output))
+        )
     else:
         dist.init_process_group(
             "gloo",

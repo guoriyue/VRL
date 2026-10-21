@@ -604,7 +604,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     try:
         # Preflight is over: this process owns its training process group from
         # here until the lifecycle shuts it down after every other role.
-        lifecycle.process_group = TrainerProcessGroup.open(training_context)
+        lifecycle.process_group = TrainerProcessGroup.open(
+            training_context, output_dir=trainer_config.output_dir
+        )
         lifecycle.ray_session = _RayClusterSession.connect(
             ray,
             cross_node=resources.cross_node,
