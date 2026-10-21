@@ -74,7 +74,12 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 
 ### P1. batch-invariant 诊断模式（实验）
 
-1. 先在 P0 的探针里手动开启：`batch_invariant_ops`、`allow_tf32=False`、`allow_bf16_reduced_precision_reduction=False`，同时固定 SDPA 后端。compile 打开的那一组，再加上 `torch._inductor.config.deterministic=True`（2.11 已有），必要时再加 `split_reductions=False`。
+0. **最便宜的一步先做：关掉 fp16/bf16 GEMM 的 reduced-precision reduction。** 2026-10-20 在 5090（sm120）+ torch 2.11 上实测，脚本是一次性的，不入库：
+   - 默认设置（True）下，K=5600 这类长 K 的 down-proj 有 batch 依赖：同一个样本在 B=1 和 B≥2 时结果不同，bf16 下 max|Δ| 约 3e-2，fp16 下约 4e-3，误差也更大。
+   - 设为 False 后，在 tok 256/1024/4096、K 2240/5600 的所有组合上，B=1–32 都逐位一致，误差还更小。速度只有 tok=256、K=5600 这一档慢约 16%，其余持平。
+   - 同条件下，SDPA（flash/efficient/cudnn 三种后端）各自都与 batch 无关；layer_norm 和 rms_norm 也与 batch 无关。但**不同后端之间**，bf16 差约 1e-3，就是 R2。
+   - 做法：在 `apply_float32_precision`（`vrl/models/precision.py:35`）旁边，同一个 owner 里设置 `allow_bf16/fp16_reduced_precision_reduction=False`，`trace.py:155` 已经在记录这个状态。然后在 gen batch ≠ replay batch 下跑一次 `full_sequence_probe --check-replay`。上线前要在 L4、L40S 上复测，cuBLAS 的启发式随架构变化。
+1. 再在 P0 的探针里手动开启：`batch_invariant_ops`、`allow_tf32=False`、`allow_bf16_reduced_precision_reduction=False`，同时固定 SDPA 后端。compile 打开的那一组，再加上 `torch._inductor.config.deterministic=True`（2.11 已有），必要时再加 `split_reductions=False`。
    - 逐项打开，每打开一项记一次 |Δlogprob|，得到"每个归约来源各贡献多少"的表，不只给全开时的最终结论。
    - 如果 P0.4 测出 R4 本身就超过 1e-6，logprob 的 `.mean` 要换成与 batch 无关的固定顺序：例如先 reshape 成固定的 chunk，再分两级归约，或者在 fp64 下累加。否则下面的 1e-6 目标永远达不到。
 2. **判定**：在 rollout batch ≠ replay batch 的条件下，`full_sequence_probe --check-replay` 的 |Δlogprob| 能否降到 ≤1e-6。
