@@ -100,3 +100,43 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 
 ### 顺带发现
 `.venv` 里已经没有 vllm 了（memory 里记录的手动安装被某次 sync 清掉了），所以 colocated 的 CuMem parking 在 `.venv` 下跑不起来。这次 GPU 运行用的是 scratch 目录里按 lock 同步、再单独装了 vllm 0.21 的 `venv_main`。按 CLAUDE.md 不能手动装进 `.venv`，需要用户决定要不要恢复。
+
+## 5. 实施记录（2026-10-21，main 上不升级能做的部分）
+
+升级分支仍未合入 main，本轮没有改 `pyproject.toml`、`uv.lock`、`MODULE.bazel.lock`。
+
+### 逐项状态
+| 项 | 状态 | 依据 |
+|---|---|---|
+| P0.1 `device_id` | 已完成 | `3e80af016`；`vrl/trainers/distributed.py:283`、`vrl/generation/execution/rank_group.py:77`、`tools/delivery/node_rank.py:21` |
+| P0 风险：cp≥2 且 dp≥2 的子组 split | 本轮补了 GPU 测试，未在 GPU 上跑 | `91e3ff1b0`，见下 |
+| P0.2 torchcomms 对照 | 需用户决定 | `torchcomms` 不在 lock 里，要先改 lock |
+| P1 升级分支 | 在升级分支上，合入需用户决定 | `6628b1e97`、`911965ce7`，见下 |
+| P1 `bazel test //...` CPU lanes | 未跑 | 本机拉依赖时 `Unknown host`；命令见下 |
+| P2 token 认证行为 | 已实测（§4）；launch 文档本轮补上 | `a9a8f8fc8` |
+| P2 VRL 是否显式设 `RAY_AUTH_MODE` | 需用户决定 | 见下 |
+| 私有 API 核对 | 已完成（§4），本轮复核了源码 | 见下 |
+| 弃用警告扫描 | 本轮完成；修了一处 Pillow 弃用 | `78d41642b` |
+| P3 收获清单（10 项） | 不做 | 都要升级后实测，按表里"何时做"的门槛触发 |
+| §3 不做（`torch.accelerator` 改名、GPU CI lane） | 不做 | 维持原结论 |
+| `.venv` 缺 vllm | 需用户决定 | 见 §4"顺带发现" |
+
+### 本轮提交
+- `tests(trainers): check cp=2 x dp=2 groups form under a device-bound NCCL group`：`tests/trainers/test_context_parallel.py` 新增 4 卡 gpu 测试。它先 `TrainerProcessGroup.open`（NCCL，绑 `device_id`），再按 `FSDPStrategy.prepare_model` 的顺序建 FSDP mesh、CP gloo 组、CP mesh，每个组各做一次集合通信。读 torch 2.11 源码（`distributed_c10d.py` 约 1979-1997 行）确认：默认组绑了设备后，gloo 子组的非成员 rank 也会对 NCCL 默认通信器做一次 nocolor split，成员 rank 不做。`ContextParallelPeerGroup.create` 在 dp=2 时，每个 rank 恰好做一次。`TORCH_DIST_INIT_BARRIER` 默认关闭，`new_group` 末尾没有全局 store barrier，所以理论上不会死锁。同一测试体换成 4 个 gloo rank 在 CPU 上跑通了（只能验证断言和 mesh，验证不了 NCCL split）。
+  - GPU 命令（4 卡主机，两种环境各跑一次）：`python -m pytest -q -p no:cacheprovider -m gpu tests/trainers/test_context_parallel.py::test_four_rank_nccl_cp_and_dp_groups_split_from_the_bound_default_group`
+- `a9a8f8fc8 docs(cross_node): pick one Ray auth mode on every node before Ray 2.59`：`docs/training_examples/online_nft_kling_video_reward_cross_node/README.md` 新增 "Ray token authentication" 一节。读 Ray 2.59 源码后补充了 §4 没写到的一点：`ray start --head` 只在本机已有 token 时才开启认证（`ray/scripts/scripts.py:1069`）；`ray start --address` 和带显式地址的 `ray.init` 都不会自动开启（`ray/_private/worker.py:1968-1971`）；而任何一次单机 `vrl-train` 都会生成 `~/.ray/auth_token`（`worker.py:1868`）。所以一台跑过单机任务的 head 再起跨节点集群，会悄悄开启认证，而 worker 和 driver 不会，结果是一个不提认证的 `ConnectionError`。文档要求在所有节点上显式设 `RAY_AUTH_MODE`（`token` 加共享 token，或 `disabled`）。Ray 2.55.1 也认这几个变量（`RAY_AUTH_MODE`、`RAY_AUTH_TOKEN`、`RAY_AUTH_TOKEN_PATH`、`ray get-auth-token`），所以升级前后都适用。
+- `78d41642b rewards(local_edit): read the gray plane with Image.get_flattened_data`：`Image.getdata` 在 Pillow 12.2（当前 lock）和 13.0（升级 lock）下都报弃用，Pillow 14 删除；`get_flattened_data` 两个版本都有。
+
+### 弃用警告扫描
+在 `.venv`（torch 2.11 / Ray 2.55.1）和 scratch 的 `venv_upgrade`（torch 2.13 / vLLM 0.32 / Ray 2.59）下，对本 worktree 的代码跑同一组 CPU 测试：`-m "not gpu and not e2e and not slow_test" -W default tests`。两边都是 2651 passed / 9 skipped。升级环境的警告是主环境的子集：没有新出现的 torch、vLLM、Ray 弃用。主环境独有的是 Ray 2.55 的 accelerator env var FutureWarning，以及子进程和 `/dev/null` 的 ResourceWarning。VRL 自己代码触发的弃用只有 `local_edit.py` 的 Pillow 一处，已修。其余都来自第三方或 vendored 代码：`torch.nn.utils.weight_norm`、`torch.jit.script_method`、diffusers 的 `torch_dtype`，不在本 sprint 范围。
+
+### 私有 API 复核（不需要改 main）
+- `vrl/models/parking.py:174-176`：torch 2.11 的 `FSDPState` 只有单数 `_fsdp_param_group`，2.13 才有复数 `_fsdp_param_groups`，单数成了弃用 property。现在的代码先取复数、取不到再退回单数，两个版本都正确，而且 2.13 下不会碰到弃用 property。
+- `parking.py:781-787`：vLLM 0.32 的 `allocator_and_pools` 是 `dict[str, list]`，0.21 是 `dict[str, tuple]`。`pop(tag)` 在两个版本下都对。`building()` 是一次性的，每个 tag 只有一项，所以 `del retained` 的效果相同。
+
+### 需用户决定
+- **合入升级**：建议 cherry-pick `6628b1e97`（pyproject/uv.lock/MODULE.bazel.lock，加上 `tests/build/torch_cuda_test.py` 的版本断言）和 `911965ce7`（cuBLAS workspace 上限放宽到 64 MiB），不要直接 merge 分支。原因是分支基于 `cb380f0f6`，上面另有 6 个 commit（`e96e9a5f4`..`dd6577449`），它们在 main 上已经以 rebase 后的哈希存在（`f64e07084`、`e1ccfc288`、`cae124178`、`cd2480e0d`、`c59653968`；`dd6577449` 在 main 上拆成了 `e6dffcb64` 和 `488237944`）。这两个 commit 改的文件在 `dd6577449` 和当前 main 之间没有变化，cherry-pick 能直接应用。
+- **合入后的跟进**（合入前都不能做，否则 2.11 会坏或文档不对）：删掉 `parking.py:175-176` 的单数回退；更新 cross_node runbook 里两处 "Ray 2.55.1" 的版本描述（新的 token 一节和 Teardown 一节）；更新本文件 §0 的锁定版本；跑 `bazel test //...` 和上面的 4 卡测试。
+- **VRL 是否自己设 `RAY_AUTH_MODE`**：Ray 2.59 下，自有本地集群（`vrl/scripts/common/online.py:127` 的 `address="local"`）会开启认证、打 WARNING，并把 `RAY_AUTH_MODE=token` 留在 driver 环境里。另外按源码推断（未实测）：同一主机上多个 torchrun rank 各自 `ray.init` 时（如 `online_grpo_hpsv3_fsdp_4x_l40s`），如果 `~/.ray/auth_token` 还不存在，几个 rank 会同时生成并写同一个文件，存在一个很小的 token 不一致窗口。在 launcher 里显式设 `disabled` 或预先生成 token 都能消除，但这是安全策略选择，不在这里替用户定。
+- **torchcomms（P0.2）**：要先把 `torchcomms` 加进 lock，然后用 `TORCH_DISTRIBUTED_USE_TORCHCOMMS=1 bazel test --config=gpu //tests:gpu_tests` 做对照。
+- **`bazel test //...`**：需要能联网的主机，在升级分支上跑。
