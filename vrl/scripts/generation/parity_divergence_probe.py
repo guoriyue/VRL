@@ -84,6 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run both sides under thinking-machines batch_invariant_ops (importable)",
     )
+    parser.add_argument(
+        "--lora-b-std",
+        type=float,
+        default=0.0,
+        help="fill LoRA B with N(0, std) so the adapter path contributes, as after a "
+        "first update (a fresh adapter's zero B hides every LoRA GEMM difference)",
+    )
     parser.add_argument("--json-out", default=None)
     return parser
 
@@ -229,6 +236,17 @@ def main() -> None:
     bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model
     transformer = model.transformer
+    if args.lora_b_std:
+        lora_generator = torch.Generator(device="cpu").manual_seed(args.seed)
+        if not any("lora_B" in name for name, _ in transformer.named_parameters()):
+            raise SystemExit("--lora-b-std needs a LoRA model: use a model preset with use_lora")
+        with torch.no_grad():
+            for name, parameter in transformer.named_parameters():
+                if "lora_B" in name:
+                    noise = (
+                        torch.randn(parameter.shape, generator=lora_generator) * args.lora_b_std
+                    )
+                    parameter.copy_(noise.to(parameter.dtype))
     # After the build: building applies the production matmul policy (reductions
     # off), and this switch exists to measure the alternative.
     rpr = args.reduced_precision_reduction == "on"
