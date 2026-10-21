@@ -19,6 +19,58 @@ from vrl.nn.quantization.formats import (
 
 
 @triton.jit
+def _e2m1_candidate(
+    values,
+    block_amax,
+    tensor_scale,
+    target,
+    FP4_MAX: tl.constexpr,
+    FP8_MAX: tl.constexpr,
+    BOUND_0: tl.constexpr,
+    BOUND_1: tl.constexpr,
+    BOUND_2: tl.constexpr,
+    BOUND_3: tl.constexpr,
+    BOUND_4: tl.constexpr,
+    BOUND_5: tl.constexpr,
+    BOUND_6: tl.constexpr,
+    TIE_UP_0: tl.constexpr,
+    TIE_UP_1: tl.constexpr,
+    TIE_UP_2: tl.constexpr,
+):
+    """E4M3 block scale (as fp32), signed E2M1 codes and squared error for one target."""
+
+    block_scale = tl.clamp(block_amax / target / tensor_scale, 1.0e-12, FP8_MAX)
+    block_scale = block_scale.to(tl.float8e4nv).to(tl.float32)
+    effective_scale = block_scale * tensor_scale
+    scaled = tl.where(
+        effective_scale[:, None] > 0.0,
+        values / effective_scale[:, None],
+        0.0,
+    )
+    scaled = tl.clamp(scaled, -FP4_MAX, FP4_MAX)
+    magnitude = tl.abs(scaled)
+    # Strict comparisons select the lower code at a midpoint; advance only odd
+    # lower codes to implement round-to-nearest-even.
+    codes = (
+        (magnitude > BOUND_0).to(tl.int32)
+        + (magnitude > BOUND_1).to(tl.int32)
+        + (magnitude > BOUND_2).to(tl.int32)
+        + (magnitude > BOUND_3).to(tl.int32)
+        + (magnitude > BOUND_4).to(tl.int32)
+        + (magnitude > BOUND_5).to(tl.int32)
+        + (magnitude > BOUND_6).to(tl.int32)
+    )
+    codes += ((magnitude == TIE_UP_0) | (magnitude == TIE_UP_1) | (magnitude == TIE_UP_2)).to(
+        tl.int32
+    )
+    # E2M1 grid 0, 0.5, 1, 1.5, 2, 3, 4, 6: half the code up to 2.0, then 3, 4, 6.
+    grid = tl.where(codes <= 4, 0.5 * codes, tl.where(codes == 7, 6.0, codes - 2.0))
+    dequantized = tl.where(scaled < 0.0, -grid, grid) * effective_scale[:, None]
+    error = tl.sum((dequantized - values) * (dequantized - values), axis=1)
+    return block_scale, codes + tl.where(scaled < 0.0, 8, 0), error
+
+
+@triton.jit
 def _quantize_nvfp4_kernel(
     input_ptr,
     packed_ptr,
@@ -60,9 +112,21 @@ def _quantize_nvfp4_kernel(
 
     tensor_scale = tl.load(tensor_scale_ptr)
     block_amax = tl.max(tl.abs(values), axis=1)
-    block_scale = tl.clamp(block_amax / FP4_MAX / tensor_scale, 1.0e-12, FP8_MAX)
-    block_scale_e4m3 = block_scale.to(tl.float8e4nv)
-    effective_scale = block_scale_e4m3.to(tl.float32) * tensor_scale
+    # Four over six: quantize each block with its amax mapped onto 6 and onto 4
+    # and keep the smaller squared error (a tie keeps 6, as the CPU reference).
+    scale_six, codes_six, error_six = _e2m1_candidate(
+        values, block_amax, tensor_scale, FP4_MAX, FP4_MAX, FP8_MAX,
+        BOUND_0, BOUND_1, BOUND_2, BOUND_3, BOUND_4, BOUND_5, BOUND_6,
+        TIE_UP_0, TIE_UP_1, TIE_UP_2,
+    )  # fmt: skip
+    scale_four, codes_four, error_four = _e2m1_candidate(
+        values, block_amax, tensor_scale, 4.0, FP4_MAX, FP8_MAX,
+        BOUND_0, BOUND_1, BOUND_2, BOUND_3, BOUND_4, BOUND_5, BOUND_6,
+        TIE_UP_0, TIE_UP_1, TIE_UP_2,
+    )  # fmt: skip
+    four = error_four < error_six
+    block_scale_e4m3 = tl.where(four, scale_four, scale_six).to(tl.float8e4nv)
+    codes = tl.where(four[:, None], codes_four, codes_six)
 
     # Logical scale [row, block_id] maps into cuBLAS's 128x4 blocked layout.
     row_in_tile = row % SCALE_ROW_TILE
@@ -76,28 +140,6 @@ def _quantize_nvfp4_kernel(
     )
     tl.store(scale_ptr + scale_offsets, block_scale_e4m3, mask=valid_blocks)
 
-    scaled = tl.where(
-        effective_scale[:, None] > 0.0,
-        values / effective_scale[:, None],
-        0.0,
-    )
-    scaled = tl.clamp(scaled, -FP4_MAX, FP4_MAX)
-    magnitude = tl.abs(scaled)
-    # Strict comparisons select the lower code at a midpoint; advance only odd
-    # lower codes to implement round-to-nearest-even.
-    codes = (
-        (magnitude > BOUND_0).to(tl.int32)
-        + (magnitude > BOUND_1).to(tl.int32)
-        + (magnitude > BOUND_2).to(tl.int32)
-        + (magnitude > BOUND_3).to(tl.int32)
-        + (magnitude > BOUND_4).to(tl.int32)
-        + (magnitude > BOUND_5).to(tl.int32)
-        + (magnitude > BOUND_6).to(tl.int32)
-    )
-    codes += ((magnitude == TIE_UP_0) | (magnitude == TIE_UP_1) | (magnitude == TIE_UP_2)).to(
-        tl.int32
-    )
-    codes += tl.where(scaled < 0.0, 8, 0)
     paired = tl.reshape(codes, (BLOCKS_PER_PROGRAM, BLOCK_SIZE // 2, 2))
     low, high = tl.split(paired)
     packed = low | (high << 4)

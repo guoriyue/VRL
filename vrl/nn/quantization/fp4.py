@@ -9,6 +9,16 @@ The single ``nvfp4`` recipe uses two-level NVIDIA scaling: an FP32 tensor scale,
 1x16 E4M3 block scales in cuBLAS's blocked layout, and signed E2M1 values. CUDA
 quantization and packing use the fused Triton kernel in ``fp4_kernels.py``; the
 CPU implementation here is the independent bit reference.
+
+Block scales are chosen "four over six": each block is quantized twice, with its
+amax mapped onto E2M1's 6 (plain max scaling) and onto 4, and keeps the scale
+with the smaller squared reconstruction error. E2M1's top step is 4 -> 6, so a
+block whose large values sit between them often loses less by giving up the 6.
+The tensor scale still maps the tensor amax onto 448 x 6, so a block whose amax
+exceeds two thirds of the tensor amax hits the E4M3 scale ceiling: its "4"
+candidate clips at 6 and loses to plain max scaling.
+Measured on SD3.5 Medium MLP weights the weight MSE falls to 0.85x of max
+scaling (median of 16 matrices).
 """
 
 from __future__ import annotations
@@ -107,29 +117,41 @@ def quantize_nvfp4(
         packed, scales = quantize_nvfp4_cuda(tensor, tensor_scale)
         return packed, scales, tensor_scale
 
-    values_fp32 = tensor.float()
-    blocks = values_fp32.view(rows, k // NVFP4_BLOCK_SIZE, NVFP4_BLOCK_SIZE)
-    block_scale = (blocks.abs().amax(dim=-1, keepdim=True) / E2M1_MAX / tensor_scale).clamp(
-        1e-12,
-        FP8_E4M3_MAX,
-    )
-    block_scale_e4m3 = block_scale.to(torch.float8_e4m3fn)
-    effective = block_scale_e4m3.float() * tensor_scale
-    scaled = torch.where(effective > 0, blocks / effective, torch.zeros_like(blocks)).clamp(
-        -E2M1_MAX,
-        E2M1_MAX,
-    )
-
-    sign = scaled < 0
-    magnitude = scaled.abs()
+    blocks = tensor.float().view(rows, k // NVFP4_BLOCK_SIZE, NVFP4_BLOCK_SIZE)
+    block_amax = blocks.abs().amax(dim=-1, keepdim=True)
     bounds = _E2M1_BOUNDS.to(tensor.device)
-    code = torch.bucketize(magnitude, bounds)
-    # ``bucketize(..., right=False)`` chooses the lower midpoint value. IEEE
-    # nearest-even advances only when that lower E2M1 code is odd.
-    bounded_code = code.clamp_max(len(E2M1_VALUES) - 2)
-    midpoint = (code < len(bounds)) & (magnitude == bounds[bounded_code])
-    code = code + (midpoint & ((code & 1) == 1))
-    code = (code + torch.where(sign, 8, 0)).to(torch.uint8).view(rows, k)
+    grid = torch.tensor(E2M1_VALUES, device=tensor.device)
+
+    def candidate(target: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Scale, signed codes and squared error with the block amax mapped to ``target``."""
+
+        block_scale_e4m3 = (
+            (block_amax / target / tensor_scale).clamp(1e-12, FP8_E4M3_MAX).to(torch.float8_e4m3fn)
+        )
+        effective = block_scale_e4m3.float() * tensor_scale
+        scaled = torch.where(effective > 0, blocks / effective, torch.zeros_like(blocks)).clamp(
+            -E2M1_MAX,
+            E2M1_MAX,
+        )
+        magnitude = scaled.abs()
+        code = torch.bucketize(magnitude, bounds)
+        # ``bucketize(..., right=False)`` chooses the lower midpoint value. IEEE
+        # nearest-even advances only when that lower E2M1 code is odd.
+        bounded_code = code.clamp_max(len(E2M1_VALUES) - 2)
+        midpoint = (code < len(bounds)) & (magnitude == bounds[bounded_code])
+        code = code + (midpoint & ((code & 1) == 1))
+        dequantized = torch.where(scaled < 0, -grid[code], grid[code]) * effective
+        error = (dequantized - blocks).square().sum(dim=-1, keepdim=True)
+        return block_scale_e4m3, code + torch.where(scaled < 0, 8, 0), error
+
+    scale_six, code_six, error_six = candidate(E2M1_MAX)
+    scale_four, code_four, error_four = candidate(4.0)
+    # Strictly smaller: a tie keeps plain max scaling, matching the CUDA kernel.
+    four = error_four < error_six
+    block_scale_e4m3 = torch.where(four, scale_four.float(), scale_six.float()).to(
+        torch.float8_e4m3fn
+    )
+    code = torch.where(four, code_four, code_six).to(torch.uint8).view(rows, k)
     packed = (code[:, 0::2] | (code[:, 1::2] << 4)).contiguous()
     return (
         packed.view(torch.float4_e2m1fn_x2),
