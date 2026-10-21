@@ -43,6 +43,9 @@ def _install_cli_fakes(
         lambda *args, **kwargs: OmegaConf.create({}),
     )
     monkeypatch.setattr(train, "run_config", lambda cfg: result)
+    # main() defaults the compile cache directory in the process environment;
+    # a value set here is kept and restored after the test.
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", "/nonexistent/test-inductor-cache")
     monkeypatch.setattr(signal, "getsignal", handlers.get)
     monkeypatch.setattr(signal, "signal", handlers.install)
     return handlers
@@ -97,6 +100,7 @@ def test_main_keeps_synchronous_trainer_path_signal_free(
         lambda *args, **kwargs: OmegaConf.create({}),
     )
     monkeypatch.setattr(train, "run_config", lambda cfg: result)
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", "/nonexistent/test-inductor-cache")
 
     def reject_signal_install(signum: signal.Signals, handler: Callable[..., Any]) -> None:
         del signum, handler
