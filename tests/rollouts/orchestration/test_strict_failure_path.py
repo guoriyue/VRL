@@ -249,6 +249,32 @@ async def test_prepared_weight_push_never_reenters_live_getter(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_snapshot_export_and_push_are_separate_profile_ranges(monkeypatch, tmp_path) -> None:
+    """The device->host export is timed where it happens, apart from the push.
+
+    The two overlap differently once rollout and training stop sharing one GPU,
+    so a fused range, or a snapshot range around a second host copy, would
+    point a transport decision at the wrong cost.
+    """
+
+    bench = real_collector(monkeypatch, tmp_path)
+    coordinator = trainer_side(bench).coordinator(bench)
+    activities = [torch.profiler.ProfilerActivity.CPU]
+
+    with torch.profiler.profile(activities=activities) as prepare_profile:
+        prepared = coordinator.prepare_initial_weight_sync_state()
+    with torch.profiler.profile(activities=activities) as push_profile:
+        await coordinator.push_prepared_weights(prepared, RolloutStats())
+
+    prepare_ranges = {event.key for event in prepare_profile.key_averages()}
+    push_ranges = {event.key for event in push_profile.key_averages()}
+    assert "weight_sync.state_to_cpu" in prepare_ranges
+    assert "weight_sync.push" not in prepare_ranges
+    assert "weight_sync.push" in push_ranges
+    assert "weight_sync.state_to_cpu" not in push_ranges
+
+
+@pytest.mark.asyncio
 async def test_failed_prepared_weight_push_does_not_publish_initialized_state(
     monkeypatch, tmp_path
 ) -> None:

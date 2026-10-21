@@ -16,6 +16,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.stats import RolloutStats
+from vrl.utils.profiling import profile_range
 
 
 class RolloutPhaseCleanupError(RuntimeError):
@@ -83,7 +84,11 @@ class RolloutRuntimeCoordinator:
             return None
         if self.sync_state_getter is None:
             raise RuntimeError("rollout weight sync requires sync_state_getter")
-        prepared = self.sync_state_getter()
+        # The getter is where the trainable state leaves the device (an FSDP
+        # gather plus the device->host copy), so the snapshot range is here,
+        # not around the push.
+        with profile_range("weight_sync.state_to_cpu"):
+            prepared = self.sync_state_getter()
         if not isinstance(prepared, dict):
             raise TypeError("rollout weight sync getter must return a dict snapshot")
         pending_weight_checks: list[Any] = [prepared]

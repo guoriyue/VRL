@@ -29,22 +29,21 @@ class RayRuntimeWeightSyncer:
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
-        """Send updated weights to the runtime under the next policy version."""
+        """Send a prepared snapshot to the runtime under the next policy version.
 
-        # Split the two costs: the device->host copy is trainer-side GPU work,
-        # the update_weights await is transport plus worker-side load. They
-        # overlap differently once rollout and training stop sharing one GPU, so
-        # they must be attributable separately rather than as one "sync" blob.
+        ``state_dict`` is the immutable CPU snapshot the strategy's
+        ``export_rollout_state`` already copied off the live model (timed as
+        ``weight_sync.state_to_cpu`` where the coordinator prepares it), so it
+        is handed on as is; ``weight_sync.push`` covers transport plus the
+        worker-side install.
+        """
+
         from vrl.utils.profiling import profile_range
 
-        with profile_range("weight_sync.state_to_cpu"):
-            # to_cpu_snapshot: push() is exactly the "another thread may read
-            # later" case its docstring describes, so the copy is required.
-            state = to_cpu_snapshot(state_dict)
         async with self._push_lock:
             with profile_range("weight_sync.push"):
                 await self.runtime.update_weights(
-                    state,
+                    state_dict,
                     self.runtime.current_policy_version + 1,
                 )
 

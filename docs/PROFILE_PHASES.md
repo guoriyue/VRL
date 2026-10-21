@@ -32,7 +32,7 @@ synonym that silently splits one phase into two names.
 | `engine.` | `vrl/generation/execution/`, `vrl/generation/ray/`, `vrl/generation/types.py` | Engine-level request planning and per-batch forward |
 | `trainer.` | `vrl/trainers/online/` | Forward/backward/loss/optimizer of the update |
 | `collector.` | `vrl/rollouts/collector/` | Post-rollout scoring |
-| `weight_sync.` | `vrl/trainers/weight_sync.py` | Trainer -> rollout-worker weight handoff |
+| `weight_sync.` | `vrl/rollouts/orchestration/rollout_runtime.py`, `vrl/trainers/weight_sync.py` | Trainer -> rollout-worker weight handoff |
 
 ## Current phases
 
@@ -79,8 +79,8 @@ grep -rhno 'profile_range("[a-z_.]*"' vrl/ --include=*.py \
 ### `weight_sync.`
 | Phase | Meaning |
 |---|---|
-| `weight_sync.state_to_cpu` | Device -> host copy of trainable state |
-| `weight_sync.push` | Transport + worker-side load |
+| `weight_sync.state_to_cpu` | Strategy export of the trainable state to its one immutable CPU snapshot (FSDP gather + device -> host copy), on the trainer thread |
+| `weight_sync.push` | Transport (object-store put + dispatch) + worker-side install of that snapshot |
 
 These two are deliberately split. They are one logical operation today because
 rollout and training share a GPU, but they
@@ -107,4 +107,4 @@ afterwards.
 - `vrl/utils/profiling.py` — `profile_range`, `capture_torch_trace`, manifest
 - `archive/main-20261016:docs/sprints/done/SPRINT_trustworthy_profiling_api.md` — mechanism and non-goals
 - `tests/utils/test_profiling.py` — range transparency / NVTX pairing
-- `tests/trainers/test_weight_sync.py` — pins the `weight_sync.*` ranges
+- `tests/rollouts/orchestration/test_strict_failure_path.py` — pins the `weight_sync.*` ranges
