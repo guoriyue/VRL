@@ -202,6 +202,9 @@ quote-style = "double"
 testpaths = ["tests"]
 asyncio_mode = "strict"
 addopts = ["--strict-config", "--strict-markers"]
+# A parametrize whose rows come back empty is a collection error, not a test
+# that passes with zero cases.
+empty_parameter_set_mark = "fail_at_collect"
 markers = [
     "e2e: end-to-end tests requiring GPU and real model weights (opt-in via WM_RUN_REAL_MODEL_TESTS=1)",
     "slow_test: heavy/slow tests (e.g. Ray spin-up); excluded from the fast PR subset, run nightly",

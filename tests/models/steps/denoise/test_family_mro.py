@@ -5,9 +5,8 @@ pipeline on top, so a replay model never inherits a pipeline member it would
 have to switch off again; the replay test pins that shape. The others pin
 MRO facts whose failure is a silent wrong answer rather than an error:
 
-- ``from_build`` on ``DiffusersPipelineModelBase`` is the shared diffusers
-  loader; a family not backed by a diffusers pipeline must own its own, and so
-  must a replay class the registry loads through ``from_build``.
+- A replay class the registry loads through ``from_build`` must define its
+  own; an inherited loader builds the parent family's model.
 - The Wan I2V sampling class must run the I2V math the I2V replay model runs.
 """
 
@@ -18,8 +17,7 @@ from typing import Any
 import pytest
 
 from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
-from vrl.models.steps.denoise import DenoiseModelBase
-from vrl.models.steps.denoise.base import DenoisePipelineModelBase, DiffusersPipelineModelBase
+from vrl.models.steps.denoise.base import DenoisePipelineModelBase
 from vrl.utils.config import import_from_path
 
 
@@ -30,19 +28,6 @@ def _owner(cls: type, name: str) -> type | None:
         if name in klass.__dict__:
             return klass
     return None
-
-
-def _non_diffusers_pipeline_model_classes() -> list[Any]:
-    """Registered model classes that cannot inherit the shared diffusers loader."""
-
-    params = []
-    for family, entry in FAMILY_REGISTRY.items():
-        if not isinstance(entry.family_build, DenoiseFamilyBuild):
-            continue
-        model_cls = import_from_path(entry.family_build.model_cls)
-        if not issubclass(model_cls, DiffusersPipelineModelBase):
-            params.append(pytest.param(model_cls, id=family))
-    return params
 
 
 def _replay_model_classes(*, self_loading: bool | None = None) -> list[Any]:
@@ -56,15 +41,6 @@ def _replay_model_classes(*, self_loading: bool | None = None) -> list[Any]:
         replay_cls = import_from_path(build.replay_cls)
         classes[replay_cls.__name__] = replay_cls
     return [pytest.param(cls, id=name) for name, cls in classes.items()]
-
-
-@pytest.mark.parametrize("model_cls", _non_diffusers_pipeline_model_classes())
-def test_family_without_a_diffusers_pipeline_owns_from_build(
-    model_cls: type[DenoiseModelBase],
-) -> None:
-    """Only diffusers-pipeline families may inherit the shared loader."""
-
-    assert _owner(model_cls, "from_build") is model_cls
 
 
 @pytest.mark.parametrize("replay_cls", _replay_model_classes(self_loading=True))
