@@ -1,6 +1,6 @@
 # SPRINT: 生产级 reward 系统与 RL 数据准备 — 业界做法对照
 
-状态：**planned / research（2026-09-22）**。联网检索的业界实践，对照本仓现状列出差距。
+状态：**planned / research（2026-09-22；2026-10-21 按源码核对，结果见 §7）**。联网检索的业界实践，对照本仓现状列出差距。
 不改代码。与三份相邻 sprint 的分工：
 
 - `SPRINT_verifiable_visual_environments.md`：视觉 reward **模型**是否可信（评分器体检、
@@ -166,7 +166,7 @@
 | # | 差距 | 业界依据 | 本仓落点 | 规模 |
 |---|---|---|---|---|
 | G1 | reward 失败走显式策略（drop 样本 / drop 组 / 重试 / 失败整步），不静默 0、也不一律整步失败 | S2 RFC；MiMo GAR "grader 输出不可用时回退原 advantage" | `vrl/rewards/runtime.py` 超时路径；`MultiReward.score_batch` | 小 |
-| G2 | prompt 集分类法字段（类别、运动类型、难度档）+ 按类别报告 reward | D4 HunyuanVideo 100+ 类、Lens 分类法、Qwen 按类别权重 | manifest metadata、`provenance.py` spec、`analyze_scores` 分层（已有 `stratify ... by task metadata` 提交 `1aa5f8644`，复用） | 小 |
+| G2 | prompt 集分类法字段（类别、运动类型、难度档）+ 按类别报告 reward | D4 HunyuanVideo 100+ 类、Lens 分类法、Qwen 按类别权重 | manifest metadata、`provenance.py` spec、`analyze_scores` 分层（复用 `reward paired --stratify-by`） | 小 |
 | G3 | 语义级去重与 train/eval 泄漏检查（顺序不同 / 同义改写 / n-gram） | D1 9-gram、D4 Flow-GRPO 顺序去重 | `vrl/scripts/data/common.py`，`report.json` 的 `prompt_overlap` 扩展为近似重叠 | 小 |
 | G4 | 离线难度剖面：目标 checkpoint 每 prompt 采 k 个样本，记极差/方差，写进 manifest | D1、D2、R14 AdaGRPO | 复用 `rescore_media` + `eval.sampling`；输出进 admission 账本 | 中 |
 | G5 | 训练中按阶段剔除已饱和 prompt（POLARIS）/ DAPO 式补采到满 batch | D2、D3 | admission sprint §2 策略 2/3 | 中 |
@@ -189,3 +189,97 @@ knob 规则照旧：G1 的失败策略只在出现第一个需要非默认策略
 - **G4/G5**（043 Nemotron 3 RL）：训练前先过滤掉 SFT 模型总是答对的 prompt。换到连续视觉 reward 上，就是在目标 checkpoint 上组内极差或方差约等于 0 的 prompt。这一条直接佐证 G4 的离线难度剖面。阈值仍由本仓库实测决定。
 - **G5 采样权重**（065 Modal Street Fighter，PFSP 课程）：按 `p(1−p)` 加权采样难度，优先选通过率接近 0.5 的 prompt。这只适用于有二元通过率的 reward（OCR、GenEval），连续 reward 用组内方差代替 `p(1−p)`。
 - **数据量参考**：043 训了 21 个环境，每个 prompt 只用其所属环境的 reward。见 `SPRINT_multi_objective_reward_routing_and_teachers.md` 的实验 A，以及与 G2 合并实现的联合指标。
+
+## 7. 实施记录（2026-10-21）
+
+逐项对照源码核对，基线是本地 main `546b0d871`。本文原本就写明"不改代码"，这次也没有改代码；G3 做了一次 CPU 实测，G4 的离线剖面流程在 CPU 上用假数据跑通了，GPU 命令见下。
+
+### 现状更正
+
+- §3 列的 `vrl/scripts/rewards/{analyze_scores,calibrate_scores,stress_media}.py` 和 `vrl/rewards/{diagnostics,calibration,annotation}.py` 都已不在仓库。现在的离线工具是 `python -m reward`（`reward/analysis.py`、`reward/labels.py`、`reward/stress.py`、`reward/shortcuts.py`）加 `vrl/scripts/rewards/rescore_media.py`。G6 的落点相应改为 `reward/`，不再是 `vrl/rewards/diagnostics.py`。
+- §1 S2 说"冻结聚合缺轴时抛错（`registry.py:411-413`）"：冻结组合路径已在 `5be40effa` 删除。超时整步失败仍然成立，位置现在是 `vrl/rewards/runtime.py:105-116`（`deadline.timeout_error()`）。
+
+### 逐项状态
+
+| # | 状态 | 依据 |
+|---|---|---|
+| G1 失败策略 | 不做（已撤回） | 单样本屏蔽在 2026-09-27 实现过，后来撤回（`5038f5004`，`archive/main-20261016:docs/sprints/done/SPRINT_mimo_v26_lessons.md` §1）。理由：现有生产 reward 要么给分、要么抛错，不会只对单个样本弃权；要等某个 judge 的弃权率高到经常打断训练，先量弃权率再选策略。§4 的 knob 规则也要求"出现第一个需要非默认策略的 preset 时"才加，目前没有这样的 preset。 |
+| G2 分类法字段 + 按类别报告 | 报告部分已实现；统一分类 schema 不做 | 按类别报告：`reward paired --stratify-by`（任意 metadata 键）、`image_checkpoint_eval --strata/--per-stratum`（`vrl/scripts/eval/image_checkpoint_eval.py:593-605`）、联合指标 `score_report --joint-min`（`cae124178`，与 multi-objective sprint P0 合并实现）。各数据集已经各自带类别字段：danbooru safety 有 `category`，geneval 有 `bucket`/`track`，anime_craft 有 `axes`/`track`，混合数据有 `source_manifest`（`cd2480e0d`）。统一的"类别/运动类型/难度档" schema 没有消费者，因为分层接受任意键；难度档还依赖 G4 的实测。 |
+| G3 语义去重与泄漏 | 已实测；修数据需用户决定 | 见下 |
+| G4 离线难度剖面 | 工具已实现；剖面本身需 GPU；"写进 manifest"不做 | 见下 |
+| G5 训练中剔除已饱和 prompt / DAPO 补采 | 不做，等测量 | 由 admission sprint §2 策略 2/3 和 NGU sprint 负责，前提是先在 OCR 上做"全训 vs 中等带"的固定预算对照（admission sprint §5 第 3 步）。`GroupAdmission` 策略包（`1f304e929`，只在 `pre-cleanup` 分支上）在 2026-09-27 重建提交链时被当作单实现 seam 去掉，现在只留 `vrl/rollouts/admission.py` 的零优势掩码和账本。§6 补充的 `p(1−p)` 权重：二元 reward 的 `p` 就是 `reward spread` 的每 prompt `success_share`，连续 reward 用 `within_std`，两者都已在报告里，不需要新字段。 |
+| G6 best-of-N 一致率 + 按域低分位 | 不做 | 和 2026-09-27 撤回的 rollout-audit 门是同一个问题（`5038f5004` §4：组内第一名是不是盲评负例），撤回理由是"没有盲标签"。之后奖励卡的关 2 用"组内 top-vs-random 盲评"手工做过（`docs/rewards/cards/hpsv3_siglip_qwen21_t2i.md`），用的是仓库外的一次性脚本。按"脚本是一次性的"规则，等第二次需要时再考虑进 `reward/`。 |
+| G7 单样本/微组流式打分 | 按组流式已实现；更细粒度需先测收益 | `vrl/rollouts/collector/core.py:486-520`：reward 隔离验证通过时逐组打分，与下一组生成重叠（finalize-overlap sprint 实施记录）。共卡场景仍是整批串行，逐组打分意味着逐组 park/wake，没有测量前不动。单样本粒度：本文自己写了"大，先测收益"，测量需要 GPU。 |
+| G8 reward 服务原地重启 | 不做 | §5 非目标：多节点前不做。 |
+| §6 数据量参考（043 的 21 个环境） | 已在别处完成 | `SPRINT_multi_objective_reward_routing_and_teachers.md` 的实验 A（按 metadata 路由）已经跑完，结论是没有把前沿外推，路由代码已撤掉。 |
+
+### G3 实测（CPU，`manifests/` 全部 train/eval 对）
+
+比较时把文本统一成小写，只保留字母数字。"词袋"表示忽略词序后相同；9-gram 表示至少共享一个 9 词片段。
+
+| train vs eval | eval 条数 | 完全相同 | 规范化后相同 | 词袋相同 | 共享 9-gram |
+|---|---|---|---|---|---|
+| pickscore_sfw train vs test | 1024 | 0 | **22** | **30** | 369 |
+| danbooru/anime_craft train vs eval | 200 | **8** | 8 | 8 | 139 |
+| ocr train vs test | 1018 | 1 | 1 | 1 | 502 |
+| geneval train vs test / official_eval_553 | 553 | 0 | 0 | 83 | 92 |
+| drawbench train_192 vs eval_64 | 64 | 0 | 0 | 4 | 0 |
+| videophy、flash_grpo_video、danbooru/safety（两组）、local_edit、object_move | — | 0 | 0 | 0 | 少量 |
+
+逐条看过之后的结论：
+- **真泄漏**：
+  - pickscore_sfw 有 22 条 test prompt 和 train 只差大小写、标点或空格（例如 `'Photo of a dragon cooking dinner'` 对 `'photo of a dragon cooking dinner'`），另有约 8 条只是换了词序（例如 `'A boar by Salvador Dali and Carne Griffiths'`）。合计约占 test 的 3%。`report.json` 写的 `prompt_overlap.train_test: 0` 只按完全相同计。这个划分来自上游 Flow-GRPO（`879042cf`）。
+  - anime_craft 有 8 条 eval prompt 与 train 完全相同（占 eval 的 4%）。它们来自不同的 post，但拼出来的 tag 串一样；这套数据没有 report。
+- **不是泄漏**：
+  - geneval 的 83 条词袋重合，以及 drawbench 的 4 条，都是交换了空间关系或颜色绑定（例如 `a backpack right of a sandwich` 对 `a sandwich right of a backpack`，`A black apple and a green backpack` 对 `A green apple and a black backpack`），是不同的任务；Flow-GRPO 的"只差物体顺序"去重在完全相同和规范化两级都成立。
+  - local_edit 的 16 条相同指令对应的源图不同。
+  - 9-gram 在模板化数据集上主要命中模板片段（ocr 有 502/1018 条），对视觉 prompt 不能当判据。
+- **代码侧不改**：仓库里唯一写 `prompt_overlap` 的是 `vrl/scripts/data/derive_text_video_targets.py:138`（完全相同），它处理的 videophy 在规范化和词袋两级都是 0。pickscore、geneval、ocr、anime_craft 的构建脚本不在仓库里（前三个是上游文件，anime_craft 是一次性脚本）。
+- **需要用户决定**：要不要从 pickscore_sfw 和 anime_craft 的 train manifest 里删掉这些近重复行（eval 不动，按行号定 seed 的留出评测不受影响）。删 pickscore_sfw 的行会偏离上游 Flow-GRPO 的划分，也会改变已有 run 的训练分布和 manifest 哈希。
+- 扫描脚本是一次性的，放在本会话 scratch：`overlap_scan.py`、`overlap_examples.py`。
+
+### G4：离线难度剖面
+
+现有工具已经能出剖面，不需要新代码：
+- `image_checkpoint_eval --samples-per-prompt k` 在目标 checkpoint 上每个 prompt 出 k 张；
+- `rescore_media` 打分；
+- `reward spread` 的 `prompts` 给出每个 prompt 的 `success_share`、`within_std`、`score_range`、`mixed`；
+- `reward health` 给出 `prompt_ranges` 和 `zero_spread_prompt_ids`，零极差的 prompt 就是 043"总是答对"在连续 reward 上的对应。
+
+训练中每组的 `reward_min/max` 已经写在准入账本（`vrl/rollouts/admission.py`）。"写进 manifest"没有消费者，等 G5 立项再说。
+
+CPU 验证：用假的 `generation_manifest.json`（3 个 prompt × 4 张）、`image_sharpness` scorer，按下面的 `jq → rescore_media → health/spread` 跑通。零方差 prompt 的 `score_range` 为 0，另外两个 prompt 分别是 0.152 和 0.155。
+
+GPU 命令（未运行）：在 SD3.5 Medium base 上，对 pickscore_sfw 的 256 条 train prompt 各出 8 张。
+
+```bash
+RUN=outputs/sd3_5_specialist_quality   # 已有的 SD3.5 + PickScore run，带 resolved_config.yaml
+OUT=outputs/difficulty_profile/sd3_5_pickscore_sfw_base_k8
+python -m vrl.scripts.eval.image_checkpoint_eval --run-dir $RUN --base-only \
+  --manifest manifests/pickscore_sfw/train.txt --limit 256 --samples-per-prompt 8 \
+  --reward-device cuda --output-dir $OUT
+jq -c '.images[] | select(.checkpoint_label=="base") | {sample_id: "p\(.prompt_index)-s\(.sample_index)", prompt_id: "p\(.prompt_index)", prompt, path: .image_path, metadata: (.reward_metadata | del(.reference_images))}' \
+  $OUT/generation_manifest.json > $OUT/media.jsonl
+cat > $OUT/pickscore.yaml <<'YAML'
+name: pickscore-profile
+revision: pickscore-v1
+preprocessing_revision: native-v1
+rubric_revision: pickscore-v1
+worker_config:
+  model_factory: vrl.rewards.models.pickscore:PickScoreRewardModel
+  reward_model_version: yuvalkirstain/PickScore_v1
+  device: cuda:0
+media_mode: file
+batch_size: 16
+YAML
+python -m vrl.scripts.rewards.rescore_media --manifest $OUT/media.jsonl --config $OUT/pickscore.yaml --output-dir $OUT/scored
+python -m reward health --evaluation $OUT/scored --output $OUT/health.json
+python -m reward spread --evaluation $OUT/scored --axis pickscore --threshold <base 的 PickScore 中位数> --output $OUT/spread.json
+```
+
+判读：
+- 剖面给出的是"组内极差、方差接近 0 的 prompt 占多少"，这就是 G4 要的数。
+- 阈值、要不要据此剔除，按 §4 的 knob 规则由这次实测和 admission sprint 的 OCR 对照决定，不照抄论文。
+- 二元 reward（OCR 用 `ocr_match`）把 `--threshold 0.5` 的 `success_share` 当作 `p`。
+
+**测试**：本次只改文档。`CUDA_VISIBLE_DEVICES= .venv/bin/python -m pytest -q -p no:cacheprovider -m "not gpu and not e2e" tests/reward tests/architecture tests/config/test_documented_launches.py` 结果是 27 passed、1 skipped；`tests/scripts/eval tests/rollouts/test_advantage_admission.py tests/rollouts/collector` 结果是 56 passed。
