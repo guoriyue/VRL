@@ -96,21 +96,26 @@ class ModelParking:
         if callable(buffers):
             yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
 
-    def park(
-        self, model: Any, *, restore_device: Any, preserve_tensor_devices: bool = False
-    ) -> None:
+    def park(self, model: Any, *, restore_device: Any) -> None:
+        """Move ``model`` to the CPU; ``restore`` puts every tensor back where it was.
+
+        Devices are recorded per tensor, not per module: a root whose frozen
+        blocks live on the host by design (block-stream offload) and a root
+        a loader dispatched across devices both come back exactly as parked,
+        and a wholly resident root comes back whole.
+        """
+
         if id(model) in self._seen_modules:
             return
         self._seen_modules.add(id(model))
         self._modules.append((model, restore_device))
-        if preserve_tensor_devices:
-            import torch
+        import torch
 
-            if isinstance(model, torch.nn.Module):
-                self._module_tensor_devices[id(model)] = {
-                    name: self.tensor_device(tensor)
-                    for name, tensor in (*model.named_parameters(), *model.named_buffers())
-                }
+        if isinstance(model, torch.nn.Module):
+            self._module_tensor_devices[id(model)] = {
+                name: self.tensor_device(tensor)
+                for name, tensor in (*model.named_parameters(), *model.named_buffers())
+            }
         self._seen_tensors.update(id(tensor) for tensor in self.module_tensors(model))
         self._move_module(model, "cpu", disk=self._disk)
         move_frozen = getattr(model, "move_frozen_components", None)
@@ -142,12 +147,18 @@ class ModelParking:
                 self.park_tensors(child)
 
     @staticmethod
-    def _move_module(model: Any, device: Any, *, disk: ParkingDiskStore | None = None) -> None:
-        """Move ``model`` to ``device``; with ``disk``, its tensors go to files first.
+    def _move_module(
+        model: Any,
+        device: Any,
+        *,
+        disk: ParkingDiskStore | None = None,
+        targets: Mapping[str, torch.device] | None = None,
+    ) -> None:
+        """Move ``model`` to ``device``, or each named tensor to its ``targets`` entry.
 
-        The store relocates each tensor from wherever it is into a CPU file
-        mapping, so the module-wide move after it only catches what the store
-        does not see.
+        With ``disk``, the tensors go to files first: the store relocates each
+        tensor from wherever it is into a CPU file mapping, so the move after
+        it only catches what the store does not see.
         """
         import torch
         from torch.distributed.fsdp import FSDPModule
@@ -157,18 +168,30 @@ class ModelParking:
             if isinstance(model, torch.nn.Module)
             else []
         )
+        # A root that was wholly on ``device`` moves whole; only mixed residency
+        # (frozen blocks kept on the host, a loader's multi-device dispatch)
+        # needs the per-tensor path.
+        uniform = targets is None or all(
+            target == torch.device(device) for target in targets.values()
+        )
         if not fsdp_modules:
             if disk is not None:
                 disk.store(ModelParking.module_tensors(model))
-            model.to(device)
+            if uniform:
+                model.to(device)
+            else:
+                ModelParking._move_named_tensors(model, device, targets)
             return
         # Keep DTensor wrappers and move only owned storage across phase handoffs.
         for child in fsdp_modules:
             child.reshard()
         if disk is not None:
             disk.store(ModelParking.module_tensors(model))
-        for tensor in ModelParking.module_tensors(model):
-            ModelParking._move_tensor(tensor, torch.device(device))
+        if uniform:
+            for tensor in ModelParking.module_tensors(model):
+                ModelParking._move_tensor(tensor, torch.device(device))
+        else:
+            ModelParking._move_named_tensors(model, device, targets)
         for child in fsdp_modules:
             state = child._get_fsdp_state()
             groups = getattr(state, "_fsdp_param_groups", None)
@@ -177,6 +200,20 @@ class ModelParking:
             for group in groups:
                 for parameter in group.fsdp_params:
                     parameter.reset_sharded_param()
+
+    @staticmethod
+    def _move_named_tensors(model: Any, device: Any, targets: Mapping[str, torch.device]) -> None:
+        """Move each parameter (with its grad) and buffer to its recorded device."""
+        import torch
+
+        fallback = torch.device(device)
+        for name, parameter in model.named_parameters():
+            target = targets.get(name, fallback)
+            ModelParking._move_tensor(parameter, target)
+            if parameter.grad is not None:
+                ModelParking._move_tensor(parameter.grad, target)
+        for name, buffer in model.named_buffers():
+            ModelParking._move_tensor(buffer, targets.get(name, fallback))
 
     @staticmethod
     def tensor_device(tensor: torch.Tensor) -> torch.device:
@@ -201,7 +238,9 @@ class ModelParking:
         failures: list[BaseException] = []
         for model, device in self._modules:
             try:
-                self._move_module(model, device)
+                self._move_module(
+                    model, device, targets=self._module_tensor_devices.get(id(model))
+                )
             except BaseException as error:
                 failures.append(error)
             move_frozen = getattr(model, "move_frozen_components", None)
@@ -210,15 +249,6 @@ class ModelParking:
                     move_frozen(device)
                 except BaseException as error:
                     failures.append(error)
-            targets = self._module_tensor_devices.get(id(model), {})
-            if targets:
-                # Module.to may replace buffers; resolve the current objects by name.
-                tensors = dict((*model.named_parameters(), *model.named_buffers()))
-                for name, target in targets.items():
-                    try:
-                        self._move_tensor(tensors[name], target)
-                    except BaseException as error:
-                        failures.append(error)
         for tensor, device in reversed(self._tensors):
             try:
                 self._move_tensor(tensor, device)
@@ -295,7 +325,7 @@ class TrainingStateParking(ModelParking):
                 continue
             tensor = next(self.module_tensors(model), None)
             device = state.device if tensor is None else torch.device(tensor.device)
-            self.park(model, restore_device=device, preserve_tensor_devices=True)
+            self.park(model, restore_device=device)
         if state.optimizer is not None:
             # Independent FP32 master parameters and live grads may not belong
             # to the model. The shared ledger deduplicates ordinary parameters.

@@ -48,7 +48,6 @@ def build_denoise_runtime_bundle(
             f"{sorted(cpu_resident)}; host placement is implemented by the shared "
             "DiffusersPipelineModelBase loader only",
         )
-    pipeline_offload = rollout.pipeline_offload_mode != "none"
 
     # The single rollout placement site. Attach and full-finetune leave the
     # trainable roots where the loader put them; the compact policy moves AFTER
@@ -58,8 +57,8 @@ def build_denoise_runtime_bundle(
     def move_to_device() -> None:
         if not build.use_lora:
             model.apply_full_finetune(build)
-        if pipeline_offload:
-            # Accelerate's hooks, installed after this seam, own residency.
+        if rollout.offload is not None:
+            # The offload pass, after compile, streams the roots from the host.
             return
         for root in model.trainable_modules.values():
             # A loader that already dispatched a root (block-partitioned H3)

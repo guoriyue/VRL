@@ -7,8 +7,8 @@ encoded, so no VAE or text encoder loads), wrapped with the configured LoRA and
 started from ``model.lora.path``. Each step draws one cached scene, noises its
 target frames at a schedule position inside ``algorithm.timestep_index_range``
 and penalizes the velocity error under the scene's token weights
-(``data.token_weights``). ``actor.stream_frozen_blocks`` keeps the frozen
-blocks on the host for a 32 GB card.
+(``data.token_weights``). ``actor.offload`` keeps the frozen blocks on the host
+for a 32 GB card.
 """
 
 from __future__ import annotations
@@ -51,26 +51,6 @@ def layered_forward(
     )
 
 
-def place_trainable_roots(bundle: Any, actor: Any, *, device: Any) -> None:
-    """Put the replay build's host-resident roots on ``device``, whole or streamed.
-
-    ``actor.stream_frozen_blocks`` keeps each root's frozen blocks on the host.
-    """
-
-    from vrl.models.host_streaming import stream_frozen_blocks
-    from vrl.models.parking import module_on_host
-
-    stream = bool(actor.stream_frozen_blocks)
-    for name, module in bundle.trainable_modules.items():
-        if not module_on_host(module):
-            continue
-        if stream:
-            count = stream_frozen_blocks(module, device=device)
-            logger.info("%s: %d frozen blocks streamed from the host", name, count)
-        else:
-            module.to(device)
-
-
 def _required(value: Any, path: str) -> Any:
     if value is None:
         raise ValueError(f"config missing required field: {path}")
@@ -86,6 +66,7 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
     from vrl.algorithms.sft import DiffusionSFT, DiffusionSFTConfig
     from vrl.config.builders import BuiltConfigs
     from vrl.config.data import manifest_sources
+    from vrl.models.parking import module_on_host
     from vrl.ray.resources import ResourcePlan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
@@ -144,7 +125,12 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
     bundle = family_entry.build_replay(model_build, expected_identity=model_identity)
     model = bundle.model
     enable_transformer_gradient_checkpointing(bundle, root)
-    place_trainable_roots(bundle, actor, device=device)
+    if trainer_cfg.offload is not None:
+        trainer_cfg.offload.place(bundle.trainable_modules, device=device)
+    else:
+        for module in bundle.trainable_modules.values():
+            if module_on_host(module):
+                module.to(device)
 
     start_step = resume_checkpoint.next_step if resume_checkpoint is not None else 0
     dataset = LayeredSceneDataset(
@@ -270,4 +256,4 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
     logger.info("Layered SFT complete.")
 
 
-__all__ = ["layered_forward", "place_trainable_roots", "train_qwen_image_layered_sft"]
+__all__ = ["layered_forward", "train_qwen_image_layered_sft"]

@@ -4,7 +4,7 @@
 # a LoRA from the official Stable-Layers adapter learns one layer per object with
 # occluded parts completed where the scene makes them inferable. One GPU; a
 # 48 GB card holds the bf16 transformer, a 32 GB card streams its frozen blocks
-# from the host (actor.stream_frozen_blocks=true, ~4x slower).
+# from the host (actor.offload=true).
 #
 # Inputs, set at launch:
 #   data.manifest     cached scene root(s), from encode_layered_scenes
@@ -59,7 +59,6 @@ actor:
   use_adafactor: false
   prediction_type: flow_matching
   gradient_checkpointing: full
-  stream_frozen_blocks: false
 
 model:
   use_lora: true

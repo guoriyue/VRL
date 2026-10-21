@@ -4,9 +4,8 @@ The steps every role shares (pooled build, park with rollback, restore,
 release, the physical evidence) live in :class:`vrl.models.parking.ParkingSession`.
 This owner adds what only a Ray generation worker needs: the mechanism choice
 from residency, the quarantine phases that tell the driver to terminate the
-actor instead of retrying, pipeline-CPU-offload hook health, and the
-``WorkerMemoryParkingSnapshot`` the driver validates before handing the GPU to
-the trainer.
+actor instead of retrying, and the ``WorkerMemoryParkingSnapshot`` the driver
+validates before handing the GPU to the trainer.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.models import parking
-from vrl.models.interfaces.runtime import PipelineOffloadMode
 from vrl.models.parking import CumemBroken, ModelParking, ParkingBroken, ParkingSession
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT, release_cuda_memory
 from vrl.utils.logging import init_logger
@@ -50,9 +48,8 @@ class _ParkingPhase(Enum):
 class GenerationWorkerParking:
     """Own one worker's parking session and the policy around it.
 
-    The Ray launch config carries only the topology-derived requirement to
-    yield the GPU. This owner combines it with the resolved rollout residency
-    mode before model construction, then keeps the session for idempotent
+    The Ray launch config carries the topology-derived requirement to yield
+    the GPU and the mechanism to do it with. This owner keeps the session for idempotent
     sleep, wake, and teardown and quarantines the worker when a failure made
     its residency unknowable.
     """
@@ -64,19 +61,9 @@ class GenerationWorkerParking:
     ) -> None:
         if not worker_id:
             raise ValueError("worker memory parking requires a non-empty worker_id")
-        rollout = launch_config.model_build.get("rollout")
-        pipeline_offload_mode = "none"
-        if isinstance(rollout, Mapping):
-            pipeline_offload_mode = str(
-                rollout.get("pipeline_offload_mode", "none"),
-            )
-        # The wire mapping is read before anyone rebuilds the typed
-        # RolloutBuildOptions from it, so share that type's validator rather than
-        # writing the vocabulary check a second time.
-        PipelineOffloadMode(pipeline_offload_mode)
         self.worker_id = worker_id
         self._required = launch_config.sleep_offload
-        # The launch contract already refused cumem under pipeline CPU offload.
+        # The launch contract already refused cumem under model.offload.
         self._mechanism = launch_config.parking_mechanism
         self._session: ParkingSession | None = None
         self._phase = _ParkingPhase.ACTIVE
@@ -96,7 +83,7 @@ class GenerationWorkerParking:
 
         A rank that must yield its GPU parks with
         distributed.resources.rollout.parking.mechanism (``move`` under
-        pipeline CPU offload, which the launch contract enforces). A model that
+        ``model.offload``, which the launch contract enforces). A model that
         is not resident on CUDA at all, such as an isolated-runtime wrapper,
         has nothing to unmap and parks by moving: the pool scope must wrap
         construction, so residency is read after the build and an unneeded
@@ -136,29 +123,7 @@ class GenerationWorkerParking:
         if not session.required:
             return
         model = getattr(executor, "model", None)
-        uses_pipeline_offload = bool(
-            getattr(model, "uses_pipeline_cpu_offload", False),
-        )
         if session.mechanism == "cumem":
-            if uses_pipeline_offload:
-                raise RuntimeError(
-                    f"generation worker {self.worker_id!r} selected both CuMem and "
-                    "pipeline CPU offload; residency mechanisms must be mutually exclusive",
-                )
-            return
-        if uses_pipeline_offload:
-            reset_offload = getattr(model, "reset_pipeline_cpu_offload", None)
-            if not callable(reset_offload):
-                raise RuntimeError(
-                    f"generation worker {self.worker_id!r} cannot completely park "
-                    f"{type(model).__name__}: pipeline CPU offload requires "
-                    "reset_pipeline_cpu_offload()",
-                )
-            if not bool(getattr(model, "pipeline_cpu_offload_healthy", False)):
-                raise RuntimeError(
-                    f"generation worker {self.worker_id!r} cannot completely park "
-                    f"{type(model).__name__}: pipeline CPU offload hooks are unhealthy",
-                )
             return
         if model is None or not callable(getattr(model, "to", None)):
             raise RuntimeError(
@@ -196,13 +161,6 @@ class GenerationWorkerParking:
             if session.mechanism == "cumem":
                 session.park()
                 snapshot_backend = "cumem"
-            elif bool(getattr(model, "uses_pipeline_cpu_offload", False)):
-                # Accelerate hooks remain installed; resetting them drops the
-                # resident layers, and the next forward onloads again.
-                session.park(
-                    move=lambda: self._reset_pipeline_cpu_offload(model, operation="sleep"),
-                )
-                snapshot_backend = "cpu_offload"
             else:
                 ledger = session.backend
                 assert isinstance(ledger, ModelParking)
@@ -339,16 +297,6 @@ class GenerationWorkerParking:
                 f"memory-parking failure; refusing {operation}: "
                 f"{self._failure_reason}",
             )
-        model = getattr(executor, "model", None)
-        if bool(getattr(model, "uses_pipeline_cpu_offload", False)) and not bool(
-            getattr(model, "pipeline_cpu_offload_healthy", False),
-        ):
-            reason = f"{type(model).__name__} reports unhealthy pipeline CPU-offload hooks"
-            self._quarantine(reason)
-            raise RuntimeError(
-                f"generation worker {self.worker_id!r} is quarantined; "
-                f"refusing {operation}: {reason}",
-            )
 
     def require_active(
         self,
@@ -363,30 +311,6 @@ class GenerationWorkerParking:
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} is parked; refusing {operation} until wake",
             )
-
-    def recover_after_execution_error(
-        self,
-        model: Any,
-        execution_error: BaseException,
-    ) -> None:
-        """Re-arm pipeline hooks after a failed forward before retry."""
-
-        if not bool(getattr(model, "uses_pipeline_cpu_offload", False)):
-            return
-        self._reset_pipeline_cpu_offload(
-            model,
-            operation="error recovery",
-            execution_error=execution_error,
-        )
-
-    def record_model_failure(self, model: Any, error: BaseException) -> None:
-        """Quarantine a model-reported partial hook or weight mutation."""
-
-        if not bool(getattr(model, "uses_pipeline_cpu_offload", False)):
-            return
-        if bool(getattr(model, "pipeline_cpu_offload_healthy", False)):
-            return
-        self._quarantine(f"{type(error).__name__}: {error}")
 
     def _loaded_session(self) -> ParkingSession:
         if self._session is not None:
@@ -405,36 +329,6 @@ class GenerationWorkerParking:
             ledger=ModelParking(),
         )
         return self._session
-
-    def _reset_pipeline_cpu_offload(
-        self,
-        model: Any,
-        *,
-        operation: str,
-        execution_error: BaseException | None = None,
-    ) -> None:
-        reset_offload = getattr(model, "reset_pipeline_cpu_offload", None)
-        if not callable(reset_offload):
-            reset_error: BaseException = RuntimeError(
-                f"{type(model).__name__} does not implement reset_pipeline_cpu_offload()",
-            )
-        else:
-            try:
-                reset_offload()
-                return
-            except BaseException as error:
-                reset_error = error
-
-        reason = (
-            f"pipeline CPU-offload {operation} failed; the worker is quarantined: {reset_error!r}"
-        )
-        self._quarantine(reason)
-        failure = RuntimeError(
-            f"generation worker {self.worker_id!r} {reason}",
-        )
-        if execution_error is not None:
-            failure.add_note(f"original generation failure: {execution_error!r}")
-        raise failure from reset_error
 
     def _quarantine(self, reason: str, *, cumem_broken: bool = False) -> None:
         self._failure_reason = self._failure_reason or str(reason)

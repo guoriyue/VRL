@@ -282,3 +282,49 @@ def test_teacache_off_or_precision_split_reports_nothing() -> None:
     assert unguarded_drift_sources({"teacache": {"enabled": False}}, matched) == ()
     # A precision split already arms the drift guard + TIS automatically.
     assert unguarded_drift_sources({"teacache": True}, split) == ()
+
+
+# --- block streaming is the family-neutral offload section ---------------------
+
+
+def test_block_stream_offload_streams_the_host_resident_roots() -> None:
+    """The device-move seam leaves the roots on the host; the offload pass streams them."""
+
+    import torch
+
+    from vrl.nn.offload import HostStreaming, Offload
+
+    root = nn.Module()
+    root.blocks = nn.ModuleList([nn.Linear(4, 4) for _ in range(2)])
+    root.blocks.requires_grad_(False)
+    root.head = nn.Linear(4, 4)
+    model = SimpleNamespace(
+        policy_cores={},
+        quantization_exclude=(),
+        trainable_modules={"transformer": root},
+        device=torch.device("cpu"),
+    )
+    build = _build()
+    build.rollout = SimpleNamespace(base_weight_sync=True, offload=Offload())
+
+    apply_rollout_optimizations(model, build)
+
+    assert HostStreaming.of(root) is not None
+
+
+def test_block_stream_offload_with_nothing_to_stream_is_an_error() -> None:
+    import torch
+
+    from vrl.nn.offload import Offload
+
+    model = SimpleNamespace(
+        policy_cores={},
+        quantization_exclude=(),
+        trainable_modules={},
+        device=torch.device("cpu"),
+    )
+    build = _build()
+    build.rollout = SimpleNamespace(base_weight_sync=True, offload=Offload())
+
+    with pytest.raises(RuntimeError, match="streamed nothing"):
+        apply_rollout_optimizations(model, build)

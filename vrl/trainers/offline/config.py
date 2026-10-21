@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vrl.nn.offload import Offload
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -29,6 +30,11 @@ class OfflineTrainerConfig:
 
     # --- noise / schedule ---
     prediction_type: str = "flow_matching"  # "epsilon" | "v_prediction" | "flow_matching"
+
+    # --- placement ---
+    # ``actor.offload``: present, the recipe streams the frozen blocks of its
+    # host-resident trainable roots instead of moving the roots whole.
+    offload: Offload | None = None
 
     def __post_init__(self) -> None:
         require_int(
@@ -90,6 +96,7 @@ class OfflineTrainerConfig:
             gradient_accumulation_steps=gradient_accumulation_steps,
             prediction_type=required("prediction_type"),
             use_adafactor=use_adafactor,
+            offload=Offload.from_section(actor.offload if actor is not None else None),
         )
 
 

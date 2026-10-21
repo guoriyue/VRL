@@ -37,10 +37,11 @@ with `precision.rollout.quantization.format=fp8` (or `nvfp4` on Blackwell):
 the swap runs on the host before the device move and drops the bf16 masters
 when base weights are never synced. A 640x640, 4-layer, 20-step decomposition
 peaks at about 28 GB. Training on one such card streams the frozen transformer
-blocks from the host: `actor.stream_frozen_blocks=true` makes each block's
-forward run over device copies of its frozen weights
-(`vrl/models/host_streaming.py`), about 12.5 s per 640x640 update on an RTX
-5090 against ~3 s with the blocks resident on a 48 GB card.
+blocks from the host: `actor.offload: true` (the rollout's counterpart is
+`model.offload: true`) makes each block's forward run over device copies of
+its frozen weights
+(`vrl/nn/offload/block_streaming.py`), about 12.5 s per 640x640 update on an
+RTX 5090 against ~3 s with the blocks resident on a 48 GB card.
 
 ## Supervised flow matching
 

@@ -408,7 +408,7 @@ def test_runtime_only_fields_do_not_change_wan_identity() -> None:
     baseline = resolve_checkpoint_model_identity(
         _build(
             family="wan_2_1_i2v",
-            offload_mode="none",
+            offload=None,
             expert_lifecycle_profiling=False,
             trainable_transformers=["transformer_2"],
             memory={"vae_decode": {"tiling": False}},
@@ -418,7 +418,7 @@ def test_runtime_only_fields_do_not_change_wan_identity() -> None:
     runtime_tuned = resolve_checkpoint_model_identity(
         _build(
             family="wan_2_1_i2v",
-            offload_mode="sequential",
+            offload={},
             expert_lifecycle_profiling=True,
             trainable_transformers=["transformer_2"],
             memory={"vae_decode": {"tiling": True}},

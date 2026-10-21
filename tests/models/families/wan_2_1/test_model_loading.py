@@ -4,21 +4,11 @@ Mirrors the shared ``from_build`` tests in
 ``tests/models/steps/denoise/common/test_model_base.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
 no real weights) and assert the loader-constructed state, NOT literal YAML
-config values. The Wan I2V wrapper has a load-time branch the sd3 test does not
-exercise: single-GPU offload mode is selected from the ``model.offload_mode`` config
-key
-(``WanI2VPipelineModel.from_build`` in ``vrl/models/wan_2_1/model.py``):
-
-  * ``offload_mode: sequential`` -> frozen modules stay on CPU until the shared
-    rollout builder attaches LoRA, then ``enable_sequential_cpu_offload`` installs
-    the streaming hooks;
-  * ``offload_mode: model`` follows the same adapter-before-hook ordering with
-    ``enable_model_cpu_offload``;
-  * ``offload_mode: none`` -> vae fp32 + text_encoder/image_encoder build dtype staged to
-    the build device.
-
-In every branch the generation-only modules (vae / text_encoder / image_encoder)
-are frozen and the progress bar is disabled. Wan 2.2 A14B dual-stage pipelines
+config values: the vae is staged in fp32 and the text/image encoders at the
+build dtype on the build device (``WanI2VPipelineModel.from_build`` in
+``vrl/models/wan_2_1/model.py``), the generation-only modules (vae /
+text_encoder / image_encoder) are frozen and the progress bar is disabled;
+``model.offload`` reaches the rollout build only. Wan 2.2 A14B dual-stage pipelines
 are accepted when they expose ``transformer_2``; expand-timesteps pipelines
 remain unsupported.
 """
@@ -33,14 +23,12 @@ import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule
 from vrl.config.precision import RolePrecision
-from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode, RolloutBuildOptions
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+from vrl.nn.offload import Offload
 
 
-def _rollout_build_options(offload_mode: str) -> RolloutBuildOptions:
-    return RolloutBuildOptions(
-        prompt_encoder_dtype=torch.bfloat16,
-        pipeline_offload_mode=offload_mode,
-    )
+def _rollout_build_options() -> RolloutBuildOptions:
+    return RolloutBuildOptions(prompt_encoder_dtype=torch.bfloat16)
 
 
 class _FakePipeline:
@@ -54,17 +42,9 @@ class _FakePipeline:
         # Single-transformer Wan 2.1 I2V: no boundary_ratio / expand_timesteps.
         self.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=False)
         self.progress_bar_disabled: bool | None = None
-        self.sequential_offload_gpu: int | None = None
-        self.model_offload_gpu: int | None = None
 
     def set_progress_bar_config(self, *, disable: bool) -> None:
         self.progress_bar_disabled = disable
-
-    def enable_sequential_cpu_offload(self, *, gpu_id: int) -> None:
-        self.sequential_offload_gpu = gpu_id
-
-    def enable_model_cpu_offload(self, *, gpu_id: int) -> None:
-        self.model_offload_gpu = gpu_id
 
 
 def _canonical_model_config(**overrides: Any) -> dict[str, Any]:
@@ -91,7 +71,7 @@ def _i2v_build(
         family="wan_2_1_i2v",
         precision=RolePrecision("bf16", "tf32"),
         model_config=_canonical_model_config(**model_config),
-        rollout=rollout if rollout is not None else _rollout_build_options("none"),
+        rollout=rollout if rollout is not None else _rollout_build_options(),
     )
 
 
@@ -114,7 +94,7 @@ def _patch_from_pretrained(monkeypatch) -> tuple[_FakePipeline, list[dict[str, A
 
 
 def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any]]) -> None:
-    """Shared assertions for every offload branch (load call + freezing)."""
+    """Shared ``from_build`` assertions: the load call and the freezing."""
     assert calls == [
         {
             "model_name_or_path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
@@ -131,7 +111,7 @@ def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any
         assert module.requires_grad_enabled is False
 
 
-def test_wan_resolver_projects_pipeline_offload_to_rollout_only(monkeypatch) -> None:
+def test_wan_resolver_projects_offload_to_rollout_only(monkeypatch) -> None:
     from diffusers import DiffusionPipeline
     from omegaconf import OmegaConf
 
@@ -148,7 +128,7 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(monkeypatch) -> 
                 "family": "wan_2_1",
                 "path": "fake/repo",
                 "revision": "a" * 40,
-                "offload_mode": "sequential",
+                "offload": {},
                 "use_lora": False,
             },
             "precision": {
@@ -168,60 +148,10 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(monkeypatch) -> 
     rollout = entry.resolve_model_build(root, "cpu", precision=precision, for_rollout=True)
     replay = entry.resolve_model_build(root, "cpu", precision=precision, for_rollout=False)
 
-    assert cfg.model.offload_mode == "sequential"
-    assert rollout.require_rollout().pipeline_offload_mode == "sequential"
+    assert rollout.require_rollout().offload == Offload()
     assert replay.rollout is None
-    assert "offload_mode" not in (rollout.model_config or {})
-    assert "offload_mode" not in (replay.model_config or {})
-
-
-@pytest.mark.parametrize(
-    ("mode", "device_index", "hooked", "untouched"),
-    [
-        ("sequential", 3, "sequential_offload_gpu", "model_offload_gpu"),
-        ("model", 2, "model_offload_gpu", "sequential_offload_gpu"),
-    ],
-)
-def test_wan_i2v_offload_hooks_are_deferred_until_after_the_loader(
-    monkeypatch, mode: str, device_index: int, hooked: str, untouched: str
-) -> None:
-    """Either offload mode installs its hooks only in ``apply_generation_offload``,
-    on the build device's index, and stages every module dtype-only on CPU until
-    Accelerate streams it."""
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline, calls = _patch_from_pretrained(monkeypatch)
-
-    build = _i2v_build(
-        device=torch.device(f"cuda:{device_index}"),
-        rollout=_rollout_build_options(mode),
-    )
-
-    model = WanI2VPipelineModel.from_build(build)
-
-    assert model.pipeline is pipeline
-    _assert_frozen_and_loaded(pipeline, calls)
-    assert getattr(pipeline, hooked) is None
-    model.apply_generation_offload(build)
-    assert model._pipeline_offload is PipelineOffloadMode(mode)
-    # Installing the committed mode twice must not touch the hook graph again.
-    monkeypatch.setattr(
-        model,
-        "_enable_pipeline_offload",
-        lambda _mode: pytest.fail("committed hooks were installed twice"),
-    )
-    model.apply_generation_offload(build)
-    with pytest.raises(RuntimeError, match="offload mode changed"):
-        model.apply_generation_offload(
-            _i2v_build(device=build.device, rollout=_rollout_build_options("none")),
-        )
-    assert model._pipeline_offload is PipelineOffloadMode(mode)
-    assert model.pipeline_cpu_offload_healthy
-    assert getattr(pipeline, hooked) == device_index
-    assert getattr(pipeline, untouched) is None
-    assert pipeline.vae.to_calls == [(None, torch.float32)]
-    assert pipeline.text_encoder.to_calls == [(None, torch.bfloat16)]
-    assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]
+    assert "offload" not in (rollout.model_config or {})
+    assert "offload" not in (replay.model_config or {})
 
 
 def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
@@ -245,7 +175,7 @@ def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
     build = SimpleNamespace(
         parameter_dtype=torch.bfloat16,
         model_config=_canonical_model_config(),
-        rollout=_rollout_build_options("model"),
+        rollout=_rollout_build_options(),
     )
 
     model.apply_full_finetune(build)
@@ -313,256 +243,8 @@ def test_wan_replay_full_finetune_leaves_placement_to_the_strategy() -> None:
     assert transformer.to_calls == []
 
 
-def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
-    """Weight sync detaches public hooks, updates LoRA, and reinstalls streaming."""
-
-    from accelerate import cpu_offload
-    from accelerate.hooks import remove_hook_from_module
-    from torch import nn
-
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    class _FailingLinear(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(3, 2, bias=False)
-            self.fail_forward = False
-
-        def forward(self, value: torch.Tensor) -> torch.Tensor:
-            output = super().forward(value)
-            if self.fail_forward:
-                raise RuntimeError("injected leaf failure")
-            return output
-
-    class _TinyTransformer(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.scale_shift_table = nn.Parameter(torch.ones(2))
-            self.proj = _FailingLinear()
-
-        def forward(self, value: torch.Tensor) -> torch.Tensor:
-            return self.proj(value) * self.scale_shift_table
-
-    class _HookedPipeline:
-        def __init__(self) -> None:
-            self.transformer = _TinyTransformer()
-            self.original_proj = self.transformer.proj
-            self.transformer_2 = None
-            self.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=False)
-            self.enable_calls = 0
-            self.remove_calls = 0
-
-        def enable_sequential_cpu_offload(self, *, gpu_id: int) -> None:
-            assert gpu_id == 0
-            self.enable_calls += 1
-            cpu_offload(
-                self.transformer,
-                execution_device=torch.device("cpu"),
-                offload_buffers=True,
-            )
-
-        def remove_all_hooks(self) -> None:
-            self.remove_calls += 1
-            remove_hook_from_module(self.transformer, recurse=True)
-
-    pipeline = _HookedPipeline()
-    build = ModelBuild(
-        model_name_or_path="unused",
-        revision=None,
-        family="wan_2_1_i2v",
-        precision=RolePrecision("fp32", "tf32"),
-        device=torch.device("cpu"),
-        parameter_dtype=torch.float32,
-        model_config=_canonical_model_config(
-            use_lora=True,
-            lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
-        ),
-        rollout=_rollout_build_options("sequential"),
-    )
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=build.device,
-    )
-    model.apply_lora(build)
-    model.apply_generation_offload(build)
-    assert model.uses_pipeline_cpu_offload
-    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
-
-    with pytest.raises(ValueError, match="unexpected trainable state keys"):
-        model.load_trainable_state({"unknown.weight": torch.ones(1)})
-    assert pipeline.remove_calls == 0
-    assert pipeline.enable_calls == 1
-    assert model.pipeline_cpu_offload_healthy
-
-    sample = torch.tensor([[0.25, -0.5, 1.0]])
-    before = model.transformer(sample).detach().clone()
-    payload = {
-        f"transformer.{name}": torch.full(parameter.shape, 0.5, dtype=parameter.dtype)
-        for name, parameter in model.transformer.named_parameters()
-        if parameter.requires_grad
-    }
-    model.load_trainable_state(payload)
-    after = model.transformer(sample).detach()
-
-    assert not torch.equal(after, before)
-    assert pipeline.remove_calls == 1
-    assert pipeline.enable_calls == 2
-    assert model.uses_pipeline_cpu_offload
-    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
-
-    # Accelerate does not run a leaf's post-forward hook when that leaf raises.
-    # The public reset must materialize the stranded weight on CPU, then re-arm
-    # the full tree before the worker is allowed to retry or hand off its GPU.
-    pipeline.original_proj.fail_forward = True
-    with pytest.raises(RuntimeError, match="injected leaf failure"):
-        model.transformer(sample)
-    assert pipeline.original_proj.weight.device.type != "meta"
-
-    pipeline.original_proj.fail_forward = False
-    model.reset_pipeline_cpu_offload()
-
-    assert pipeline.remove_calls == 2
-    assert pipeline.enable_calls == 3
-    assert model.pipeline_cpu_offload_healthy
-    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
-    assert model.transformer(sample).shape == (1, 2)
-
-    assert torch.equal(model.transformer(sample).detach(), after)
-
-
-def test_wan_pipeline_offload_remove_failure_is_permanently_broken() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline = _FakePipeline()
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=torch.device("cuda:0"),
-    )
-    build = SimpleNamespace(
-        device=model.device,
-        model_config=_canonical_model_config(),
-        rollout=_rollout_build_options("sequential"),
-    )
-    model.apply_generation_offload(build)
-    pipeline.remove_all_hooks = lambda: (_ for _ in ()).throw(RuntimeError("remove failed"))
-
-    with pytest.raises(RuntimeError, match="hook removal failed"):
-        model.reset_pipeline_cpu_offload()
-    with pytest.raises(RuntimeError, match="not reusable"):
-        model.reset_pipeline_cpu_offload()
-
-    assert model.uses_pipeline_cpu_offload
-    assert not model.pipeline_cpu_offload_healthy
-
-
-def test_wan_pipeline_offload_initial_install_failure_is_permanently_broken() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline = _FakePipeline()
-    pipeline.enable_sequential_cpu_offload = lambda **_kwargs: (_ for _ in ()).throw(
-        RuntimeError("install failed"),
-    )
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=torch.device("cuda:0"),
-    )
-    build = SimpleNamespace(
-        device=model.device,
-        model_config=_canonical_model_config(),
-        rollout=_rollout_build_options("sequential"),
-    )
-
-    with pytest.raises(RuntimeError, match="install failed"):
-        model.apply_generation_offload(build)
-    with pytest.raises(RuntimeError, match="not reusable"):
-        model.apply_generation_offload(build)
-
-    assert model.uses_pipeline_cpu_offload
-    assert not model.pipeline_cpu_offload_healthy
-
-
-def test_wan_pipeline_offload_operation_failure_never_publishes_healthy_hooks() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline = _FakePipeline()
-    pipeline.remove_all_hooks = lambda: None
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=torch.device("cuda:0"),
-    )
-    model.apply_generation_offload(
-        SimpleNamespace(
-            device=model.device,
-            model_config=_canonical_model_config(),
-            rollout=_rollout_build_options("sequential"),
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="partial state") as failure:
-        model._with_pipeline_cpu_offload_suspended(
-            lambda: (_ for _ in ()).throw(RuntimeError("copy failed")),
-            operation="trainable weight sync",
-        )
-
-    assert isinstance(failure.value.__cause__, RuntimeError)
-    assert str(failure.value.__cause__) == "copy failed"
-    assert pipeline.sequential_offload_gpu == 0
-    assert not model.pipeline_cpu_offload_healthy
-
-
-def test_wan_pipeline_offload_reinstall_failure_is_permanently_broken() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline = _FakePipeline()
-    pipeline.remove_all_hooks = lambda: None
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=torch.device("cuda:0"),
-    )
-    model.apply_generation_offload(
-        SimpleNamespace(
-            device=model.device,
-            model_config=_canonical_model_config(),
-            rollout=_rollout_build_options("sequential"),
-        ),
-    )
-    pipeline.enable_sequential_cpu_offload = lambda **_kwargs: (_ for _ in ()).throw(
-        RuntimeError("reinstall failed"),
-    )
-
-    with pytest.raises(RuntimeError, match="hook reinstall failed") as failure:
-        model.reset_pipeline_cpu_offload()
-
-    assert isinstance(failure.value.__cause__, RuntimeError)
-    assert str(failure.value.__cause__) == "reinstall failed"
-    assert not model.pipeline_cpu_offload_healthy
-
-
-def test_wan_model_cpu_offload_reset_cycles_public_pipeline_hooks() -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
-
-    pipeline = _FakePipeline()
-    remove_calls: list[bool] = []
-    pipeline.remove_all_hooks = lambda: remove_calls.append(True)
-    build = SimpleNamespace(
-        device=torch.device("cuda:2"),
-        model_config=_canonical_model_config(),
-        rollout=_rollout_build_options("model"),
-    )
-    model = WanI2VPipelineModel(
-        pipeline=pipeline,
-        device=build.device,
-    )
-
-    model.apply_generation_offload(build)
-    model.reset_pipeline_cpu_offload()
-
-    assert remove_calls == [True]
-    assert pipeline.model_offload_gpu == 2
-    assert model.pipeline_cpu_offload_healthy
-
-
-def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> None:
-    """No-offload stages VAE fp32 plus encoders at the build dtype, without hooks."""
+def test_wan_i2v_from_build_stages_frozen_modules(monkeypatch) -> None:
+    """``from_build`` stages the VAE in fp32 and the encoders at the build dtype."""
     from vrl.models.families.wan_2_1.model import WanI2VPipelineModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
@@ -573,8 +255,6 @@ def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> Non
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
-    assert pipeline.sequential_offload_gpu is None
-    assert pipeline.model_offload_gpu is None
     # vae stays fp32; text/image encoders ride the build dtype.
     assert pipeline.vae.to_calls == [(build.device, torch.float32)]
     assert pipeline.text_encoder.to_calls == [(build.device, torch.bfloat16)]
@@ -775,7 +455,7 @@ def test_wan_build_normalization_rejects_unpinned_remote_before_config_load(
     assert calls == []
 
 
-def test_wan_t2v_loads_vae_in_fp32_before_offload_staging(monkeypatch) -> None:
+def test_wan_t2v_loads_vae_in_fp32_and_stages_it(monkeypatch) -> None:
     from diffusers import WanPipeline
 
     from vrl.models.families.wan_2_1.model import WanT2VPipelineModel

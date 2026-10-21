@@ -13,6 +13,7 @@ from tests.config.helpers import unknown_keys
 from vrl.config.model_schema import (
     ModelMemorySection,
     ModelSection,
+    OffloadSection,
     VaeDecodeMemorySection,
 )
 from vrl.config.schema import (
@@ -37,7 +38,7 @@ from vrl.models.interfaces.generation_memory import (
 
 
 def test_wan_model_keys_are_scoped_to_wan_family() -> None:
-    """Wan trainable-topology/offload keys are accepted only for Wan families."""
+    """Wan trainable-topology keys are accepted only for Wan families; offload is every family's."""
 
     wan_cfg = OmegaConf.create(
         {
@@ -45,7 +46,7 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
                 "trainable_transformers": ["transformer_2"],
-                "offload_mode": "sequential",
+                "offload": {},
             },
         },
     )
@@ -57,7 +58,7 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
                 "family": "wan_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
                 "trainable_transformers": ["transformer_2"],
-                "offload_mode": "sequential",
+                "offload": {},
             },
         },
     )
@@ -70,13 +71,12 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
                 "path": "stabilityai/stable-diffusion-3.5-medium",
                 "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
-                "offload_mode": "sequential",
+                "offload": {},
             },
         },
     )
     assert unknown_keys(sd3_cfg) == [
         "model.boundary_ratio",
-        "model.offload_mode",
         "model.trainable_transformers",
     ]
 
@@ -109,18 +109,36 @@ def test_family_owned_keys_are_unknown_for_sibling_families(family: str, field: 
     assert unknown_keys(cfg) == [f"model.{field}"]
 
 
-def test_unknown_wan_offload_mode_raises() -> None:
-    """Wan offload mode is a typed three-state enum, not two independent bools."""
+def test_offload_true_is_the_default_section_and_false_its_absence() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-                "offload_mode": "stream",
+                "offload": True,
+            },
+            "actor": {"offload": False},
+        },
+    )
+
+    parsed = parse_config(cfg)
+
+    assert parsed.model.offload == OffloadSection()
+    assert parsed.actor is not None and parsed.actor.offload is None
+
+
+def test_offload_is_a_section_not_a_mode_name() -> None:
+    """Presence of the section is the choice; there is no mode vocabulary to spell."""
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+                "offload": "block_stream",
             },
         },
     )
-    with pytest.raises(ValueError, match=r"unknown model\.offload_mode"):
+    with pytest.raises(ValueError, match="offload"):
         parse_config(cfg)
 
 
@@ -131,7 +149,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
                 "expert_lifecycle_profiling": True,
-                "offload_mode": "sequential",
+                "offload": {},
             },
         },
     )
@@ -140,7 +158,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
 
     assert isinstance(parsed.model, WanModelSection)
     assert parsed.model.expert_lifecycle_profiling is True
-    assert parsed.model_dump()["model"]["offload_mode"] == "sequential"
+    assert parsed.model_dump()["model"]["offload"] == {}
 
 
 def test_cosmos_predict25_keys_select_family_section() -> None:

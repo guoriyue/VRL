@@ -4,8 +4,7 @@ Level-1 offload-and-restore for on-demand activation: ``sleep`` delegates to the
 worker's memory-parking owner. The backend follows from residency, never from
 what happens to be installed: a parking-required rank claims vLLM's CuMem pool
 before building and fails loud without a working allocator; a model that is
-not resident on CUDA after the build releases the pool and parks by moving;
-a pipeline-offloaded model keeps its Accelerate hooks and resets them instead.
+not resident on CUDA after the build releases the pool and parks by moving.
 ``wake`` restores active residency without a cold reload; ``release_policy``
 remains the level-2 discard path.
 """
@@ -53,30 +52,6 @@ class _SleepModel:
 
     def move_frozen_components(self, device: Any) -> None:
         self.frozen_calls.append(device)
-
-
-class _PipelineOffloadModel(_SleepModel):
-    """Meta-backed model whose Accelerate hooks already own CPU residency."""
-
-    uses_pipeline_cpu_offload = True
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.pipeline_cpu_offload_healthy = True
-        self.reset_calls = 0
-        self.reset_error: BaseException | None = None
-
-    def reset_pipeline_cpu_offload(self) -> None:
-        self.reset_calls += 1
-        if self.reset_error is not None:
-            self.pipeline_cpu_offload_healthy = False
-            raise self.reset_error
-
-    def to(self, device: Any) -> _PipelineOffloadModel:
-        raise AssertionError(f"pipeline-offloaded model must not move as a whole: {device}")
-
-    def move_frozen_components(self, device: Any) -> None:
-        raise AssertionError(f"pipeline-offloaded components must retain their hooks: {device}")
 
 
 class _Executor:
@@ -165,23 +140,15 @@ def _core(
     *,
     sleep_offload: bool = False,
     family: str = "sd3_5",
-    pipeline_offload_mode: str | None = None,
+    parking_mechanism: str = "cumem",
 ) -> GenerationWorkerCore:
-    if pipeline_offload_mode is None:
-        pipeline_offload_mode = (
-            "sequential" if bool(getattr(model, "uses_pipeline_cpu_offload", False)) else "none"
-        )
     config = GenerationLaunchConfig(
         family=family,
-        model_build=(
-            {"rollout": {"pipeline_offload_mode": pipeline_offload_mode}}
-            if pipeline_offload_mode != "none"
-            else {}
-        ),
+        model_build={},
         expected_model_identity={"schema": "test"},
         policy_version=1,
         sleep_offload=sleep_offload,
-        parking_mechanism="move" if pipeline_offload_mode != "none" else "cumem",
+        parking_mechanism=parking_mechanism,
     )
     core = GenerationWorkerCore("rollout-0", config)
     core.executor = (
@@ -311,81 +278,13 @@ def test_failed_physical_proof_quarantines_already_moved_model(
         core.wake()
 
 
-def test_pipeline_offload_sleep_wake_preserves_accelerate_hooks() -> None:
-    model = _PipelineOffloadModel()
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-    core.load_policy()
-
-    snapshot = core.sleep()
-    core.sleep()
-    core.wake()
-    core.wake()
-
-    assert snapshot.backend == "cpu_offload"
-    assert snapshot.residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
-    assert model.reset_calls == 1
-    assert core.executor is not None
-
-
-def test_pipeline_offload_never_consults_cumem_factory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.models.parking as parking_backends
-
-    attempts: list[str | None] = []
-    monkeypatch.setattr(
-        parking_backends.CumemPool,
-        "try_create",
-        classmethod(lambda _cls, tag=None: attempts.append(tag)),
-    )
-    model = _PipelineOffloadModel()
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-
-    core.load_policy()
-    core.sleep()
-
-    assert attempts == []
-
-
-def test_pipeline_offload_reset_failure_quarantines_worker() -> None:
-    model = _PipelineOffloadModel()
-    model.reset_error = RuntimeError("hook reinstall failed")
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-    core.load_policy()
-
-    with pytest.raises(RuntimeError, match="worker is quarantined"):
-        core.sleep()
-    with pytest.raises(RuntimeError, match=r"quarantined.*refusing wake"):
-        core.wake()
-
-    assert model.reset_calls == 1
-
-
-def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
+def test_moved_model_residual_failure_does_not_commit_parked_state(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     import vrl.models.parking as parking_backends
 
-    model = _PipelineOffloadModel()
+    model = _SleepModel(device="cpu")
     model.pipeline = SimpleNamespace(components={"text": torch.nn.Linear(2, 2)})
     baseline = 1024
     readings = iter(
@@ -400,12 +299,7 @@ def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
     )
     monkeypatch.setattr(torch.cuda, "memory_allocated", lambda: 123)
     monkeypatch.setattr(torch.cuda, "memory_reserved", lambda: 456)
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
+    core = _core(None, sleep_offload=True, family="wan_2_1_i2v", parking_mechanism="move")
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
     core.load_policy()
 
@@ -425,7 +319,7 @@ def test_residual_failure_survives_broken_parking_diagnostics(
 ) -> None:
     import vrl.models.parking as parking_backends
 
-    model = _PipelineOffloadModel()
+    model = _SleepModel(device="cpu")
     baseline = 1024
     readings = iter(
         (
@@ -442,12 +336,7 @@ def test_residual_failure_survives_broken_parking_diagnostics(
         raise RuntimeError("diagnostic failure")
 
     monkeypatch.setattr(torch.cuda, "memory_allocated", fail)
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
+    core = _core(None, sleep_offload=True, family="wan_2_1_i2v", parking_mechanism="move")
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
     core.load_policy()
 
@@ -458,82 +347,7 @@ def test_residual_failure_survives_broken_parking_diagnostics(
     assert "parking diagnostics unavailable" in caplog.text
 
 
-def test_failed_forward_resets_pipeline_offload_before_returning_error() -> None:
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchEnvelope
-    from vrl.generation.types import GenerationRequest
-
-    class _FailingExecutor(_Executor):
-        def forward_batch(self, *_args: Any, **_kwargs: Any) -> Any:
-            raise RuntimeError("forward failed")
-
-    model = _PipelineOffloadModel()
-    model.device = "cpu"
-    core = _core(model, family="wan_2_1_i2v")
-    core.executor = _FailingExecutor(model)
-    request = GenerationRequest(
-        request_id="failed-forward",
-        family="wan_2_1_i2v",
-        task="i2v",
-        inputs=["prompt"],
-        samples_per_prompt=1,
-        policy_version=1,
-    )
-    envelope = GenerationBatchEnvelope(
-        request=request,
-        batch=GenerationSampleBatch(
-            prompt_index=0,
-            sample_start=0,
-            sample_count=1,
-        ),
-    )
-
-    result = core.execute_batch(envelope)
-
-    assert result.error == "forward failed"
-    assert model.reset_calls == 1
-
-
-def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchEnvelope
-    from vrl.generation.types import GenerationRequest
-
-    class _FailingExecutor(_Executor):
-        def forward_batch(self, *_args: Any, **_kwargs: Any) -> Any:
-            raise RuntimeError("forward failed")
-
-    model = _PipelineOffloadModel()
-    model.device = "cpu"
-    model.reset_error = RuntimeError("hook removal failed")
-    core = _core(model, family="wan_2_1_i2v")
-    core.executor = _FailingExecutor(model)
-    request = GenerationRequest(
-        request_id="failed-recovery",
-        family="wan_2_1_i2v",
-        task="i2v",
-        inputs=["prompt"],
-        samples_per_prompt=1,
-        policy_version=1,
-    )
-    envelope = GenerationBatchEnvelope(
-        request=request,
-        batch=GenerationSampleBatch(
-            prompt_index=0,
-            sample_start=0,
-            sample_count=1,
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="worker is quarantined"):
-        core.execute_batch(envelope)
-    with pytest.raises(RuntimeError, match=r"quarantined.*refusing execute_batch"):
-        core.execute_batch(envelope)
-
-    assert model.reset_calls == 1
-
-
-def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
+def test_pipelined_oom_is_returned_as_a_typed_retry() -> None:
     from vrl.generation.execution.types import RequestBatchOutOfMemory
     from vrl.generation.types import GenerationRequest
 
@@ -547,8 +361,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         ) -> Any:
             raise RuntimeError("CUDA out of memory")
 
-    model = _PipelineOffloadModel()
-    model.device = "cpu"
+    model = _SleepModel(device="cpu")
     core = _core(model, family="wan_2_1_i2v")
     core.executor = _OomPipelinedExecutor(model)
     request = GenerationRequest(
@@ -563,7 +376,6 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
     result = core.execute_request_batches(request, _SAMPLE_BATCHES)
 
     assert isinstance(result, RequestBatchOutOfMemory)
-    assert model.reset_calls == 1
 
 
 def test_sleep_without_loaded_model_is_a_safe_no_op() -> None:
@@ -715,42 +527,6 @@ def test_failed_pooled_build_cleanup_makes_worker_terminal(
     with pytest.raises(RuntimeError, match=r"quarantined.*refusing policy build"):
         core.load_policy()
     assert build_calls == 1
-
-
-def test_loaded_validation_drops_traceback_model_before_pool_close(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import gc
-    import weakref
-
-    import vrl.models.parking as parking_backends
-
-    fake = _FakeCuMem()
-    _install_cumem_pool(monkeypatch, fake)
-    original_close = parking_backends.CumemPool.close
-    model_ref: weakref.ReferenceType[Any] | None = None
-    model_was_released: list[bool] = []
-
-    def build_mismatched_backend() -> _Executor:
-        nonlocal model_ref
-        model = _PipelineOffloadModel()
-        model_ref = weakref.ref(model)
-        return _build_executor(core, model)
-
-    def assert_model_released(pool: Any) -> None:
-        gc.collect()
-        assert model_ref is not None
-        model_was_released.append(model_ref() is None)
-        original_close(pool)
-
-    core = _core(None, sleep_offload=True)
-    core._build_executor = build_mismatched_backend  # type: ignore[method-assign]
-    monkeypatch.setattr(parking_backends.CumemPool, "close", assert_model_released)
-
-    with pytest.raises(RuntimeError, match="residency mechanisms must be mutually exclusive"):
-        core.load_policy()
-
-    assert model_was_released == [True]
 
 
 def test_sleep_offload_requires_cumem(
@@ -989,35 +765,6 @@ def test_module_parking_release_then_reload_has_fresh_restore_state(
     # second session then sleeps and wakes on its own pool.
     assert fake.wake_calls == [["vrl:generation:rollout-0:weights"]] * 2
     assert fake.sleep_calls == [("vrl:generation:rollout-0:weights",)] * 2
-
-
-def test_pipeline_offload_release_then_reload_has_fresh_hook_state() -> None:
-    first_model = _PipelineOffloadModel()
-    second_model = _PipelineOffloadModel()
-    core = _core(
-        None,
-        sleep_offload=True,
-        family="wan_2_1_i2v",
-        pipeline_offload_mode="sequential",
-    )
-    core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
-        core,
-        first_model,
-    )
-    core.load_policy()
-    core.sleep()
-    core.release_policy()
-
-    core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
-        core,
-        second_model,
-    )
-    core.load_policy()
-    core.sleep()
-    core.wake()
-
-    assert first_model.reset_calls == 1
-    assert second_model.reset_calls == 1
 
 
 @_MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR

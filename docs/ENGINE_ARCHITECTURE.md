@@ -55,7 +55,7 @@ the topology's call. Each role accepts a subset and refuses the rest at load:
 | role | default | also accepted | refused |
 |---|---|---|---|
 | trainer | `move` (`parking.disk_directory` adds the disk store) | none | `cumem` (state is not pool-allocated), `reload` (optimizer state cannot be rebuilt) |
-| rollout | `cumem` | `move` (required under pipeline CPU offload) | `reload` (a woken rollout is not guaranteed a weight sync) |
+| rollout | `cumem` | `move` (required under `model.offload`: the streamed blocks are not pool-allocated, `vrl/nn/offload`) | `reload` (a woken rollout is not guaranteed a weight sync) |
 | reward | `cumem` | `reload` | `move` (6.2x slower per cycle than `cumem`) |
 
 All three roles drive these mechanisms through one `ParkingSession`: `build`
@@ -133,7 +133,7 @@ driver-side `GenerationBatchGatherer.merge_generation_batches()` reassembles the
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
 | `GenerationWorkerCore` | Worker-process brain: validates the launch config, builds the family executor, runs forward calls. |
-| `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
+| `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `model.offload` or with a model built off CUDA it uses `move`. Destination is always RAM. |
 | `RayGenerationExecutor` (`ray/executor.py`) | Assigns sample batches to engines in round-robin order when creating dispatch jobs. |
 | `GenerationRequest.sample_batches()` (`types.py`) | The one per-request batch split consumed by direct and Ray executors. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |

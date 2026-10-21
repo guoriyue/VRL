@@ -93,10 +93,6 @@ class RayGenerationLaunchInputs:
             rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
                 rollout["prompt_encoder_dtype"],
             )
-            # Absence is the wire representation of the universal no-offload
-            # default. Only a selected residency mode needs to cross Ray.
-            if rollout.get("pipeline_offload_mode") == "none":
-                rollout.pop("pipeline_offload_mode")
 
         torch_profiler = root.rollout.torch_profiler if root.rollout is not None else None
         if torch_profiler is not None and not torch_profiler.output_dir:

@@ -201,7 +201,6 @@ def test_every_allow_listed_offline_actor_field_has_a_reader(
     """
 
     from vrl.config.schema import ActorSection, parse_config
-    from vrl.scripts.families.qwen_image_layered.train_sft import place_trainable_roots
     from vrl.trainers.offline import OfflineTrainerConfig
     from vrl.utils.config import import_from_path
 
@@ -220,11 +219,6 @@ def test_every_allow_listed_offline_actor_field_has_a_reader(
     # The checkpointing mode is the section's own reading of its knob; run
     # that reader against the recording actor so the field access is seen.
     ActorSection.gradient_checkpointing_mode.fget(recording_root.actor)
-    if "stream_frozen_blocks" in dict(algorithm_cls.consumed_sections)["actor"]:
-        # The SFT recipe's placement step is the reader of its streaming knob.
-        place_trainable_roots(
-            SimpleNamespace(trainable_modules={}), recording_root.actor, device="cpu"
-        )
 
     consumed = dict(algorithm_cls.consumed_sections or ())
     unread = sorted(consumed["actor"] - read)

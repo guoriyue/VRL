@@ -73,10 +73,10 @@ def test_launch_config_rejects_invalid_policy_version(policy_version) -> None:
         )
 
 
-def test_launch_contract_refuses_cumem_under_pipeline_offload() -> None:
-    """Pipeline CPU offload owns the model's residency, so a parking rollout must move."""
+def test_launch_contract_refuses_cumem_under_offload() -> None:
+    """Streamed blocks are never pool-allocated, so a parking rollout must move."""
 
-    offloaded = {"rollout": {"pipeline_offload_mode": "sequential"}}
+    offloaded = {"rollout": {"offload": {}}}
     with pytest.raises(ValueError, match=r"parking\.mechanism: move"):
         GenerationLaunchConfig(
             family="unit",
@@ -236,8 +236,8 @@ def test_generation_launch_inputs_project_resolved_generation_memory(tmp_path) -
 
 
 def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_path) -> None:
-    """A Wan run's public ``model.offload_mode`` becomes the rollout build's
-    pipeline residency, resolved from a real Wan snapshot on disk."""
+    """A Wan run's public ``model.offload`` section becomes the rollout build's
+    residency, resolved from a real Wan snapshot on disk."""
 
     snapshot = write_tiny_wan_snapshot(tmp_path / "wan-snapshot")
     manifest = tmp_path / "prompts.jsonl"
@@ -247,7 +247,7 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         overrides=[
             f"model.path={snapshot}",
             "model.revision=null",
-            "model.offload_mode=sequential",
+            "model.offload=true",
             f"data.manifest={manifest}",
             f"trainer.output_dir={tmp_path / 'run'}",
             "distributed.training.strategy=single_process",
@@ -261,8 +261,8 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         built, ResourcePlan.from_root(built.root)
     ).launch_config.model_build
 
-    assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
-    assert "offload_mode" not in model_build["model_config"]
+    assert model_build["rollout"]["offload"] is not None
+    assert "offload" not in model_build["model_config"]
 
 
 def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> None:

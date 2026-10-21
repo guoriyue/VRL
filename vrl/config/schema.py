@@ -40,7 +40,7 @@ from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class
 from vrl.config.base import ConfigBase, _extract_error_message
 from vrl.config.data import DataLoaderName, manifest_sources
-from vrl.config.model_schema import ModelSection
+from vrl.config.model_schema import ModelSection, OffloadSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
@@ -498,10 +498,17 @@ class ActorSection(ConfigBase):
     gradient_accumulation_steps: StrictInt | None = None
     # offline entrypoints (vrl/scripts/families/*/train_dpo.py, train_sft.py)
     prediction_type: str | None = None
-    # Keep each frozen transformer block on the host and materialize it on the
-    # device per call (``vrl.models.host_streaming``): a bf16 ~20B policy trains
-    # on one 32 GB card. reader: the single-process offline SFT recipe.
-    stream_frozen_blocks: StrictBool | None = None
+    # Present (``true``, or a section with options), the replay policy's frozen
+    # transformer blocks stay on the host and stream per call, so a bf16 ~20B
+    # policy trains on one 32 GB card. readers: the training strategies' root
+    # placement, the offline SFT recipe.
+    offload: OffloadSection | None = None
+
+    @field_validator("offload", mode="before")
+    @classmethod
+    def _offload_flag(cls, value: Any) -> Any:
+        return OffloadSection.from_flag(value)
+
     scale_lr: StrictBool | None = None
     train_batch_size: StrictInt | None = None
     use_adafactor: StrictBool | None = None

@@ -61,7 +61,7 @@ class DiffusionSFT(OfflineAlgorithm):
                     "optim",
                     "prediction_type",
                     "scale_lr",
-                    "stream_frozen_blocks",
+                    "offload",
                     "train_batch_size",
                     "use_adafactor",
                 }

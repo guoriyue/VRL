@@ -3,7 +3,7 @@
 # The checkpoint's I2V transformer is 16.4B parameters even though the public
 # model name says 14B. Two FSDP ranks shard replay/backward; CPU offload keeps
 # each rank's shard out of GPU memory between block forwards. Each rank also owns
-# one sequentially-offloaded rollout replica on the same GPU and time-shares it
+# one host-streamed rollout replica on the same GPU and time-shares it
 # through the strict collect -> train handoff.
 #
 # Two ranks are deliberate on a 181 GiB host. Four ranks would create four full
@@ -32,9 +32,10 @@ distributed:
       cpu_offload: true
 
 model:
-  # Sequential layer offload is required for a complete rollout replica on L4.
-  # Trainer residency is independently controlled by fsdp.cpu_offload above.
-  offload_mode: sequential
+  # Streaming the frozen blocks from the host is required for a complete
+  # rollout replica on L4. Trainer residency is independently controlled by
+  # fsdp.cpu_offload above.
+  offload: true
   torch_compile:
     enable: false
     mode: default

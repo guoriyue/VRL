@@ -33,10 +33,6 @@ class WanModelSection(ModelSection):
         default=False,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
-    offload_mode: Literal["none", "model", "sequential"] = Field(
-        default="none",
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
     trainable_transformers: (
         list[WanTransformerName] | Literal["all", "both"] | WanTransformerName | None
     ) = Field(
@@ -96,9 +92,10 @@ def normalize_wan_trainable_transformers(
 def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     """Resolve immutable dual-stage topology before replay or rollout construction.
 
-    The one place Wan topology and offload are validated (``model.offload_mode``
-    is already a typed literal). Every later reader -- ``wan_topology_from_build``,
-    the model constructors, pipeline load -- takes the canonical values as given.
+    The one place Wan topology is validated. Every later reader --
+    ``wan_topology_from_build``, the model constructors, pipeline load -- takes
+    the canonical values as given. ``model.offload`` reaches the rollout build
+    through the registry like every family's.
     """
 
     require_remote_checkpoint_source_pin(
@@ -128,19 +125,9 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
         dual_stage=source_boundary is not None,
     )
 
-    # Pipeline offload: move the public model.offload_mode onto the rollout build
-    # only, so replay builds stay residency-neutral and the rollout worker owns
-    # the CPU-offload decision. Kept in the same normalizer as topology so both
-    # immutable projections happen once, before replay or rollout construction.
-    from dataclasses import replace
-
-    mode = model_config.pop("offload_mode", "none")
-
     model_config["boundary_ratio"] = source_boundary
     model_config["trainable_transformers"] = list(names)
     build.model_config = model_config
-    if build.rollout is not None:
-        build.rollout = replace(build.rollout, pipeline_offload_mode=mode)
     return build
 
 

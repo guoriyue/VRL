@@ -17,6 +17,7 @@ from vrl.config.model_schema import LoraSection
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
+from vrl.nn.offload.offload import Offload
 from vrl.utils.validation import require_int
 
 # Single source of truth for the model_config compile block that the
@@ -49,26 +50,6 @@ class TorchCompileScope(StrEnum):
         )
 
 
-class PipelineOffloadMode(StrEnum):
-    """Diffusers/Accelerate residency hook for a full generation pipeline.
-
-    Same shape as ``TorchCompileScope``: the Ray launch config carries the
-    rollout block as a primitive mapping and reads this field before anyone
-    rebuilds the typed ``RolloutBuildOptions`` from it, so the wire path and the
-    typed path validate through this one enum.
-    """
-
-    NONE = "none"
-    MODEL = "model"
-    SEQUENTIAL = "sequential"
-
-    @classmethod
-    def _missing_(cls, value: object) -> None:
-        raise ValueError(
-            f"rollout pipeline_offload_mode must be one of {[m.value for m in cls]}, got {value!r}",
-        )
-
-
 def checkpoint_owned_state_names(module: Any) -> frozenset[str]:
     """The state a training checkpoint owns: the module's trainable parameter names."""
 
@@ -87,10 +68,10 @@ class RolloutBuildOptions:
     """Generation-only precision and lifecycle inputs for a rollout model.
 
     ``prompt_encoder_dtype`` names the generation-only encoder precision policy
-    the runtime actually consumes. ``pipeline_offload_mode`` owns optional
-    Diffusers/Accelerate residency hooks that exist only on full generation
-    pipelines. VAEs remain family-owned fp32 fidelity boundaries; putting their
-    dtype under this option would advertise a knob they ignore.
+    the runtime actually consumes. ``offload`` is the rollout's ``model.offload``
+    section, applied by the OffloadPass. VAEs remain family-owned fp32 fidelity
+    boundaries; putting their dtype under this option would advertise a knob
+    they ignore.
 
     Replay builds carry ``rollout=None`` instead of hauling these fields through
     a path that must never quantize or load generation-only prompt encoders.
@@ -98,7 +79,7 @@ class RolloutBuildOptions:
 
     prompt_encoder_dtype: Any
     base_weight_sync: bool = True
-    pipeline_offload_mode: PipelineOffloadMode = PipelineOffloadMode.NONE
+    offload: Offload | None = None
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import require_plain_dtype
@@ -111,9 +92,7 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
-        object.__setattr__(
-            self, "pipeline_offload_mode", PipelineOffloadMode(self.pipeline_offload_mode)
-        )
+        object.__setattr__(self, "offload", Offload.from_section(self.offload))
 
 
 def torch_compile_for_role(

@@ -27,6 +27,7 @@ from vrl.models.parking import (
     module_on_host,
 )
 from vrl.models.parking_disk_store import ParkingDiskStore
+from vrl.nn.offload import Offload
 from vrl.trainers.distributed import (
     ContextParallelPeerGroup,
     DistributedTrainingContext,
@@ -258,6 +259,9 @@ class _UnshardedStateStrategy:
     # Unsharded backends shard no sequence dimension across FSDP peers; the
     # FSDP strategy owns the only context-parallel peer group.
     context_parallel_groups: ContextParallelPeerGroup | None = None
+    # ``actor.offload``: present, a host-resident root's frozen blocks stay on
+    # the host and stream per call (``Offload.place``) instead of moving whole.
+    offload: Offload | None = None
 
     @property
     def materialize_weights(self) -> bool:
@@ -288,18 +292,22 @@ class _UnshardedStateStrategy:
         self.validate_training_state_parking()
 
     def place_trainable_roots(self, model: Any) -> None:
-        """Move the policy's trainable roots onto this process's device.
+        """Put the policy's trainable roots on this process's device.
 
         Replay builds leave the trainable roots where the loader put them (CPU);
         the strategy owns placement. FSDP shards them onto the mesh block by
-        block; the unsharded backends move each root whole. Plain ``nn.Module``
-        policies (tests, non-diffusion trainers) expose no root mapping and are
-        trained where they are; a root a loader already dispatched across
-        devices (block-partitioned H3) is not on the host and is left alone.
+        block; the unsharded backends move each root whole, or stream its
+        frozen blocks under ``offload``. Plain ``nn.Module`` policies (tests,
+        non-diffusion trainers) expose no root mapping and are trained where
+        they are; a root a loader already dispatched across devices
+        (block-partitioned H3) is not on the host and is left alone.
         """
 
         trainable = getattr(model, "trainable_modules", None)
         if not isinstance(trainable, Mapping):
+            return
+        if self.offload is not None:
+            self.offload.place(trainable, device=self.context.device)
             return
         for handle in trainable.values():
             if module_on_host(handle):
@@ -377,6 +385,8 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
     def __init__(
         self,
         context: DistributedTrainingContext | None = None,
+        *,
+        offload: Offload | None = None,
     ) -> None:
         self.context = context or DistributedTrainingContext(
             strategy="single_process",
@@ -384,6 +394,7 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
             world_size=1,
             device=torch.device("cpu"),
         )
+        self.offload = offload
         self.collectives = TrainingCollectives(self.context)
 
     def prepare_model(self, model: Any) -> Any:
@@ -905,8 +916,10 @@ class DDPStrategy(_UnshardedStateStrategy):
         context: DistributedTrainingContext,
         *,
         find_unused_parameters: bool,
+        offload: Offload | None = None,
     ) -> None:
         self.context = context
+        self.offload = offload
         self.collectives = TrainingCollectives(context)
         self._find_unused_parameters = find_unused_parameters
 
@@ -973,10 +986,18 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             f"config={configured_strategy!r}, context={context.strategy!r}",
         )
 
+    offload = Offload.from_section(config.actor.offload if config.actor is not None else None)
     if configured_strategy == "single_process":
-        return SingleProcessStrategy(context)
+        return SingleProcessStrategy(context, offload=offload)
     if configured_strategy == "fsdp":
         from vrl.models.interfaces.runtime import torch_compile_for_role
+
+        if offload is not None:
+            raise NotImplementedError(
+                "distributed.training.strategy=fsdp cannot stream roots under "
+                "actor.offload: FSDP2 shards the blocks it would stream; use "
+                "distributed.training.fsdp.cpu_offload instead.",
+            )
 
         compile_block = config.model.torch_compile if config.model is not None else None
         if torch_compile_for_role(compile_block, "replay"):
@@ -1010,6 +1031,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
         return DDPStrategy(
             context,
             find_unused_parameters=training.ddp.find_unused_parameters,
+            offload=offload,
         )
     raise AssertionError(
         f"typed config admitted unknown training strategy {configured_strategy!r}"

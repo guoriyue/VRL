@@ -77,6 +77,27 @@ class ModelMemorySection(ConfigBase):
     cpu_resident: list[str] | None = None
 
 
+class OffloadSection(ConfigBase):
+    """``model.offload`` / ``actor.offload``: stream the frozen transformer blocks from the host.
+
+    Present, the role keeps the frozen weights of the policy's repeated blocks
+    on the host and streams them per block (``vrl.nn.offload.Offload``);
+    absent, the policy is resident on the device. ``true`` spells the section
+    with its defaults and ``false`` its absence, so a run that sets no option
+    writes ``offload: true``.
+    """
+
+    @classmethod
+    def from_flag(cls, value: Any) -> Any:
+        """``true`` is this section with its defaults, ``false`` its absence; a section parses as written."""
+
+        if value is True:
+            return cls()
+        if value is False:
+            return None
+        return value
+
+
 class TorchCompileSection(ConfigBase):
     """Transformer compile inputs consumed by ``ModelBuild.torch_compile``."""
 
@@ -143,6 +164,19 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Rollout weight residency: present (``true``, or a section with options),
+    # the frozen transformer blocks of any denoise family stream from the host.
+    # The trainer's counterpart is ``actor.offload``.
+    offload: OffloadSection | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+
+    @field_validator("offload", mode="before")
+    @classmethod
+    def _offload_flag(cls, value: Any) -> Any:
+        return OffloadSection.from_flag(value)
+
     path: Any = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata(

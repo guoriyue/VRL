@@ -203,6 +203,8 @@ class ModelFamilyEntry:
         model_config.pop("family", None)
         model_config.pop("executor", None)
         model_config.pop("memory", None)
+        # Rollout residency; replay placement reads ``actor.offload`` instead.
+        offload = model_config.pop("offload", None)
         if model_path is None or not str(model_path).strip():
             raise ValueError("config missing required field: model.path")
 
@@ -230,6 +232,7 @@ class ModelFamilyEntry:
                 # Full-finetune sync replaces base parameters; LoRA sync only
                 # sends adapters, so only the former needs retained masters.
                 base_weight_sync=not root.model.use_lora,
+                offload=offload,
             )
             model_memory = root.model.memory
             if model_memory is not None and model_memory.model_fields_set:

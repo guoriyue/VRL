@@ -41,7 +41,8 @@ class GenerationLaunchConfig:
     sleep_offload: bool = False
     # How a parking worker releases its GPU (distributed.resources.rollout.parking.mechanism):
     # ``cumem`` unmaps a pool-built model, ``move`` relocates it to host RAM and is
-    # the only mechanism under pipeline CPU offload, whose hooks own residency.
+    # the only mechanism under ``model.offload``, whose streamed blocks are not
+    # pool-allocated.
     parking_mechanism: str = "cumem"
     # Continuous rollout may sync while older requests remain in flight, so its
     # workers retain versioned CPU policy payloads. Strict on-policy drains every
@@ -90,13 +91,11 @@ class GenerationLaunchConfig:
                 f"got {self.parking_mechanism!r}",
             )
         rollout = self.model_build.get("rollout")
-        pipeline_offload = isinstance(rollout, Mapping) and (
-            rollout.get("pipeline_offload_mode", "none") != "none"
-        )
-        if self.sleep_offload and pipeline_offload and self.parking_mechanism != "move":
+        offloaded = isinstance(rollout, Mapping) and rollout.get("offload") is not None
+        if self.sleep_offload and offloaded and self.parking_mechanism != "move":
             raise ValueError(
-                "rollout pipeline CPU offload (model.offload_mode) owns the model's "
-                "residency; set distributed.resources.rollout.parking.mechanism: move",
+                "model.offload keeps the policy's frozen blocks on the host, so a parking "
+                "rollout must move; set distributed.resources.rollout.parking.mechanism: move",
             )
         require_int(self.policy_version, path="policy_version", minimum=0)
         if not isinstance(self.versioned_weight_sync, bool):

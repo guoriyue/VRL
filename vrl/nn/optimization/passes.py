@@ -16,8 +16,8 @@ rather than in each family builder:
   already-adapted model.
 * Quantization runs BEFORE compile so inductor traces the final module tree.
 * Device moves run AFTER quantization and BEFORE compile, so they act on the
-  compact real modules. Accelerate offload hooks run AFTER compile so they see
-  the final policy tree.
+  compact real modules. Offload runs AFTER compile: block streaming wraps each
+  block's call outside whatever compile left in place.
 
 Not every rollout optimization is a pass. TeaCache is resolved per sampling
 request in the denoise binding and skips forwards inside the loop without
@@ -275,68 +275,30 @@ class CompilePass:
 
 @dataclass(frozen=True, slots=True)
 class OffloadPass:
-    """Install Accelerate CPU-offload hooks over the final module tree.
+    """Stream the policy's frozen blocks from the host (``model.offload``).
 
-    Runs LAST for the same reason compile runs after quantization: the hooks
-    must wrap whatever the earlier passes left behind. Wan's sequential path
-    keeps a 16.4B transformer on CPU through LoRA, quantization and compile, so
-    hooks installed any earlier would leave those wrappers outside the hook
-    graph.
-
-    Two-sided commit: the family must both accept the requested mode and report
-    a healthy install, because a partially-installed hook graph must never be
-    published as a reusable rollout model.
+    Runs LAST for the same reason compile runs after quantization: streaming
+    wraps each block's call outside whatever compile left in place, and the
+    device-move seam left the trainable roots on the host for it. Family
+    neutral: the section is the rollout build's, the repeated blocks are found
+    by shape.
     """
 
     name: str = "offload"
-    # Registers hooks on the existing tree; the root object is unchanged.
+    # Streams through the existing tree; the root object is unchanged.
     replaces_modules: bool = False
 
     def enabled(self, build: Any) -> bool:
-        """Always true — ``apply`` decides, because it can see the model.
-
-        Deliberately NOT gated on ``mode != "none"``. A family's installer also
-        validates that the mode has not CHANGED since the model was loaded (Wan
-        raises "offload mode changed during rollout construction"), so skipping
-        it for ``none`` would drop that check. Whether the family implements
-        offload at all is a property of the MODEL, which ``enabled`` is not
-        given, so that branch lives in ``apply``.
-        """
-
-        del build
-        return True
+        return getattr(getattr(build, "rollout", None), "offload", None) is not None
 
     def apply(self, model: Any, build: Any) -> PassResult:
-        mode = getattr(getattr(build, "rollout", None), "pipeline_offload_mode", "none")
-        requested = mode != "none"
-        install = getattr(model, "apply_generation_offload", None)
-        if not callable(install):
-            if requested:
-                raise RuntimeError(
-                    f"{type(model).__name__} does not implement the requested pipeline "
-                    f"CPU-offload mode {mode!r}",
-                )
-            return PassResult(
-                name=self.name,
-                applied=False,
-                detail="unsupported by family (none requested)",
-            )
-        install(build)
-        committed = bool(getattr(model, "uses_pipeline_cpu_offload", False))
-        if requested and not committed:
+        streamed = build.rollout.offload.place(model.trainable_modules, device=model.device)
+        if not streamed:
             raise RuntimeError(
-                f"{type(model).__name__} did not commit the requested pipeline "
-                f"CPU-offload mode {mode!r}",
+                f"{type(model).__name__} has no host-resident trainable root with "
+                "repeated blocks; model.offload streamed nothing",
             )
-        if committed and not bool(getattr(model, "pipeline_cpu_offload_healthy", False)):
-            raise RuntimeError(
-                f"{type(model).__name__} installed unusable pipeline CPU-offload hooks",
-            )
-        return PassResult(
-            name=self.name,
-            applied=committed,
-            detail=f"mode={mode}",
-        )
+        return PassResult(name=self.name, applied=True, detail=f"blocks={streamed}")
 
 
 @dataclass(frozen=True, slots=True)

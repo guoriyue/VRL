@@ -170,24 +170,15 @@ class GenerationWorkerCore:
         )
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
-        versioned = self.launch_config.versioned_weight_sync
-        try:
-            if versioned:
-                model = require_runtime_model(
-                    policy_obj,
-                    owner=f"{type(self.executor).__name__}.model",
-                )
-                model.install_trainable_state(policy_version, trainable_state)
-                self._uses_versioned_slots = True
-            else:
-                model = require_runtime_model(
-                    policy_obj,
-                    owner=f"{type(self.executor).__name__}.model",
-                )
-                model.load_trainable_state(trainable_state)
-        except BaseException as error:
-            self._memory_parking.record_model_failure(policy_obj, error)
-            raise
+        model = require_runtime_model(
+            policy_obj,
+            owner=f"{type(self.executor).__name__}.model",
+        )
+        if self.launch_config.versioned_weight_sync:
+            model.install_trainable_state(policy_version, trainable_state)
+            self._uses_versioned_slots = True
+        else:
+            model.load_trainable_state(trainable_state)
         # The single scalar now means "current submit version": it must track the
         # latest installed version even in slot mode. It reaches the producer
         # through this method's ACK (returned below) — the producer stamps NEW requests from
@@ -260,7 +251,6 @@ class GenerationWorkerCore:
             )
             return result
         except Exception as exc:
-            self._memory_parking.recover_after_execution_error(model, exc)
             return GenerationBatchResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
@@ -309,11 +299,7 @@ class GenerationWorkerCore:
                 raise StaleSlotDiscard(
                     f"trainable-state slot evicted for policy_version={expected_version}",
                 )
-            try:
-                model.activate_trainable_state(expected_version)
-            except Exception as error:
-                self._memory_parking.recover_after_execution_error(model, error)
-                raise
+            model.activate_trainable_state(expected_version)
         elif expected_version is not None and self._policy_version != expected_version:
             raise RuntimeError(
                 "policy_version mismatch: "
@@ -333,7 +319,6 @@ class GenerationWorkerCore:
                 stage_batch_result=stage_batch_result,
             )
         except RuntimeError as error:
-            self._memory_parking.recover_after_execution_error(model, error)
             if not is_cuda_out_of_memory(error):
                 raise
             error_text = str(error)
@@ -351,9 +336,6 @@ class GenerationWorkerCore:
                 worker_id=self.worker_id,
                 error=error_text,
             )
-        except Exception as error:
-            self._memory_parking.recover_after_execution_error(model, error)
-            raise
 
     def _profile_forward_batch(
         self,

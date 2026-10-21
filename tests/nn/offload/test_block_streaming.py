@@ -8,7 +8,7 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.models.host_streaming import is_host_streamed, stream_frozen_blocks
+from vrl.nn.offload import HostStreaming
 
 
 class _Block(nn.Module):
@@ -45,9 +45,10 @@ def test_streamed_policy_matches_the_plain_one_and_keeps_its_namespace() -> None
     names = [name for name, _ in plain.named_parameters()]
     x = torch.randn(2, 4)
 
-    count = stream_frozen_blocks(streamed, device="cpu")
+    streaming = HostStreaming.install(streamed, device="cpu")
 
-    assert count == 3 and is_host_streamed(streamed) and not is_host_streamed(plain)
+    assert len(streaming.blocks) == 3
+    assert HostStreaming.of(streamed) is streaming and HostStreaming.of(plain) is None
     assert [name for name, _ in streamed.named_parameters()] == names
     assert streamed.state_dict().keys() == plain.state_dict().keys()
     torch.testing.assert_close(streamed(x), plain(x))
@@ -68,7 +69,7 @@ def test_streamed_blocks_recompute_under_activation_checkpointing() -> None:
 
     torch.manual_seed(1)
     policy = _Policy()
-    stream_frozen_blocks(policy, device="cpu")
+    HostStreaming.install(policy, device="cpu")
     x = torch.randn(2, 4, requires_grad=True)
 
     out = x
@@ -82,4 +83,4 @@ def test_streamed_blocks_recompute_under_activation_checkpointing() -> None:
 
 def test_a_policy_without_repeated_blocks_cannot_stream() -> None:
     with pytest.raises(ValueError, match="no repeated block list"):
-        stream_frozen_blocks(nn.Linear(2, 2), device="cpu")
+        HostStreaming.install(nn.Linear(2, 2), device="cpu")

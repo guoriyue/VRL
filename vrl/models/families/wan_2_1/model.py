@@ -8,8 +8,7 @@ flow is:
 ``WanT2VPipelineModel`` and ``WanI2VPipelineModel`` run that flow.
 ``WanT2VModel`` and ``WanI2VModel`` — the expert transformers, their scheduler
 and ``forward_step`` — are what replay runs; the pipeline classes add the text
-and image encoders, latent preparation, VAE decode and the offload lifecycle on
-top of them.
+and image encoders, latent preparation and VAE decode on top of them.
 
 The collector owns the scheduler step / SDE step. ``forward_step`` does only
 one transformer forward (with optional batched CFG concat) and returns noise
@@ -35,9 +34,8 @@ import json
 import logging
 import random
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 import torch
@@ -49,7 +47,7 @@ from vrl.models.families.wan_2_1.config import (
     normalize_wan_trainable_transformers,
     wan_topology_from_build,
 )
-from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import temporarily_disable_lora
 from vrl.models.steps.denoise import (
     DiffusersModelBase,
@@ -66,12 +64,6 @@ from vrl.models.steps.denoise.common import (
 from vrl.models.weight_utils import load_weights_into, require_weights_for
 
 logger = logging.getLogger(__name__)
-
-
-class _PipelineOffloadFailure(Enum):
-    """Terminal hook failure, distinct from the shared successful residency modes."""
-
-    BROKEN = "broken"
 
 
 @dataclass
@@ -466,8 +458,7 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
     """Wan T2V plus the diffusers pipeline that sampling needs.
 
     The pipeline brings prompt encoding, latent preparation, VAE encode and
-    decode, and the Accelerate CPU-offload lifecycle; this class also
-    exports the trajectory tensors replay reads back.
+    decode; this class also exports the trajectory tensors replay reads back.
     """
 
     def __init__(
@@ -479,9 +470,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
-        self._pipeline_offload: PipelineOffloadMode | _PipelineOffloadFailure = (
-            PipelineOffloadMode.NONE
-        )
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
         self._init_wan_state(
             boundary_ratio=normalize_wan_boundary_ratio(
@@ -515,13 +503,7 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         )
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
-        offload_mode = build.require_rollout().pipeline_offload_mode
-        _stage_eager_wan_modules(
-            pipeline,
-            build,
-            offload_mode=offload_mode,
-            eager_module_dtypes=eager_module_dtypes,
-        )
+        _stage_eager_wan_modules(pipeline, build, eager_module_dtypes=eager_module_dtypes)
         return cls(
             pipeline=pipeline,
             device=build.device,
@@ -534,166 +516,15 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
     def apply_full_finetune(self, build: ModelBuild) -> None:
         # Normalize the CPU storage now so trainer payloads and rollout
         # parameters share one exact dtype. The builder places the module
-        # afterwards (or Accelerate's hooks own residency).
+        # afterwards.
         super().apply_full_finetune(build)
         for module in self.trainable_modules.values():
             module.to(dtype=build.parameter_dtype)
 
-    @property
-    def uses_pipeline_cpu_offload(self) -> bool:
-        """Whether this model is configured for Accelerate-owned residency."""
-
-        return self._pipeline_offload is not PipelineOffloadMode.NONE
-
-    @property
-    def pipeline_cpu_offload_healthy(self) -> bool:
-        """Whether configured pipeline hooks are installed and reusable."""
-
-        return self._pipeline_offload is not _PipelineOffloadFailure.BROKEN
-
-    def apply_generation_offload(self, build: ModelBuild) -> None:
-        """Install pipeline offload hooks after LoRA has changed the module tree."""
-
-        mode = build.rollout.pipeline_offload_mode
-        state = self._pipeline_offload
-        if state is _PipelineOffloadFailure.BROKEN:
-            raise RuntimeError("Wan pipeline CPU offload is not reusable")
-        loaded_mode = state.value
-        if state is not PipelineOffloadMode.NONE and mode is not state:
-            raise RuntimeError(
-                "Wan pipeline offload mode changed during rollout construction: "
-                f"loaded={loaded_mode!r}, final={mode!r}",
-            )
-        if mode is PipelineOffloadMode.NONE:
-            return
-        if state is mode:
-            return
-        # Initial installation is transactional too. A partial hook graph must
-        # never be published as a reusable rollout model.
-        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
-        self._enable_pipeline_offload(mode)
-        self._pipeline_offload = mode
-
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
-        validated = self._validate_wan_trainable_state(state_dict)
-        if not self.uses_pipeline_cpu_offload:
-            return self._load_validated_wan_trainable_state(validated)
-
-        return self._with_pipeline_cpu_offload_suspended(
-            lambda: self._load_validated_wan_trainable_state(validated),
-            operation="trainable weight sync",
+        return self._load_validated_wan_trainable_state(
+            self._validate_wan_trainable_state(state_dict)
         )
-
-    def reset_pipeline_cpu_offload(self) -> None:
-        """Return every component to CPU and reinstall fresh streaming hooks.
-
-        Accelerate post-forward hooks do not run when a module forward raises,
-        and model-level offload deliberately leaves the final component on the
-        execution device. Cycling Diffusers' public hook API is the common
-        phase-parking and error-recovery boundary for both cases.
-        """
-
-        if not self.uses_pipeline_cpu_offload:
-            return
-        self._with_pipeline_cpu_offload_suspended(
-            lambda: None,
-            operation="pipeline residency reset",
-        )
-
-    def _with_pipeline_cpu_offload_suspended(
-        self,
-        operation_fn: Callable[[], Any],
-        *,
-        operation: str,
-    ) -> Any:
-        """Run one CPU-resident operation and transactionally re-arm hooks."""
-
-        if not self.pipeline_cpu_offload_healthy:
-            raise RuntimeError(
-                "Wan pipeline CPU offload is not reusable: its hook lifecycle "
-                "is incomplete or previously failed",
-            )
-
-        if not self.uses_pipeline_cpu_offload:
-            return operation_fn()
-        state = self._pipeline_offload
-        # Publish the transition before touching hooks. Partial removal, hook
-        # reinstall, or weight mutation must leave one terminal state.
-        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
-
-        try:
-            self._disable_pipeline_offload(operation=operation)
-        except BaseException as remove_error:
-            raise RuntimeError(
-                f"Wan pipeline CPU offload hook removal failed during {operation}; "
-                "the rollout model is no longer reusable",
-            ) from remove_error
-
-        result: Any = None
-        operation_error: BaseException | None = None
-        try:
-            result = operation_fn()
-        except BaseException as error:
-            operation_error = error
-
-        try:
-            self._enable_pipeline_offload(state)
-        except BaseException as reinstall_error:
-            detail = f"Wan pipeline CPU offload hook reinstall failed during {operation}"
-            if operation_error is not None:
-                detail += f" after operation failure {operation_error!r}"
-            raise RuntimeError(
-                f"{detail}; the rollout model is no longer reusable",
-            ) from reinstall_error
-
-        if operation_error is not None:
-            # A state-dict copy can fail after mutating an arbitrary prefix. Fresh
-            # hooks make teardown safe, but they cannot make partially updated
-            # policy weights valid. Never publish this model as reusable.
-            raise RuntimeError(
-                f"Wan {operation} failed after pipeline hooks were removed; "
-                "the rollout model may contain partial state and is no longer reusable",
-            ) from operation_error
-
-        self._pipeline_offload = state
-        return result
-
-    def _enable_pipeline_offload(self, mode: PipelineOffloadMode) -> None:
-        """Install residency hooks after adapters and wrappers are final."""
-
-        # Diffusers exposes two mutually exclusive accelerate hooks here:
-        # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
-        # offload stages full modules and only works when the transformer fits.
-        gpu_id = getattr(self.device, "index", None) or 0
-        if mode is PipelineOffloadMode.SEQUENTIAL:
-            self.pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
-            return
-        if mode is PipelineOffloadMode.MODEL:
-            self.pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
-
-    def _disable_pipeline_offload(self, *, operation: str) -> None:
-        """Strip the residency hooks ``_enable_pipeline_offload`` installed.
-
-        The model's own transformer roots may be PEFT wrapped; their Accelerate
-        hooks are detached child-first before the pipeline's own cleanup runs.
-        """
-
-        remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
-        if not callable(remove_hooks):
-            raise RuntimeError(
-                f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
-            )
-        from accelerate.hooks import remove_hook_from_module
-
-        # PEFT delegates attributes to its child, so Accelerate's hasattr
-        # traversal can detach a child's hook against the wrong owner. Remove
-        # explicitly owned hooks child-first before pipeline cleanup.
-        for owned in self._wan_transformers().values():
-            if isinstance(owned, torch.nn.Module):
-                for module in reversed(list(owned.modules())):
-                    if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
-                        remove_hook_from_module(module, recurse=False)
-        remove_hooks()
 
     # -- encode_prompt -------------------------------------------------
 
@@ -965,13 +796,7 @@ class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        offload_mode = build.require_rollout().pipeline_offload_mode
-        _stage_eager_wan_modules(
-            pipeline,
-            build,
-            offload_mode=offload_mode,
-            eager_module_dtypes=eager_module_dtypes,
-        )
+        _stage_eager_wan_modules(pipeline, build, eager_module_dtypes=eager_module_dtypes)
         return cls(
             pipeline=pipeline,
             device=build.device,
@@ -1140,23 +965,16 @@ def _stage_eager_wan_modules(
     pipeline: Any,
     build: ModelBuild,
     *,
-    offload_mode: str,
     eager_module_dtypes: Mapping[str, torch.dtype],
 ) -> None:
-    """Apply frozen-module dtypes before optional pipeline offload hooks."""
+    """Stage the frozen generation modules on the device at their own dtypes."""
 
     for module_name, dtype in eager_module_dtypes.items():
         module = getattr(pipeline, module_name, None)
         if module is not None:
             # Diffusers loads the whole pipeline at the actor dtype. Wan's VAE
-            # must still decode in fp32, including when Accelerate will later
-            # stream it from CPU. A dtype-only conversion preserves CPU
-            # residency; the no-offload path additionally stages the module on
-            # the execution device.
-            if offload_mode == "none":
-                module.to(build.device, dtype=dtype)
-            else:
-                module.to(dtype=dtype)
+            # must still decode in fp32.
+            module.to(build.device, dtype=dtype)
 
 
 def _scheduler_num_train_timesteps(scheduler: Any) -> int | None:
