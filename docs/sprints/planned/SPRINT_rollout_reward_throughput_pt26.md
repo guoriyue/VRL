@@ -88,12 +88,41 @@
 
 | 项 | 先测的结果 | 决定 |
 |---|---|---|
-| T1 negative prompt 编码缓存 | 一个 generation batch 中 prompt + negative 编码的占比：SANA 512px batch 8 为 3.0%，SD3.5 512px batch 16 为 0.66%，Wan 480p 33 帧为 0.19%。能缓存的只是其中 negative 那一半 | 当时不做：上限约 1.5%。2026-10-21 **改为已做**：LoRA run 必须 gen batch == replay batch（parity sprint §5），SD3.5 两个 pilot arm 改成 `samples_per_generation_batch: 1` 后，每个 prompt 的编码在组内重复 group_size 次，正向 prompt 复用的估计收益约 11%（按 batch 1 的编码占比推算，没有在 GPU 上实测）。`generation(executor): encode each prompt once across its batches`：`DenoiseBatchExecutorBase` 按 request id、prompt 下标、prompt 输入、sampling 和 denoise 参数做 key，只缓存最近一个 prompt 的编码；tiny SANA 上与每个 batch 重新编码的输出和轨迹逐位一致（`tests/generation/bindings/full_sequence/test_prompt_encode_reuse.py`） |
+| T1 negative prompt 编码缓存 | 一个 generation batch 中 prompt + negative 编码的占比：SANA 512px batch 8 为 3.0%，SD3.5 512px batch 16 为 0.66%，Wan 480p 33 帧为 0.19%。能缓存的只是其中 negative 那一半 | 当时不做：上限约 1.5%。2026-10-21 **改为已做**：LoRA run 必须 gen batch == replay batch（parity sprint §5），SD3.5 两个 pilot arm 改成 `samples_per_generation_batch: 1` 后，每个 prompt 的编码在组内重复 group_size 次，正向 prompt 复用的估计收益约 11%（按 batch 1 的编码占比推算，没有在 GPU 上实测）。`generation(executor): encode each prompt once across its batches`：`DenoiseBatchExecutorBase` 按 request id、prompt 下标、prompt 输入、sampling 和 denoise 参数做 key，只缓存最近一个 prompt 的编码；tiny SANA 上与每个 batch 重新编码的输出和轨迹逐位一致（`tests/generation/bindings/full_sequence/test_prompt_encode_reuse.py`）。negative prompt 跨 prompt 只编码一次：2026-10-21 复核后**不做**，见表后说明 |
 | T2 judge 图像只编码一次 | Qwen3-VL-2B，1024px，4 个问题的耗时是 1 个问题的 3.68 倍 | **已做**：`rewards(qwen3vl_preference): encode the shared images once per judgment`。共享图像前缀的 KV cache：297 ms → 98 ms/图（3.0 倍），峰值 5.8 → 4.6 GB。相对每个问题单独 batch=1 前向的参照值，新实现偏差 ≤3.9e-3，旧的 batched 实现 ≤2.0e-3（都在关掉 reduced-precision reduction 的条件下） |
 | T3 NVFP4 four-over-six | SD3.5 MLP 权重 MSE 降到 0.85 倍（16 个矩阵的中位数） | **已做**：`nn(quantization): choose NVFP4 block scales four over six`。rollout 对 bf16 master replay 的平均 \|Δlogprob\| 在 8 步上全部下降（0.82 → 0.73，batch 8），步时不变（329 ms，batch 2，1024px）。kernel 与 CPU 参考实现逐字节一致的 GPU 测试通过。reward 对比没有做 |
 | T4 跨卡 CFG parallel | 需要多卡 rollout | 不做：触发条件不满足，单卡也测不了 |
 | T5 CUDA graph 探针 | 去噪循环里 GPU 的空闲比例：SANA 512px batch 1 为 21%，SD3.5 512px batch 1 为 11%；生产配置下 SANA 512px batch 8 为 5.2%，SD3.5 batch 16 为 1.1%，SANA 1024px batch 4 为 2.7% | 不做：生产配置低于 15% 的门槛 |
 | T6 交接计时 + 少一次 put | — | 少一次 put **已做**：`feat(rollout): stage pipelined reward media once, on the rank`（pipelined 下 media 在 object store 里从两份变一份）。它只减少工作，不需要先测。交接计时不做：没有决定要读它 |
 | T7 trainer 阶段计时常开 | 不做 sync 的计时器每个阶段约 1.3 µs，每步约 0.4 ms | **已做**：`feat(trainer): record host wall-clock trainer phases on every step`。tiny SANA CPU bench 上，各阶段之和覆盖步时的 91% |
+
+T1 中 negative prompt 跨 prompt 缓存（2026-10-21 复核，不做）：
+
+- 现状：每个家族的 `encode_prompt(prompt, negative_prompt)`（`vrl/models/families/*/model.py`，例如 `sd3_5/model.py` 直接调 diffusers 的 `encode_prompt`）把正向和负向一次编完。`DenoiseBatchExecutorBase._forward_batch`（`vrl/generation/bindings/full_sequence/executor.py`）按 prompt 缓存这一次调用的结果，所以 negative 每个 prompt 编码一次，同一 prompt 的多个 batch 不再重复。剩下能省的只是同一 request 里不同 prompt 之间重复的 negative 编码。
+- 上限：生产 batch 下 prompt + negative 编码占比最多 3.0%（SANA batch 8），negative 一半约 1.5%；SD3.5 batch 16 为 0.33%。SD3.5 两个 gen batch 1 的 arm 按上面 11% 的同一估算，编码在 batch 1 下约占 12%，正向复用之后约占 rollout 的 1.6%，negative 约 0.8%，每步 4 个 prompt 只能省 3 次，约 0.6%。
+- 代价：要把十几个家族的 `encode_prompt` 拆成正向、负向两个入口（模型层 API 改动），或者在 executor 里按家族拆 encoded 字典的键。收益都低于 1%，按门槛不做。
+
+GPU 待测（命令已准备，2026-10-21 未运行：本机唯一的 GPU 被其他 session 占用）：
+
+- T1 正向复用的 GPU 耗时。A/B 两个 checkout：HEAD 和 `67310a63c`（`e9b936c59` 的父提交）。旧 checkout 用 `git worktree add <old_tree> 67310a63c` 建，跑旧版时加 `PYTHONPATH=<old_tree>`。`<venv>` 必须带 vLLM 的 CuMemAllocator（colocated parking 需要），例如 session scratchpad 里的 `venv_main`：
+
+  ```
+  CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  RAY_memory_usage_threshold=0.97 <venv>/bin/vrl-train \
+    --config experiment/sd3_5/online_grpo_pickscore_safety_weighted \
+    trainer.total_epochs=4 trainer.save_freq=9999 trainer.output_dir=outputs/bench_t1_<arm>
+  ```
+
+  读数：两边 `rollout_stats.jsonl` 中 step ≥ 1 的 `rollout.collect_s` 均值之差，减掉 `reward.latency_s` 之后就是生成的差。step 0 runtime_debug 里的 `stage_durations_s.encode`（preset 打开了 `debug.first_step`，不做 sync，含预热）只作参考：
+
+  ```
+  python -c "import json,sys,statistics as st; rows=[r for r in map(json.loads, open(sys.argv[1])) if r['step']>=1]; print({k: st.mean(r.get(k,0.0) for r in rows) for k in ('rollout.collect_s','reward.latency_s')})" outputs/bench_t1_<arm>/rollout_stats.jsonl
+  ```
+
+  验收：HEAD 的生成时间低于旧版（估计约 11%）。逐位一致已由 CPU 测试覆盖，编码是确定性的。
+
+- T3 的 reward 对比（上表写着"没有做"）：HEAD 与 `e121a7d9a`（`a44ec644b` 的父提交）各跑一次 `experiment/sd3_5/online_grpo_pickscore precision.rollout.quantization.format=nvfp4 trainer.total_epochs=1`，比较 `metrics.csv` 里 step 0（更新之前、同种子）的 `reward_mean`。
+
+§3 的三项不做在 2026-10-21 复核时维持：仓库里没有 SGLang-Diffusion 或 vLLM-Omni 后端；sequence parallel 仍只有 SD3 注册（`vrl/models/families/registry.py` 中唯一的 `sequence_parallel_installer`）；`vrl/config/presets` 里没有 preset 开启 TeaCache 或 rollout 量化，更没有两种近似同时启用。T5 维持不做（上表的生产配置空闲比例都低于 15%）。
 
 顺带发现：reward 进程从来不调用 `apply_float32_precision`，所以 judge 的分数会随同 batch 的其他图变化最多 2e-2。现在 `InProcessRewardScorer` 构造时会关掉 reduced-precision reduction（见 parity sprint §5）。
