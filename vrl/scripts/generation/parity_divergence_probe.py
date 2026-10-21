@@ -75,9 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reduced-precision-reduction",
         choices=["on", "off"],
-        default="on",
+        default="off",
         help="cuBLAS fp16/bf16 reduced-precision (split-K) reductions, both sides "
-        "(PyTorch's default: on)",
+        "(production: off, see apply_float32_precision)",
     )
     parser.add_argument(
         "--batch-invariant",
@@ -229,7 +229,8 @@ def main() -> None:
     bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model
     transformer = model.transformer
-    # After the build, so this switch wins over any matmul policy the build applies.
+    # After the build: building applies the production matmul policy (reductions
+    # off), and this switch exists to measure the alternative.
     rpr = args.reduced_precision_reduction == "on"
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = rpr
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = rpr

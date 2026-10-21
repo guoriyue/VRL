@@ -87,6 +87,23 @@ The setting is explicit because process defaults can differ. SANA's canonical
 preset selects `ieee` because its linear-attention processor promotes Q/K/V to
 FP32 and is numerically sensitive to TF32.
 
+The same call also turns off cuBLAS reduced-precision reductions for FP16 and
+BF16 GEMMs (`torch.backends.cuda.matmul.allow_{fp16,bf16}_reduced_precision_reduction`,
+both default on in PyTorch). With them on, cuBLAS chooses a split-K kernel per
+GEMM shape and may sum the partial products in the half dtype, so a sample's
+output depends on the batch it is computed in, and a rollout batch replayed at a
+different batch size drifts. Measured with
+`vrl.scripts.generation.parity_divergence_probe` on an RTX 5090 (torch 2.11),
+rollout batch 4 replayed as batch 1:
+
+| Family (dtype) | reductions on | reductions off |
+| --- | --- | --- |
+| SD3.5 Medium (BF16) | max \|Δlogprob\| 1.1e-1, first divergence `context_embedder` | 3.7e-9 |
+| SANA 1600M (FP16) | 1.5e-3 | 7.5e-4; the remainder comes from cuBLAS and cuDNN kernel choice for the LoRA projections and the 1x1 `conv_point` |
+
+Denoise step time did not change: SD3.5 Medium 131 ms/step (batch 4, 512px) and
+309-310 ms/step (batch 2, 1024px); SANA 1600M 225 ms/step (batch 4, 1024px).
+
 ## Selective rollout quantization
 
 Quantization is layered on `rollout.dtype`; it does not replace that dtype.

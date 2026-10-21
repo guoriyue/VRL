@@ -39,6 +39,13 @@ def apply_float32_precision(mode: Float32Precision) -> None:
     PyTorch 2.9 introduced the string-valued ``fp32_precision`` API. The
     fallback keeps supported older releases on the legacy bool API without
     mixing both mechanisms in one process.
+
+    The same process-wide matmul policy also turns off cuBLAS reduced-precision
+    reductions for FP16/BF16 GEMMs. cuBLAS picks a split-K kernel per GEMM shape
+    and, when allowed, reduces its partial sums in the half dtype, so one
+    sample's output depends on the batch it rides in. Measured on SD3.5 (BF16,
+    RTX 5090, torch 2.11): rollout batch 4 replayed as batch 1 drifts by 0.11 in
+    the last step's log-prob with them on and by 4e-9 with them off.
     """
 
     import torch
@@ -47,6 +54,8 @@ def apply_float32_precision(mode: Float32Precision) -> None:
         raise ValueError(f"unsupported float32 precision mode: {mode!r}")
     matmul = torch.backends.cuda.matmul
     cudnn = torch.backends.cudnn
+    matmul.allow_fp16_reduced_precision_reduction = False
+    matmul.allow_bf16_reduced_precision_reduction = False
     if hasattr(matmul, "fp32_precision") and hasattr(cudnn, "fp32_precision"):
         matmul.fp32_precision = mode
         cudnn.fp32_precision = mode

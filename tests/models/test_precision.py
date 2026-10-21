@@ -20,14 +20,26 @@ def test_apply_float32_precision_uses_string_api_exclusively() -> None:
     if not (hasattr(matmul, "fp32_precision") and hasattr(cudnn, "fp32_precision")):
         pytest.skip("this torch predates the string fp32_precision API")
     original = precision.float32_precision_state()
+    reductions = (
+        matmul.allow_fp16_reduced_precision_reduction,
+        matmul.allow_bf16_reduced_precision_reduction,
+    )
     try:
         precision.apply_float32_precision("ieee")
         assert precision.float32_precision_state() == {"matmul": "ieee", "cudnn": "ieee"}
+        # Half-precision GEMMs reduce in full precision, so a row's output does
+        # not depend on the batch shape cuBLAS picked its split-K kernel for.
+        assert matmul.allow_fp16_reduced_precision_reduction is False
+        assert matmul.allow_bf16_reduced_precision_reduction is False
     finally:
         # Restore by attribute: the process default "none" is a valid torch
         # state but not an apply_float32_precision input.
         matmul.fp32_precision = original["matmul"]
         cudnn.fp32_precision = original["cudnn"]
+        (
+            matmul.allow_fp16_reduced_precision_reduction,
+            matmul.allow_bf16_reduced_precision_reduction,
+        ) = reductions
 
 
 @pytest.mark.parametrize(("mode", "enabled"), [("ieee", False), ("tf32", True)])
