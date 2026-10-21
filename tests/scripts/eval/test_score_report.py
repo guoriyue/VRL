@@ -114,3 +114,46 @@ def test_report_cli_scores_existing_rows_without_models(tmp_path: Path, capsys) 
         seed=7,
     )
     assert summary == repeated
+
+
+def test_joint_score_is_the_fraction_passing_every_threshold(tmp_path: Path, capsys) -> None:
+    """``--joint-min`` scores each sample 1 only when ALL listed components pass.
+
+    Base never clears alignment >= 0.9 together with quality >= 1; the trained arm
+    does on one of prompt 0's two samples, so its passing fraction is 0.5 on
+    prompt 0, 0 on prompt 1, and 0.25 over prompts. Alignment is not a reported
+    score key, yet it gates the joint score.
+    """
+    scores = tmp_path / "scores.jsonl"
+    scores.write_text("\n".join(json.dumps(row) for row in _rows()))
+
+    main(
+        [
+            "--scores",
+            str(scores),
+            "--output-dir",
+            str(tmp_path / "report"),
+            "--score-key",
+            "quality",
+            "--joint-min",
+            "quality=1",
+            "--joint-min",
+            "alignment=0.9",
+            "--bootstrap-resamples",
+            "50",
+        ],
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["joint_min"] == {"quality": 1.0, "alignment": 0.9}
+    assert set(summary["arms"]["base"]["scores"]) == {"quality", "joint"}
+    assert summary["arms"]["base"]["scores"]["joint"]["absolute"]["mean"] == 0
+    joint = summary["arms"]["checkpoint-4"]["scores"]["joint"]
+    lower, upper = joint["absolute"]["bootstrap_95ci"]
+    assert joint["absolute"]["mean"] == 0.25
+    assert lower <= 0.25 <= upper
+    assert joint["paired_delta_from_base"]["mean"] == 0.25
+    assert joint["paired_delta_from_base"]["win_rate"] == 0.5
+
+    with pytest.raises(ValueError, match="missing or invalid r_typo"):
+        write_curve_report(_rows(), tmp_path / "typo", joint_min={"typo": 0.0})

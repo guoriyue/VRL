@@ -228,6 +228,13 @@ The model-independent input is JSONL with `checkpoint_label`, integer `epoch`,
 Checkpoint arms must share the exact prompt/sample/seed grid. The report first
 averages samples within each prompt, then bootstraps prompt means and paired
 deltas against base. Multiple seeds of one prompt are not independent prompts.
+For a constrained objective, repeat `--joint-min COMPONENT=MIN` once per
+constraint and once for quality (for example `--joint-min nsfw_safety=0
+--joint-min pickscore=21.5`). The report then adds a `joint` score: 1 for a
+sample whose every listed component reaches its minimum, else 0. Its absolute
+mean is the passing fraction with a bootstrap CI, and its paired delta compares
+checkpoints on it. Thresholds are a reporting choice, so they live on the
+command line and are echoed in `summary.json` under `joint_min`.
 Image statistics and seed-diversity curves are diagnostics, not quality rewards;
 higher saturation, brightness, or pixel distance is not automatically better.
 Human review is still needed, particularly when evaluation reuses a training

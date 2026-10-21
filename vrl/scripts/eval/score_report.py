@@ -18,6 +18,9 @@ reward model. Run ``python -m vrl.scripts.eval.score_report --help`` to report
 existing JSONL scores with checkpoint_label, epoch, prompt_index, sample_index,
 seed, prompt, and r_<component> columns. These are generic numeric measurements:
 a clear increase is not a claim of improved quality or that higher is better.
+Repeated ``--joint-min COMPONENT=MIN`` adds a ``joint`` score: the fraction of
+samples on which every listed component reaches its minimum at once (all
+constraints pass and quality >= tau), reported with the same CIs.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import csv
 import json
 import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +168,7 @@ def write_curve_report(
     tie_epsilon: float = 0.0,
     bootstrap_resamples: int = 2000,
     seed: int = 0,
+    joint_min: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Validate a paired grid and publish summary.json, curve.csv, and curve.png.
 
@@ -174,6 +178,12 @@ def write_curve_report(
     even if prompts have different numbers of sampled images or videos.
     ``r_*`` columns may contain diagnostics as well as rewards; directional
     findings describe increases/decreases, never whether either is desirable.
+
+    ``joint_min`` maps components to minimum scores and adds the ``joint``
+    score: 1 for a sample whose every listed component reaches its minimum
+    (each constraint passes AND quality >= tau), else 0. It goes through the
+    same prompt-level bootstrap as every other key, so its absolute mean is
+    the passing fraction with a CI and its paired delta compares arms on it.
     """
 
     if not rows:
@@ -189,8 +199,23 @@ def write_curve_report(
         if score_keys is not None
         else tuple(sorted({key[2:] for row in rows for key in row if key.startswith("r_")}))
     )
+    joint_min = dict(joint_min or {})
+    if not all(math.isfinite(threshold) for threshold in joint_min.values()):
+        raise ValueError("joint_min thresholds must be finite")
+    # Joint components are read from every row, so they are validated like
+    # score keys even when they are not reported on their own.
+    measured = (*keys, *(key for key in joint_min if key not in keys))
+    if joint_min:
+        keys = (*keys, "joint")
     if not keys or len(set(keys)) != len(keys) or any(not key for key in keys):
         raise ValueError("score_keys must be non-empty and unique")
+
+    def score(row: dict[str, Any], key: str) -> float:
+        if key == "joint" and joint_min:
+            return float(
+                all(float(row[f"r_{name}"]) >= minimum for name, minimum in joint_min.items())
+            )
+        return float(row[f"r_{key}"])
 
     grouped: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
     epochs: dict[str, int] = {}
@@ -221,7 +246,7 @@ def write_curve_report(
         if cell[0] in prompts and prompts[cell[0]] != row["prompt"]:
             raise ValueError(f"prompt mismatch at prompt_index={cell[0]}")
         prompts[cell[0]] = row["prompt"]
-        for key in keys:
+        for key in measured:
             try:
                 value = float(row[f"r_{key}"])
             except (KeyError, TypeError, ValueError) as exc:
@@ -246,9 +271,7 @@ def write_curve_report(
         prompt_means[label] = {
             key: {
                 prompt_index: statistics.fmean(
-                    float(row[f"r_{key}"])
-                    for cell, row in cells.items()
-                    if cell[0] == prompt_index
+                    score(row, key) for cell, row in cells.items() if cell[0] == prompt_index
                 )
                 for prompt_index in sorted(prompts)
             }
@@ -324,6 +347,8 @@ def write_curve_report(
         "bootstrap": {"resamples": bootstrap_resamples, "seed": seed},
         "arms": arms,
     }
+    if joint_min:
+        summary["joint_min"] = joint_min
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_curve_plot(curve_rows, keys, output_dir / "curve.png")
@@ -411,7 +436,27 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--tie-epsilon", type=float, default=0.0)
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--joint-min",
+        action="append",
+        default=[],
+        metavar="COMPONENT=MIN",
+        help=(
+            "Repeat once per constraint and once for quality, e.g. "
+            "--joint-min nsfw_safety=0 --joint-min pickscore=21.5: adds the 'joint' "
+            "score, the fraction of samples whose every listed r_<component> >= MIN."
+        ),
+    )
     args = parser.parse_args(argv)
+    joint_min: dict[str, float] = {}
+    for item in args.joint_min:
+        name, separator, minimum = item.rpartition("=")
+        if not separator or not name or name in joint_min:
+            parser.error(f"--joint-min expects distinct COMPONENT=MIN entries, got {item!r}")
+        try:
+            joint_min[name] = float(minimum)
+        except ValueError:
+            parser.error(f"--joint-min {item!r}: MIN must be a number")
     summary = write_curve_report(
         read_jsonl(args.scores),
         args.output_dir,
@@ -420,6 +465,7 @@ def main(argv: list[str] | None = None) -> None:
         tie_epsilon=args.tie_epsilon,
         bootstrap_resamples=args.bootstrap_resamples,
         seed=args.seed,
+        joint_min=joint_min,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
