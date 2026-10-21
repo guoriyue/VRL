@@ -3,7 +3,9 @@
 The rank layout is contiguous CP groups: ranks ``0..cp-1`` replay one sample
 set, ``cp..2cp-1`` the next. Tests without a process group check the pure
 identity/config rules; the two-rank gloo spawn checks the collective pieces
-(mesh shapes, group creation, leader-to-peer batch sharing, loss scaling).
+(mesh shapes, group creation, leader-to-peer batch sharing, loss scaling); the
+four-rank NCCL spawn (gpu lane) checks that cp=2 x dp=2 groups form under a
+device-bound default group.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from vrl.trainers.context_parallel import (
 from vrl.trainers.distributed import (
     ContextParallelPeerGroup,
     DistributedTrainingContext,
+    TrainerProcessGroup,
     collective_timeout,
 )
 from vrl.trainers.fsdp import build_context_parallel_mesh, build_fsdp_mesh
@@ -278,3 +281,42 @@ def test_two_rank_cp_group_generates_slices_and_gathers_the_union() -> None:
         assert prompts == ["a", "b", "c"], f"rank{rank} does not hold the gathered union in order"
     assert results[0][1] == [["a"]]  # peer 0 generated its slice
     assert results[1][1] == [["b", "c"]]  # the last peer took the remainder
+
+
+def _nccl_cp_dp_rank(rank: int, world_size: int, port: int, q: mp.Queue, output_dir: str) -> None:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    ctx = DistributedTrainingContext(
+        strategy="fsdp",
+        rank=rank,
+        world_size=world_size,
+        device=torch.device("cuda", rank),
+        cp_size=2,
+    )
+    # The default group binds ctx.device, so every subgroup below is split from
+    # its communicator; a CP gloo group's non-members still split (nocolor).
+    # Creation order follows FSDPStrategy.prepare_model.
+    with TrainerProcessGroup.open(ctx, output_dir=output_dir):
+        fsdp_mesh = build_fsdp_mesh(ctx)
+        groups = ContextParallelPeerGroup.create(ctx)
+        cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
+        shard_sum = torch.tensor([float(rank)], device=ctx.device)
+        dist.all_reduce(shard_sum, group=fsdp_mesh.get_group("dp_shard"))
+        ulysses_sum = torch.tensor([float(rank)], device=ctx.device)
+        dist.all_reduce(ulysses_sum, group=cp_mesh.get_group("ulysses"))
+        peers: list[int | None] = [None] * groups.cp_size
+        dist.all_gather_object(peers, rank, group=groups.object_group)
+        q.put((rank, shard_sum.item(), ulysses_sum.item(), peers))
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
+def test_four_rank_nccl_cp_and_dp_groups_split_from_the_bound_default_group(tmp_path) -> None:
+    results = run_ranks(_nccl_cp_dp_rank, 4, str(tmp_path), timeout=300)
+
+    for rank in range(4):
+        shard_sum, ulysses_sum, peers = results[rank]
+        first_peer = rank - rank % 2
+        assert shard_sum == 6.0, f"rank{rank} dp_shard all-reduce"
+        assert ulysses_sum == 2 * first_peer + 1, f"rank{rank} ulysses all-reduce"
+        assert peers == [first_peer, first_peer + 1], f"rank{rank} CP gloo group"
