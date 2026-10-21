@@ -146,12 +146,17 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 所有差异都集中在最后一两步（R5 的放大效应）：例如 SD3.5 在 reduction 开着时，第 0–5 步只有 8e-5 到 1e-3，第 7 步才到 1.1e-1。
 
 ### P1 判定
-- SD3.5 和 Wan 只靠"关掉 reduced-precision reduction"就达到了 ≤1e-6 的目标，不需要 batch_invariant_ops，所以**不做** batch-invariant 诊断开关。
+- LoRA 为 0 时，SD3.5 和 Wan 只靠"关掉 reduced-precision reduction"就达到了 ≤1e-6 的目标。LoRA 起作用后，只有 batch_invariant_ops 能做到（4.8e-7，见下方"对现有约束的影响"）。探针里已有 `--batch-invariant` 开关，生产代码里**没有加**诊断开关。
 - SANA 剩余约 1e-3 来自 cuBLAS 瘦 GEMM 和 cuDNN 1x1 卷积的选核，在 0.01 的 gate 之下。要逐位一致，需要卷积也 batch-invariant，代价不值得。
 - batch_invariant_ops 原版的 Triton 配置在 sm120 上超出 shared memory，探针里用的是把 `num_stages` 改成 2 的本地副本。
 
 ### 对现有约束的影响
-- "gen batch == replay batch"这条约束：SD3.5 和 Wan 在默认设置下已经可以放开（3.7e-9），SANA 也在 gate 内（7.5e-4）。preset 里的 `samples_per_generation_batch: 1` 大多出于显存考虑，没有改。
+- **更正（2026-10-21）**：上表里所有探针的 LoRA B 都是 0，LoRA 分支没有任何贡献，所以测不到 LoRA 那几个瘦 GEMM 的 batch 依赖。真实训练暴露了这一点：SD3.5 GRPO 第一次 update 前的 \|Δlogprob\| 是 0，从第二次起是 8e-3 到 1e-2，第一轮 PPO 里有 17–29% 的样本被 1e-4 的 clip 裁剪。给探针加上 `--lora-b-std 0.01` 后：
+  - gen batch 8 → replay batch 1：max 5.1e-2，mean 7.2e-3，第一个分歧点是 `to_q.lora_A`（N=32）；
+  - gen batch 8 → replay batch 8：0（逐位一致）；
+  - batch 8 → 1 再开 batch_invariant_ops：max 4.8e-7。
+- **所以"gen batch == replay batch"这条约束对 LoRA 训练仍然必要**，只有 LoRA 为 0 的第一次 update 前才不需要。关掉 reduced-precision reduction 消除的是基座 GEMM 的 batch 依赖，LoRA 的瘦 GEMM 还在。后续可以考虑只对 LoRA 的 Linear 用 batch-invariant kernel，代价是那几个小 GEMM 变慢；这部分还没做。
+- SANA 不开 LoRA 时是 7.5e-4，在 gate 内。preset 里的 `samples_per_generation_batch: 1` 大多出于显存考虑，没有改。
 - "compile off"这条约束仍然成立：compile 后的 replay（开 grad）和任何 rollout 都不是同一张图，SD3.5 差 7e-2，Wan 差 1.3e-2。所以开 compile 的 preset（SD3.5 PickScore、Wan 1.3B）首步 parity gate 会失败，或者需要 TIS/RS 兜底。
 
 ### R4（logprob 归约）

@@ -66,3 +66,36 @@
 
 - 不加 Lagrangian、hard floor 或 gating 这类 combiner：都已经试过或撤回。
 - 零方差 prompt 过滤和 pass-rate 课程归现有计划：`SPRINT_production_reward_and_rl_data.md` 的 G4/G5、`SPRINT_ngu_adaptive_sampling.md`、`SPRINT_rollout_admission_and_failure_attribution.md` §2。本 sprint 不重复。会上可补充的输入是 065 的 PFSP `p(1−p)` 加权，以及 043 的"丢掉 SFT 总是答对的 prompt"，已写进对应计划的补充段落。
+
+## 4. 实施记录（2026-10-20）
+
+### 代码
+- **P0 联合指标**：`feat(score_report): add the joint pass-rate score for constrained objectives`。用法是 `--joint-min COMPONENT=MIN`，每个约束写一次、质量也写一次。报告里会多一个 `joint` 分数：它走现有的按 prompt 聚合的 bootstrap，所以绝对均值就是通过比例，带 CI，同时有相对 base 的配对差。阈值只来自 CLI，不进 schema。
+
+### 实验（2026-10-21，单卡 RTX 5090，试点规模）
+设置：
+- SD3.5 Medium LoRA GRPO，每组 30 次 update，每次 4 个 prompt × 8 个样本，512px，10 步，CFG 4.5，per-prompt std。
+- 质量和安全的 specialist 用同样的设置，只训单个 reward 和单个数据集。
+- 蒸馏：student 从 base 出发，两个 teacher 等权，80 轮，每轮 2 个 prompt × 2 个样本，每条轨迹训 3 步。80 轮里，对质量 teacher 的 MSE 从 0.029 降到 0.016，对安全 teacher 的从 0.016 降到 0.013。
+- 评估：PickScore test 和 danbooru `eval_baseline` 各取 40 个 prompt，每个 2 个样本；所有组用同一组 prompt 和 seed；只读入各组的 adapter，用 `rescore_media` 打分。
+- 联合指标：`nsfw_safety ≥ 0` 且 `pickscore ≥ τ`，τ 取 base 的 PickScore 中位数 0.7919；bootstrap 按 prompt 做。
+
+全部 80 个 prompt 上相对 base 的配对差，括号内是 95% CI，"明确"表示 CI 不含 0：
+
+| 组 | PickScore | nsfw_safety | 联合通过率（base 0.381） |
+|---|---|---|---|
+| 加权 | +0.0058 [+0.0019, +0.0100] 明确↑ | −0.046 [−0.090, −0.006] 明确↓ | +0.019 [−0.031, +0.069] |
+| 路由 | −0.0079 [−0.0119, −0.0043] 明确↓ | −0.007 [−0.038, +0.025] | −0.050 [−0.106, +0.006] |
+| 质量 specialist | −0.0028 [−0.0069, +0.0011] | −0.023 [−0.068, +0.015] | −0.019 [−0.075, +0.044] |
+| 安全 specialist | −0.0023 [−0.0058, +0.0011] | −0.003 [−0.032, +0.025] | −0.019 [−0.075, +0.038] |
+| 两 teacher 蒸馏 | −0.0016 [−0.0050, +0.0016] | −0.024 [−0.067, +0.018] | 0.000 [−0.050, +0.050] |
+
+只看安全 prompt：加权组 PickScore +0.011（明确↑），nsfw −0.091（明确↓），仍是质量与安全的此消彼长；路由组 PickScore −0.012（明确↓）。
+
+### 判定与解释
+- 按 P1 和 P2 的判据（差异小于 2σ 不算），**两个实验都没有把前沿往外推**，不立项把路由或蒸馏做成正式的 algorithm。
+- 这次试点区分度不够，主要原因有三个：
+  1. **安全约束在训练集上几乎饱和**：SD3.5 在 danbooru 训练 prompt 上很少被 Falconsai 判为 NSFW。安全 specialist 30 个 epoch 里只有 3 个 epoch reward 非零，97% 的组 advantage 为 0，所以它基本没有训练。蒸馏里的安全 teacher 也就近似 base。
+  2. **路由组每个 prompt 只有一路信号**：安全 prompt 的信号几乎全是常数 0，等于一半样本白跑，PickScore 的有效更新也只有加权组的一半左右。
+  3. **共同的干扰**：LoRA 起作用之后，gen batch 8 → replay batch 1 的瘦 GEMM 带来约 8e-3 的 logprob 差，第一轮 PPO 有 17–29% 的样本在 1e-4 的 clip 下被裁剪，各组都受影响（见 parity sprint §5 的更正）。
+- 想要一个有意义的结论，需要一对在 SD3.5 上真正有张力、而且约束没有饱和的目标，加上更长的训练和 gen batch == replay batch。

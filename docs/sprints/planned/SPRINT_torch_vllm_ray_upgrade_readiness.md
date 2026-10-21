@@ -82,7 +82,11 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 - 独立环境在 scratch 目录的 `venv_upgrade`，`.venv` 没有动。
 - CPU 测试在新旧环境下结果**完全一致**：主要几组都是 1822 passed / 8 skipped；其余目录 787 passed / 1 failed；Ray slow 113 passed / 1 failed。两个失败在 main 上同样存在，与升级无关。
 - `bazel test //...` 在本机下载依赖时 `Unknown host`，没有跑成。
-- GPU 测试：见下方补充。
+- **GPU 测试（RTX 5090，2026-10-21）**：
+  - 主环境（torch 2.11 + vLLM 0.21 的独立环境）：`-m "gpu and not e2e and not slow_test" --distributed` 32 passed / 26 skipped。跳过的原因是需要 2 或 4 张卡、缺 bitsandbytes 等。
+  - 升级环境：先是 1 failed。`test_cpu_offload_parking_releases_segment_pinned_by_blas_workspace` 断言 BLAS workspace 小于 32 MiB，而 torch 2.13 在 5090 上恰好分配 32 MiB（2.11 是 8.5 MiB），workspace 照样钉住 2 GiB 的显存段。在升级分支上修正（`911965ce7`）后，同样的命令 32 passed / 28 skipped。
+- **真实 GRPO smoke（升级环境）**：SD3.5 LoRA，PickScore，2 个 epoch 再 resume 1 个 epoch。首步 parity 差为 0，之后两次是 9.0e-3 和 8.4e-3，与主环境同一配置的模式一致（LoRA 瘦 GEMM 的 batch 依赖，见 parity sprint）。从 `checkpoint-final` resume 的 `start_epoch=2`，曲线连续。
+- 剩余：`bazel test //...` 的 CPU lanes（本机下载依赖时 `Unknown host`）。
 
 ### P2 Ray 2.59 token 认证（实测）
 - `ray.init(address="local")` 新建集群时，Ray 会在 driver 里写入 `RAY_AUTH_MODE=token`（`ray.shutdown()` 之后也不清除），在 `~/.ray/auth_token` 生成 token，并打一条 WARNING。运行不会失败。

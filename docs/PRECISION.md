@@ -101,6 +101,13 @@ rollout batch 4 replayed as batch 1:
 | SD3.5 Medium (BF16) | max \|Δlogprob\| 1.1e-1, first divergence `context_embedder` | 3.7e-9 |
 | SANA 1600M (FP16) | 1.5e-3 | 7.5e-4; the remainder comes from cuBLAS and cuDNN kernel choice for the LoRA projections and the 1x1 `conv_point` |
 
+This covers the base model's GEMMs only. A LoRA adapter that has left its
+zero-initialized state adds rank-sized GEMMs whose cuBLAS kernel still depends
+on the batch: with `--lora-b-std 0.01`, SD3.5 rollout batch 8 replayed as batch 1
+reaches max |Δlogprob| 5.1e-2 (first divergence `to_q.lora_A`), batch 8 replayed
+as batch 8 is bitwise, and `batch_invariant_ops` brings batch 8→1 to 4.8e-7.
+LoRA runs therefore keep the generation batch equal to the replay batch.
+
 Attention backends are a separate source. Each SDPA backend is batch-invariant
 on its own, but flash, efficient and cuDNN attention reduce in different orders:
 on SD3.5 a flash rollout replayed with cuDNN or efficient attention reaches
