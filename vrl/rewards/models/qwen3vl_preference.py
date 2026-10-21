@@ -283,9 +283,6 @@ class Qwen3VLPreferenceRewardModel(LazyTorchModule):
             revision=self._judge_revision,
             local_files_only=self._local_files_only,
         )
-        # Batched questions share one image; left padding keeps every row's
-        # last position at the answer slot.
-        processor.tokenizer.padding_side = "left"
         judge = AutoModelForImageTextToText.from_pretrained(
             self._judge_model,
             revision=self._judge_revision,
@@ -548,6 +545,12 @@ class Qwen3VLPreferenceRewardModel(LazyTorchModule):
         For ``yesno`` this is P(yes) renormalized over {yes, no}; for ``rating`` the
         probability-weighted mean of the level values, renormalized over the levels.
         Questions share one forward, in chunks of ``questions_per_forward`` when set.
+
+        Every question row starts with the same images, so they are encoded once
+        per forward chunk: one forward over the shared image prefix fills a KV
+        cache, and one batched forward over the question suffixes attends to it. A row therefore sees the
+        same tokens at the same positions as a full forward of its own, without
+        the vision tower and the image-prefix tokens being recomputed per question.
         """
 
         limit = self._questions_per_forward
@@ -586,30 +589,58 @@ class Qwen3VLPreferenceRewardModel(LazyTorchModule):
             else [reference]
         )
         images = [fit(image)] + [fit(r) for r in refs]
-        messages = [
-            [
-                {
-                    "role": "user",
-                    "content": [{"type": "image", "image": im} for im in images]
-                    + [{"type": "text", "text": question + ANSWER_SUFFIX[answer]}],
-                }
-            ]
+        processor, judge = module["processor"], module["judge"]
+        texts = [
+            processor.apply_chat_template(
+                [
+                    {
+                        "role": "user",
+                        "content": [{"type": "image", "image": im} for im in images]
+                        + [{"type": "text", "text": question + ANSWER_SUFFIX[answer]}],
+                    }
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
             for question, answer in zip(questions, answers, strict=True)
         ]
-        inputs = (
-            module["processor"]
-            .apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
-                processor_kwargs={"padding": True},
-            )
-            .to(self.device)
+        # The images precede the question text, so every row shares the text up
+        # to the last vision-end marker; a special token, so splitting there
+        # tokenizes both halves exactly as the whole row would be.
+        split = texts[0].rindex("<|vision_end|>") + len("<|vision_end|>")
+        prefix = processor(text=[texts[0][:split]], images=images, return_tensors="pt").to(
+            self.device
         )
+        suffix = processor.tokenizer(
+            [text[split:] for text in texts],
+            add_special_tokens=False,
+            padding=True,
+            padding_side="right",
+            return_tensors="pt",
+        ).to(self.device)
+        rows, suffix_len = suffix["input_ids"].shape
+        prefix_len = prefix["input_ids"].shape[1]
         with torch.inference_mode():
-            logits = module["judge"](**inputs).logits[:, -1].float()
+            cache = judge(**prefix, use_cache=True).past_key_values
+            cache.batch_repeat_interleave(rows)
+            # Text after the images continues M-RoPE as one shared position per
+            # token: the row's index plus the prefix's rope delta, on all axes.
+            positions = torch.arange(prefix_len, prefix_len + suffix_len, device=self.device)
+            positions = positions.view(1, 1, -1).expand(3, rows, -1) + judge.model.rope_deltas
+            logits = judge(
+                input_ids=suffix["input_ids"],
+                attention_mask=torch.cat(
+                    [
+                        suffix["attention_mask"].new_ones(rows, prefix_len),
+                        suffix["attention_mask"],
+                    ],
+                    dim=1,
+                ),
+                past_key_values=cache,
+                position_ids=positions,
+            ).logits
+            last = suffix["attention_mask"].sum(dim=1) - 1
+            logits = logits[torch.arange(rows, device=self.device), last].float()
         probs = torch.softmax(logits, dim=-1)
         values: list[float] = []
         for row, answer in zip(probs, answers, strict=True):
