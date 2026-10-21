@@ -61,6 +61,36 @@ device, and the runtime rejects it before loading either model.
   and Kling model fit on this GPU with the configured sleep-offload policy.
 - Pick the same `trainer.output_dir` on a path that exists on both, or a shared
   filesystem, so checkpoints/eval/reward artifacts land where you expect.
+- One Ray authentication mode on every process (below).
+
+### Ray token authentication
+
+The locked Ray 2.55.1 starts clusters without authentication unless
+`RAY_AUTH_MODE=token` is set. From Ray 2.59 the default depends on how each
+process starts, and the three processes of this runbook start differently:
+
+- `ray start --head` (node A) turns token auth on only when a token already
+  exists on that host, at `~/.ray/auth_token` or via `RAY_AUTH_TOKEN` /
+  `RAY_AUTH_TOKEN_PATH`. Any earlier single-node `vrl-train` run leaves one
+  behind: a fresh local `ray.init()` turns token auth on and writes that file.
+- `ray start --address=...` (node B) and the driver's
+  `ray.init(address=<concrete address>)` never turn it on by themselves.
+
+A mismatch fails at node B's join or at the driver's attach, and the driver's
+error is a plain `ConnectionError` that does not mention authentication.
+Choose the mode explicitly in the
+shell of every `ray` command and of the driver, on both nodes; both Ray
+versions read these variables:
+
+```bash
+# either: token auth, one shared token
+export RAY_AUTH_MODE=token
+ray get-auth-token --generate      # on node A; copy the printed token
+export RAY_AUTH_TOKEN=<that token> # on node B (or copy ~/.ray/auth_token)
+
+# or: no auth, only inside a trusted network boundary
+export RAY_AUTH_MODE=disabled
+```
 
 ## Run
 
