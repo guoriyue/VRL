@@ -309,7 +309,9 @@ def full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
     Every rank must call this for a DTensor (the all-gather is collective) even
     when only some ranks keep the result. ``Tensor.cpu()`` aliases an already-CPU
     tensor such as Adam's step counter; a checkpoint snapshot must not change
-    when the live optimizer takes its next step, so plain tensors are cloned too.
+    when the live optimizer takes its next step, so the copy is forced. For a
+    device tensor the forced ``to`` is the device->host copy itself, where
+    ``.cpu().clone()`` would copy the gathered tensor to host and then again.
     """
 
     from torch.distributed.tensor import DTensor
@@ -320,7 +322,7 @@ def full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
             # only this selected tensor for its collective, not the frozen model.
             value = value.detach().to(device=torch.device("cuda", torch.cuda.current_device()))
         value = value.full_tensor()
-    return value.detach().cpu().clone() if keep else None
+    return value.detach().to(device="cpu", copy=True) if keep else None
 
 
 def _gather_named_full_cpu(
