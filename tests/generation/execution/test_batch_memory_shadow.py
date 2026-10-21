@@ -55,6 +55,40 @@ def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     assert reading.budget_bytes == 29 * GB
 
 
+def test_every_counter_of_a_reading_comes_from_the_batch_device(monkeypatch) -> None:
+    """A batch on the second card of a CUDA host reads that card; a CPU batch reads none."""
+
+    import torch
+
+    from vrl.utils.cuda_memory import cuda_peak_allocated_bytes, reset_cuda_peak
+
+    read_devices: list[Any] = []
+
+    def counter(value: Any) -> Any:
+        def read(device: Any = None) -> Any:
+            read_devices.append(device)
+            return value
+
+        return read
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", counter(None))
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", counter(18 * GB))
+    monkeypatch.setattr(torch.cuda, "memory_allocated", counter(10 * GB))
+    monkeypatch.setattr(torch.cuda, "memory_reserved", counter(11 * GB))
+    monkeypatch.setattr(torch.cuda, "mem_get_info", counter((18 * GB, 32 * GB)))
+
+    for device in (torch.device("cpu"), torch.device("cuda", 1)):
+        reset_cuda_peak(device)
+        occupancy = BatchMemoryReading.cuda_occupancy_snapshot(device)
+        peak = cuda_peak_allocated_bytes(device)
+        if device.type == "cpu":
+            assert (occupancy, peak, read_devices) == (None, None, [])
+    assert peak == 18 * GB
+    assert occupancy is not None and occupancy["baseline_allocated_bytes"] == 10 * GB
+    assert read_devices == [torch.device("cuda", 1)] * 5
+
+
 # -- worker wire contract (readings cross ungated) -----------------------------
 
 

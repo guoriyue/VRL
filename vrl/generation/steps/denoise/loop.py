@@ -153,8 +153,8 @@ def run_denoise_loop(
 
     batch_rows = state.latents.shape[0]
     device = state.latents.device
-    reset_cuda_peak()
-    occupancy = BatchMemoryReading.cuda_occupancy_snapshot()
+    reset_cuda_peak(device)
+    occupancy = BatchMemoryReading.cuda_occupancy_snapshot(device)
     if config.seed is not None:
         generator = torch.Generator(device=device)
         generator.manual_seed(config.seed + config.sample_start)
@@ -234,7 +234,7 @@ def run_denoise_loop(
                     sde_result=sde_result,
                 )
 
-    denoise_peak_bytes = cuda_peak_allocated_bytes()
+    denoise_peak_bytes = cuda_peak_allocated_bytes(device)
     memory = None
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {

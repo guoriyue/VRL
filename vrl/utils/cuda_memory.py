@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import os
+from typing import Any
 
 # CUDA loads device code and library state on first real kernel execution. Those
 # process-lifetime pages are not user tensors, the caching allocator, or a tagged
@@ -77,32 +78,34 @@ def release_cuda_memory(*, ipc_collect: bool = False) -> None:
         return
 
 
-def reset_cuda_peak() -> None:
-    """Reset the process CUDA peak counters at a phase boundary.
+def reset_cuda_peak(device: Any) -> None:
+    """Reset ``device``'s CUDA peak counters at a phase boundary.
 
     Pairs with :func:`cuda_peak_allocated_bytes`: resetting at each phase
     boundary is what makes the readback phase-scoped instead of a
-    process-lifetime high-water mark.
+    process-lifetime high-water mark. Keyed on the batch's own device, like
+    ``BatchMemoryReading.cuda_occupancy_snapshot``: a CPU batch on a CUDA host
+    has no peak to reset, and a batch on another card resets that card's.
     """
 
     try:
         import torch
 
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
+        if torch.device(device).type == "cuda" and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(device)
     except Exception:
         return
 
 
-def cuda_peak_allocated_bytes() -> int | None:
-    """Peak CUDA bytes allocated since the last reset (None without CUDA)."""
+def cuda_peak_allocated_bytes(device: Any) -> int | None:
+    """Peak bytes allocated on ``device`` since the last reset (None unless CUDA)."""
 
     try:
         import torch
 
-        if not torch.cuda.is_available():
+        if torch.device(device).type != "cuda" or not torch.cuda.is_available():
             return None
-        return int(torch.cuda.max_memory_allocated())
+        return int(torch.cuda.max_memory_allocated(device))
     except Exception:
         return None
 

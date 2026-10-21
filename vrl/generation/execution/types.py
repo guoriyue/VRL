@@ -114,8 +114,8 @@ class BatchMemoryReading:
         return self.reserved_start_bytes + self.free_start_bytes
 
     @staticmethod
-    def cuda_occupancy_snapshot() -> dict[str, int] | None:
-        """Device occupancy at batch start, or None off CUDA.
+    def cuda_occupancy_snapshot(device: Any) -> dict[str, int] | None:
+        """``device``'s occupancy at batch start, or None when it is not CUDA.
 
         The half of a reading that can only be measured before the denoise loop
         starts; the executor completes the record with the two per-phase peaks
@@ -125,12 +125,14 @@ class BatchMemoryReading:
 
         import torch
 
-        if not torch.cuda.is_available():
+        # Keyed on the batch's own device, not on CUDA being present: a CPU
+        # batch on a CUDA host has no device occupancy to read.
+        if torch.device(device).type != "cuda" or not torch.cuda.is_available():
             return None
-        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
         return {
-            "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
-            "reserved_start_bytes": int(torch.cuda.memory_reserved()),
+            "baseline_allocated_bytes": int(torch.cuda.memory_allocated(device)),
+            "reserved_start_bytes": int(torch.cuda.memory_reserved(device)),
             "free_start_bytes": int(free_bytes),
             "total_bytes": int(total_bytes),
         }

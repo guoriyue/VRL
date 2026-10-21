@@ -433,7 +433,8 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         state = denoise_result.state
         # Byte-admission shadow: the decode + pack spike is the second memory
         # phase, measured separately from the denoise plateau.
-        reset_cuda_peak()
+        device = state.latents.device
+        reset_cuda_peak(device)
         with profile_range("generation.decode_latents"):
             video = model.decode_latents(state.latents)
         # Pack decoded video as uint8 before it crosses the worker->driver
@@ -471,7 +472,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             }
         context = dict(model.export_batch_context(state))
 
-        decode_peak_bytes = cuda_peak_allocated_bytes()
+        decode_peak_bytes = cuda_peak_allocated_bytes(device)
         memory = None
         peak_memory_mb = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
