@@ -190,8 +190,8 @@ class LocalEditRewardModel(LazyTorchModule):
         window = torch.hann_window(corr_side)[:, None] * torch.hann_window(corr_side)[None, :]
 
         def gray(image: Any) -> Any:
-            values = image.resize((corr_side, corr_side)).convert("L").getdata()
-            plane = torch.tensor(list(values), dtype=torch.float32).reshape(corr_side, corr_side)
+            values = image.resize((corr_side, corr_side)).convert("L").get_flattened_data()
+            plane = torch.tensor(values, dtype=torch.float32).reshape(corr_side, corr_side)
             keep = torch.ones_like(plane, dtype=torch.bool)
             keep[blank_rows, blank_cols] = False
             plane = torch.where(keep, plane - plane[keep].mean(), torch.zeros(()))
