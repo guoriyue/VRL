@@ -291,7 +291,7 @@ prescribes.
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous runs a producer/consumer pipeline on `ContinuousRolloutThread`, with scored results stored by prompt slot in `PromptBatch`. `ContinuousRolloutSettings` carries the runtime settings, including the `max_stale_policy_versions` bound the producer and consumer check. |
 | `RolloutRuntimeCoordinator` | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`). |
 | `Evaluator` (ABC) → `DenoiseSDELogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `TrajectorySignalBatch` via `TrajectorySignalBuilder`; the SDE evaluator's segment is a `FlowSDESignal` (proposal mean, std, sqrt(-dt), sigma always present), the chunk evaluator's a plain `SegmentSignal`. Objectives read the type's fields; there is no declared key list. |
-| `RolloutStats` | Carries phase timing and throughput metrics; the trainer logs them and writes one `rollout_stats.jsonl` row per profiled step. |
+| `RolloutStats` | Carries phase timing and throughput metrics; the trainer logs them and writes one `rollout_stats.jsonl` row per step and rank (host wall clock; `trainer.profile` adds CUDA sync and `phase_events.jsonl`). |
 
 ---
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -314,3 +315,29 @@ def test_streaming_profiles_training_phases(monkeypatch, tmp_path) -> None:
         if event["phase"] in {"evaluate", "backward", "optim_step"}
     }
     assert training_events == {"evaluate": 0, "backward": 0, "optim_step": 0}
+
+
+def test_unprofiled_step_records_phases_covering_the_step(monkeypatch, tmp_path) -> None:
+    """Without profile every step still writes host wall-clock phases that tile the step."""
+
+    tb = real_trainer(monkeypatch, tmp_path)
+    assert not tb.trainer.config.profile
+
+    rows = []
+    for step in range(2):
+        start = time.perf_counter()
+        asyncio.run(tb.trainer.step(["a cat"]))
+        wall = time.perf_counter() - start
+        row = _jsonl(tb, "rollout_stats.jsonl")[step]
+        assert (row["step"], row["rank"]) == (step, 0)
+        trainer_phases = ("advantage", "evaluate", "backward", "optim_step")
+        assert all(row[phase] > 0.0 for phase in trainer_phases)
+        # Sequential top-level phases; collect.* and reward.* nest inside rollout.collect_s.
+        covered = sum(row[phase] for phase in trainer_phases) + sum(
+            value for name, value in row.items() if name.startswith("rollout.")
+        )
+        assert covered <= wall
+        rows.append(covered / wall)
+
+    assert min(rows) > 0.5, rows
+    assert not (Path(tb.trainer.config.output_dir) / "phase_events.jsonl").exists()

@@ -214,6 +214,8 @@ class TrainerConfig:
     ppo_epochs: int = 1
 
     # --- profiling ---
+    # Host wall-clock phase timings land in rollout_stats.jsonl every step;
+    # profile adds a CUDA sync around each trainer phase and phase_events.jsonl.
     profile: bool = False
 
     # Whether a weight sync may proceed while the current prompt batch is still

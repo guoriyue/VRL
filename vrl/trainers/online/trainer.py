@@ -585,7 +585,7 @@ class OnlineTrainer:
         self.ref_model = self.model if uses_reference else None
         if self.ref_model is not None:
             self.model.attach_reference_policy()
-        # Per-step phase timings under profile: one log line plus one JSONL row.
+        # Per-step phase timings: one log line plus one JSONL row per rank.
         self._rollout_stats_path = f"{self.config.output_dir}/rollout_stats.jsonl"
         self._grad_scaler = self._create_grad_scaler(
             self.device,
@@ -1664,8 +1664,8 @@ class OnlineTrainer:
         if policy_updated:
             stats.merge(await self.rollout_schedule.after_train_step())
         phase_times = stats.as_metrics_dict()
+        self._log_phase_times(metric_step, stats, phase_times)
         if cfg.profile:
-            self._log_phase_times(metric_step, stats, phase_times)
             self._write_phase_events(stats.take_phase_events(), step=metric_step)
         return agg.build(
             reward_mean=diagnostics.mean(diagnostics.reward_mean),
@@ -1726,7 +1726,11 @@ class OnlineTrainer:
     def _log_phase_times(
         self, metric_step: int, stats: RolloutStats, phase_times: dict[str, float]
     ) -> None:
-        """Log the update's phase split and append it to rollout_stats.jsonl."""
+        """Log the update's phase split and append it to rollout_stats.jsonl.
+
+        Every rank appends its own row; ``rank`` tells them apart, so a reader
+        can take the slowest rank per step at the step's sync boundaries.
+        """
 
         if not phase_times:
             return
@@ -1753,17 +1757,28 @@ class OnlineTrainer:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(
-                json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True) + "\n"
+                json.dumps(
+                    {
+                        "step": int(metric_step),
+                        "rank": int(self._strategy.context.rank),
+                        **phase_times,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
             )
 
     def _phase(self, stats: RolloutStats, name: str) -> contextlib.AbstractContextManager[None]:
-        """Time a trainer phase into ``stats`` when profiling; otherwise no timing at all.
+        """Time a trainer phase into ``stats`` on every step.
 
-        Trainer phases are GPU work, so an unsynchronized reading would be
-        noise; they are recorded only under ``trainer.profile``.
+        Without ``trainer.profile`` the reading is host wall clock only: no CUDA
+        sync, so queued kernels land in whichever phase next blocks on the card,
+        and the phases still cover the step between its sync points.
+        ``trainer.profile`` synchronizes both ends so each phase owns its
+        kernels, and records the interval for phase_events.jsonl.
         """
 
-        return stats.phase(name, profile=True) if self.config.profile else contextlib.nullcontext()
+        return stats.phase(name, profile=self.config.profile)
 
     def _step_stats(self, iteration: Any, stats: RolloutStats) -> RolloutStats:
         """Typed per-step stats: the iteration's accumulator + the trainer phases."""
