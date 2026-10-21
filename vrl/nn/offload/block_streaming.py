@@ -2,16 +2,12 @@
 
 A bf16 ~20B transformer is ~40 GB; a 32 GB card holds its LoRA leaves, its stem
 and head, and one block at a time. :class:`HostStreaming` leaves the frozen
-parameters of every repeated block on the host and makes each block's forward
-run ``torch.func.functional_call`` over device copies of them. The copies are
-forward temporaries: non-reentrant activation checkpointing recreates them in
-backward, and the host masters are never swapped (``Parameter.data`` is not
-touched after setup), so parameter names, ``state_dict`` and checkpoints are
-those of the plain policy.
-
-One update of a 640x640, 5-layer Qwen-Image-Layered scene takes about 12.5 s
-on an RTX 5090 this way, against the ~3 s a 48 GB card spends with the blocks
-resident. Either role selects it through its ``offload`` section.
+weights of every repeated block on the host and makes each block's call run
+``torch.func.functional_call`` over device copies of them, fetched one block
+ahead by a :class:`~vrl.nn.offload.prefetch.Prefetcher`. The copies are call
+temporaries (non-reentrant activation checkpointing recreates them in
+backward) and the host masters keep their identity, so parameter names,
+``state_dict`` and checkpoints are those of the plain policy.
 """
 
 from __future__ import annotations
@@ -21,22 +17,24 @@ from typing import Any, ClassVar
 import torch
 import torch.nn as nn
 
+from vrl.nn.offload.prefetch import Prefetcher
 from vrl.nn.optimization.regional_compile import repeated_block_lists
 
 
 class HostStreaming:
-    """The streamed blocks of one root."""
+    """The streamed blocks of one root and the prefetcher that feeds them."""
 
-    def __init__(self, blocks: tuple[nn.Module, ...]) -> None:
+    def __init__(self, blocks: tuple[nn.Module, ...], prefetcher: Prefetcher) -> None:
         self.blocks = blocks
+        self.prefetcher = prefetcher
 
     @classmethod
     def install(cls, root: nn.Module, *, device: torch.device | str) -> HostStreaming:
         """Place ``root`` on ``device`` except the frozen weights of its repeated blocks.
 
         Everything outside the repeated block lists moves whole; inside them
-        only the trainable leaves (LoRA) move, the frozen weights stay on the
-        host and each block streams them per call.
+        only the trainable leaves move, the frozen weights stay on the host
+        and each block streams them per call.
         """
 
         device = torch.device(device)
@@ -60,9 +58,22 @@ class HostStreaming:
                 for parameter in block.parameters():
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(device)
-        streaming = cls(blocks)
+        # A block's unit is what still lives on the host: its frozen parameters
+        # and buffers. Trainable leaves and anything already on the device stay
+        # resident and pass through each call untouched.
+        units = []
         for block in blocks:
-            _StreamedBlock.install(block, streaming, device)
+            state = {name: p for name, p in block.named_parameters() if not p.requires_grad}
+            state.update(block.named_buffers())
+            units.append({name: t for name, t in state.items() if t.device.type == "cpu"})
+        streaming = cls(blocks, Prefetcher(units, device))
+        for index, (block, unit) in enumerate(zip(blocks, units, strict=True)):
+            resident = {
+                name: tensor
+                for name, tensor in (*block.named_parameters(), *block.named_buffers())
+                if name not in unit
+            }
+            _StreamedBlock.install(block, streaming, index, resident)
         return streaming
 
     @classmethod
@@ -74,17 +85,38 @@ class HostStreaming:
                 return child._streaming
         return None
 
+    @property
+    def counters(self) -> dict[str, int]:
+        """Prefetch hits and misses so far."""
+
+        return {"prefetch_hits": self.prefetcher.hits, "prefetch_misses": self.prefetcher.misses}
+
 
 class _StreamedBlock(nn.Module):
-    """Mixin swapped in front of a block's class: its forward sees device weights."""
+    """Mixin swapped in front of a block's class: its call runs over device copies.
+
+    The wrapper sits on ``__call__``, not ``forward``, so a block compiled in
+    place (regional compile) keeps the streaming outside the compiled frame
+    whichever of the two was applied first; swapping the class is what puts a
+    method there. One streamed subclass per block class, not per block: dynamo
+    guards a compiled frame on ``type(self)``, and distinct classes would cost
+    one trace per block instead of the one trace regional compile exists for.
+    """
 
     _streaming: HostStreaming
-    _device: torch.device
+    _unit: int
+    _resident: dict[str, torch.Tensor]
     _streaming_active: bool = False
     _subclasses: ClassVar[dict[type[nn.Module], type[nn.Module]]] = {}
 
     @classmethod
-    def install(cls, block: nn.Module, streaming: HostStreaming, device: torch.device) -> None:
+    def install(
+        cls,
+        block: nn.Module,
+        streaming: HostStreaming,
+        unit: int,
+        resident: dict[str, torch.Tensor],
+    ) -> None:
         block_cls = type(block)
         if not issubclass(block_cls, cls):
             if block_cls not in cls._subclasses:
@@ -92,17 +124,13 @@ class _StreamedBlock(nn.Module):
                 cls._subclasses[block_cls] = type(name, (cls, block_cls), {})
             block.__class__ = cls._subclasses[block_cls]
         block._streaming = streaming
-        block._device = device
+        block._unit = unit
+        block._resident = resident
 
-    def forward(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if self._streaming_active:
-            return super().forward(*args, **kwargs)  # type: ignore[misc]
-        device = self._device
-        state = {
-            name: parameter if parameter.requires_grad else parameter.to(device)
-            for name, parameter in self.named_parameters()
-        }
-        state.update({name: buffer.to(device) for name, buffer in self.named_buffers()})
+            return super().__call__(*args, **kwargs)
+        state = {**self._resident, **self._streaming.prefetcher.acquire(self._unit)}
         self._streaming_active = True
         try:
             return torch.func.functional_call(self, state, args, kwargs)

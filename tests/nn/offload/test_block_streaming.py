@@ -7,6 +7,7 @@ import copy
 import pytest
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from vrl.nn.offload import HostStreaming
 
@@ -38,6 +39,13 @@ class _Policy(nn.Module):
         return self.head(x)
 
 
+def _checkpointed_blocks(policy: _Policy, x: torch.Tensor) -> torch.Tensor:
+    out = x
+    for block in policy.blocks:
+        out = checkpoint(block.__call__, out, use_reentrant=False)
+    return out
+
+
 def test_streamed_policy_matches_the_plain_one_and_keeps_its_namespace() -> None:
     torch.manual_seed(0)
     plain = _Policy()
@@ -65,22 +73,94 @@ def test_streamed_policy_matches_the_plain_one_and_keeps_its_namespace() -> None
 
 
 def test_streamed_blocks_recompute_under_activation_checkpointing() -> None:
-    from torch.utils.checkpoint import checkpoint
-
     torch.manual_seed(1)
     policy = _Policy()
     HostStreaming.install(policy, device="cpu")
     x = torch.randn(2, 4, requires_grad=True)
 
-    out = x
-    for block in policy.blocks:
-        out = checkpoint(block.__call__, out, use_reentrant=False)
-    out.sum().backward()
+    _checkpointed_blocks(policy, x).sum().backward()
 
     assert x.grad is not None and torch.isfinite(x.grad).all()
     assert all(block.lora.weight.grad is not None for block in policy.blocks)
 
 
+def test_prefetch_follows_the_forward_pass_and_the_recompute_in_backward() -> None:
+    """Forward 0,1,2 then recompute 2,1,0: only the first block of each pass misses."""
+
+    policy = _Policy()
+    streaming = HostStreaming.install(policy, device="cpu")
+    x = torch.randn(2, 4, requires_grad=True)
+
+    _checkpointed_blocks(policy, x).sum().backward()
+
+    assert streaming.counters == {"prefetch_hits": 4, "prefetch_misses": 2}
+
+
+def test_in_place_compile_shares_one_trace_across_streamed_blocks() -> None:
+    """Compile before or after streaming: the compiled frame is the block's own forward.
+
+    The streaming wrapper sits on ``__call__``, outside ``_call_impl`` that
+    ``nn.Module.compile`` wraps, so dynamo traces one frame for the three blocks
+    and never recompiles for a different block instance.
+    """
+
+    import torch._dynamo
+    from torch._dynamo.utils import counters
+
+    torch.manual_seed(2)
+    plain = _Policy()
+    compiled_first = copy.deepcopy(plain)
+    streamed_first = copy.deepcopy(plain)
+    x = torch.randn(2, 4)
+
+    for block in compiled_first.blocks:
+        block.compile(backend="eager")
+    HostStreaming.install(compiled_first, device="cpu")
+    HostStreaming.install(streamed_first, device="cpu")
+    for block in streamed_first.blocks:
+        block.compile(backend="eager")
+
+    for policy in (compiled_first, streamed_first):
+        torch._dynamo.reset()
+        counters.clear()
+        torch.testing.assert_close(policy(x), plain(x))
+        assert counters["frames"]["ok"] == 1, dict(counters["frames"])
+        assert not counters["graph_break"], dict(counters["graph_break"])
+        with torch._dynamo.config.patch(error_on_recompile=True):
+            torch.testing.assert_close(policy(x), plain(x))
+
+
 def test_a_policy_without_repeated_blocks_cannot_stream() -> None:
     with pytest.raises(ValueError, match="no repeated block list"):
         HostStreaming.install(nn.Linear(2, 2), device="cpu")
+
+
+@pytest.mark.gpu
+def test_cuda_prefetch_matches_the_resident_policy() -> None:
+    """Copies issued on the copy stream, waited on and recorded by the consumer,
+    give the resident policy's outputs and gradients over repeated passes."""
+
+    torch.manual_seed(3)
+    plain = _Policy().cuda()
+    streamed = copy.deepcopy(plain).cpu()
+    # One buffer already on the card: it must pass through, not round-trip.
+    streamed.blocks[1].gain = streamed.blocks[1].gain.cuda()
+    streaming = HostStreaming.install(streamed, device="cuda")
+
+    x = torch.randn(2, 4, device="cuda", requires_grad=True)
+    x_plain = x.detach().clone().requires_grad_(True)
+    for _ in range(3):
+        torch.testing.assert_close(streamed(x), plain(x))
+    _checkpointed_blocks(streamed, x).sum().backward()
+    _checkpointed_blocks(plain, x_plain).sum().backward()
+    torch.cuda.synchronize()
+    torch.testing.assert_close(x.grad, x_plain.grad)
+    for (name, parameter), (_, reference) in zip(
+        streamed.named_parameters(), plain.named_parameters(), strict=True
+    ):
+        if parameter.requires_grad:
+            torch.testing.assert_close(parameter.grad, reference.grad, msg=name)
+            assert parameter.device.type == "cuda"
+        else:
+            assert parameter.device.type == "cpu"
+    assert streaming.counters["prefetch_hits"] > 0

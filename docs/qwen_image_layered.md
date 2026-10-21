@@ -38,10 +38,14 @@ the swap runs on the host before the device move and drops the bf16 masters
 when base weights are never synced. A 640x640, 4-layer, 20-step decomposition
 peaks at about 28 GB. Training on one such card streams the frozen transformer
 blocks from the host: `actor.offload: true` (the rollout's counterpart is
-`model.offload: true`) makes each block's forward run over device copies of
-its frozen weights
-(`vrl/nn/offload/block_streaming.py`), about 12.5 s per 640x640 update on an
-RTX 5090 against ~3 s with the blocks resident on a 48 GB card.
+`model.offload: true`) makes each block's call run over device copies of its
+frozen weights
+(`vrl/nn/offload/block_streaming.py`). The copies are prefetched one block ahead
+on a CUDA copy stream, so the PCIe transfer of block `i + 1` overlaps the
+compute of block `i` in the forward pass and in the checkpoint recompute of
+the backward pass. Before prefetching, with each block copied synchronously in
+front of its own compute, a 640x640 update took about 12.5 s on an RTX 5090
+against ~3 s with the blocks resident on a 48 GB card.
 
 ## Supervised flow matching
 
