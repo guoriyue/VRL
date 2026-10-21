@@ -577,7 +577,8 @@ class FSDPConfig(ConfigBase):
     # sequence. 2D HSDP is the multi-node follow-on.
     mesh: list[str] = Field(default_factory=lambda: ["dp_shard"])
     context_parallel: ContextParallelConfig = Field(default_factory=ContextParallelConfig)
-    # actor -> MixedPrecisionPolicy(param=bf16, reduce=fp32); none -> full precision.
+    # actor -> trainable params stored in the model dtype, fp32 gradient reduction;
+    # none -> native dtypes and reduction. Neither casts params or inputs for compute.
     # Named precision_policy (not mixed_precision) to avoid colliding with the
     # training-forward dtype `precision.training.dtype` (fp32/bf16/fp16); this is a
     # param/reduce policy, not a dtype.

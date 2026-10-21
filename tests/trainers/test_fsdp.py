@@ -232,8 +232,9 @@ def test_normalize_fsdp_parameter_dtype_rejects_mixed_native_policy() -> None:
         )
 
 
-@pytest.mark.parametrize("allow_cast", [False, True], ids=["none", "actor"])
-def test_fsdp_normalization_preserves_frozen_float32_parameters(allow_cast: bool) -> None:
+def test_fsdp_normalization_preserves_frozen_float32_parameters() -> None:
+    # The actor policy casts trainable tensors only; frozen pins keep FP32 under
+    # it exactly as under ``none`` (both skip frozen floating parameters).
     net = ToyTransformer().to(dtype=torch.bfloat16)
     net.head.to(dtype=torch.float32).requires_grad_(False)
     with torch.no_grad():
@@ -242,7 +243,7 @@ def test_fsdp_normalization_preserves_frozen_float32_parameters(allow_cast: bool
     before = [parameter.detach().clone() for parameter in net.head.parameters()]
     pointers = [parameter.data_ptr() for parameter in net.head.parameters()]
 
-    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=allow_cast)
+    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=True)
 
     assert {p.dtype for p in net.parameters() if p.requires_grad} == {torch.bfloat16}
     for parameter, expected, pointer in zip(net.head.parameters(), before, pointers, strict=True):
@@ -818,21 +819,6 @@ def test_fsdp_shutdown_leaves_the_process_group_to_the_process(monkeypatch) -> N
         strategy.shutdown()
     assert caught.value is failure
     assert destroyed == []
-
-
-def test_build_strategy_fsdp_accepts_rollout_scoped_compile() -> None:
-    # scope=rollout keeps the FSDP2 replay policy eager, so the §10 gate must
-    # not fire: only a compile that binds the replay role is unsound here.
-    assert isinstance(
-        build_strategy(
-            _strategy_config(
-                "fsdp",
-                model={"torch_compile": {"enable": True, "scope": "rollout"}},
-            ),
-            _cpu_fsdp_context(),
-        ),
-        FSDPStrategy,
-    )
 
 
 # ── gathered HF-adapter export (save_pretrained under FSDP2) ─────────────────

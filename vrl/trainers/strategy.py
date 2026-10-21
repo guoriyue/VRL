@@ -543,12 +543,12 @@ class FSDPStrategy(TrainerParking):
                 sources[name] = dict(handle.state_dict()) if self.context.is_primary else {}
 
         for name, handle, _writer in handles:
-            parameter_dtype = getattr(handle, "dtype", None)
             if self._shard_trainable_only:
                 dtypes = {p.dtype for p in handle.parameters() if p.requires_grad}
                 if len(dtypes) != 1:
                     raise ValueError("trainable-only FSDP requires one trainable parameter dtype")
             else:
+                parameter_dtype = getattr(handle, "dtype", None)
                 if self._precision_policy == "none":
                     # A leading frozen FP32 norm does not determine the LoRA
                     # gradient group's dtype; native FSDP preserves both.

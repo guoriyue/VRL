@@ -54,26 +54,19 @@ distributed:
     num_nodes: 2
     gpus_per_node: 1
     fsdp:
-      # precision_policy=none (fp32 sharded master params), NOT actor (bf16 params).
-      # This recipe uses activation checkpointing (actor.gradient_checkpointing, on
-      # by default, and required — without it the 2B DiT at 480p/33f OOMs a 44GB
-      # L40S). FSDP2 MixedPrecisionPolicy(param_dtype=bf16) casts the fp32 sharded
-      # params to bf16 only inside its pre-forward hook; the gradient-checkpoint
-      # recompute calls the block forward directly and BYPASSES that hook, so an op
-      # not covered by the trainer's autocast (the attention matmul) runs bf16 in the
-      # forward but fp32 in the recompute -> torch.utils.checkpoint CheckpointError
-      # (saved bf16 vs recomputed fp32). With precision_policy=none the params stay
-      # fp32 in both passes (consistent), and bf16 compute still comes from the
-      # trainer's autocast (same as single_process / ddp). Keeping bf16 params under
-      # FSDP+GC needs a deeper fix (apply the MP cast during recompute) — tracked as
-      # a follow-up; this is the correct, standard FSDP2+checkpointing recipe.
+      # precision_policy=none: fp32 sharded master params, bf16 compute from the
+      # trainer's autocast (same as single_process / ddp); measured with activation
+      # checkpointing, which this 2B DiT needs at 480p/33f on a 44GB L40S. Before
+      # 2026-10-20 the actor policy cast params to bf16 in FSDP's pre-forward hook,
+      # which checkpoint recompute bypassed (CheckpointError); actor no longer casts
+      # at forward time, but has not been re-measured on this recipe.
       precision_policy: none       # fp32 master params; bf16 compute via trainer autocast
   # Each rank's unpinned rollout and unpinned Kling reward share its own
   # (trainer) GPU: 2 GPUs total, no spare card. Same as the DDP variant.
 
 model:
-  # torch.compile (inductor graph capture) is unsound with FSDP2 fully_shard's
-  # reshard-after-forward all-gathers — build_strategy fail-fasts if this is true.
+  # Compiling the FSDP2 replay policy is refused at config load (verified on one
+  # rank only, not across ranks' reshard-after-forward all-gathers).
   # Set it false in the config so the run is self-contained (the DDP variant passed
   # this as a launch override; FSDP requires it off).
   torch_compile:
