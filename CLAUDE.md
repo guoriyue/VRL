@@ -4,6 +4,7 @@
 - Ruff is the formatter and linter; run it only on the files a task touched, never repository-wide.
 - Commit work in reviewable groups; never push unless the user asks for a push in that message.
 - Read the actual source, call sites, configs, and tests before changing code or recommending a deletion; cite the path that supports the claim.
+- Review changes with the `review` skill (`.claude/skills/review/`): self-review before committing, and the same checklist plus its JSON verdict format for review and audit subagents.
 
 ## Python function signatures
 

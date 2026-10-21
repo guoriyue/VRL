@@ -70,10 +70,9 @@ htmlcov/
 .ipynb_checkpoints/
 
 outputs/
-# Claude Code
-.claude/*
-# Project skills are shared; the rest of .claude/ is per-machine session state.
-!.claude/skills/
+# Claude Code: skills, hooks and settings stay on the machine; nothing under
+# .claude/ is committed.
+.claude/
 
 # Third-party submodules: track gitlinks via .gitmodules, ignore any
 # stray content placed under third_party/ that isn't a tracked submodule.
