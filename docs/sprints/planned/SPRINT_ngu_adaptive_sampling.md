@@ -1,7 +1,8 @@
 # SPRINT: NGU 自适应采样 — 把 rollout 预算分配给尚未解决的问题
 
 **日期**: 2026-09-17  
-**状态**: PLANNED — 尚未实现；本文件记录方案与验收要求。  
+**状态**: PLANNED — 尚未实现；本文件记录方案与验收要求。2026-10-21 起 **blocked**。  
+**解锁事件**：先在 GPU 上跑完 P0 的 OCR 基线（命令见文末“实施记录”），并且 owner 对 NGU 状态放在哪里做出决定（本文写的是 continuous producer，`SPRINT_rollout_admission_and_failure_attribution.md` §2/§5 写的是 `rollouts/admission/` 块）。两件事都完成后才开始 P1。  
 **来源**: [Learning to Solve Hard Problems in RL for LLMs by Never Giving Up](https://arxiv.org/abs/2609.13443)，[作者博客](https://mnoukhov.github.io/posts/ngu/)。
 
 ## 目标与适用范围
@@ -124,3 +125,82 @@ collector 的生成／评分／组装边界。现有 schedule protocol 和 reque
   - 按 `p(1−p)` 加权采样难度。
   - 本 sprint 的二元 OCR 范围可以拿 `p(1−p)` 作为重采概率的参考形式，但必须和"全对跳过、全错按概率重采"的现有设计比较后再选，不要叠加。
 - **099 SkyRL**：继承 AReaL 的容量准入，生成前先申请名额，保证 `accepted + running ≤ (S + step)·B`。如果 NGU 的重采进入 continuous producer，预算上限应在 producer 侧准入，而不是消费时才丢弃。
+
+## 实施记录（2026-10-21）
+
+本轮没有改代码。原因见下表：P1–P3 被本文自己的顺序、admission sprint 的 knob
+规则和一个未决的 owner 位置问题挡住；P0 需要 GPU。
+
+### 现状核对（上文“当前代码与接入位置”表中的过期项）
+
+- `continuous/staleness.py`、`continuous/scored_queue.py` 已不存在。continuous 现在只有
+  `consumer.py`、`producer.py`、`schedule.py`、`thread.py`、`types.py`。
+- consumer 没有 `_take_ready_groups()`。现在的接收入口是
+  `ContinuousRolloutConsumer.collect_iteration` / `validate_ready_versions`
+  （`vrl/rollouts/orchestration/continuous/consumer.py`）。“整批同一版本、每个 slot 恰好一组”
+  的语义由 `PromptBatch`（`continuous/types.py`）承载。
+- 准入记账已经有了：`vrl/rollouts/admission.py::AdmissionLedger`。每个组写一行
+  `vrl.rollout-admission.v1`，包含 `prompt_key`（prompt 加输入 metadata 的哈希，所以文本相同、
+  条件不同的 example 不会混在一起）、逐样本 reward、`rollout_policy_version`、
+  `selected_rows`、decision/reason。P0 要的“实际训练组组成、零优势比例、所有丢弃样本”
+  直接从这里读，不用新增记录。
+
+### 各项状态
+
+| 项 | 状态 |
+| --- | --- |
+| P0 基线 | **准备好，待 GPU**。成功判定已在代码里：`ocr_match` 是 `normalize_ocr_text` 之后的整句相等，取值 0/1（`vrl/rewards/models/ocr.py`）。独立评估集用 `manifests/ocr/test.txt`，训练集是 `train.txt`。命令见下；`--dry-run` 已在 CPU 上解析通过 |
+| P1 配置与调度 | **不做（blocked）**。理由：①本文顺序是 P0 先于 P1，且“不预设 NGU 必然改善视觉生成任务”；②admission sprint §2 定了 knob 规则——没有 preset 使用或测量的旋钮不加；它的 §5 把 NGU 排在第 4 步，前面的第 2 步（用账本回看已有 run）和第 3 步（OCR 难度带固定预算对照）都还没做；③owner 位置冲突：本文写在 continuous producer，admission sprint 要求移到 `rollouts/admission/` 块并让 legacy 路径也能用，**需要用户决定**；④10-20 补充要求先把 `p(1−p)` 和“全对跳过、全错按概率重采”做对比再选，比较需要 P0 的每题成功率分布 |
+| P2 历史训练信号（逐样本版本、历史 baseline、anchor-positive、变长组损失） | **不做**：依赖 P1 |
+| P3 匹配预算对比 | **不做**：依赖 P1/P2，且需要多种子 GPU 运行 |
+| 10-20 PFSP `p(1−p)` | **等 P0 数据**：要在 P0 的成功率分布上和现有设计对比，二选一，不叠加 |
+| 10-20 SkyRL 容量准入 | **已有准入点，NGU 落地时接到这里**：`ContinuousRolloutProducer._admit`（`continuous/producer.py`）在提交前检查 `max_inflight_groups`。每个 `PromptBatch` 固定一个 policy version；`_store_result` 对超过 `max_stale_policy_versions` 的结果直接报错，不是消费时静默丢弃。NGU 的重采名额应该在 `_admit` 里计入，不要放到 consumer 侧 |
+| “验证与验收”各条 | 全部依赖 P1/P2。只有最后一条（NGU 关闭时现有行为不变）现在自然成立 |
+
+### P0 的 GPU 命令（未运行）
+
+1. 先用 `experiment/sd3_5/online_grpo_ocr` 正常启动一次训练，得到 run 目录（里面有
+   `resolved_config.yaml`）。这次训练的 `admission/*.jsonl` 也就是训练侧的组成记录。
+2. 初始模型在独立评估集上每题采 16 张，只用 `ocr_match` 打分：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.eval.image_checkpoint_eval \
+  --run-dir <上一步的 run 目录> --base-only \
+  --manifest manifests/ocr/test.txt --limit 256 --samples-per-prompt 16 \
+  --eval-policy-override reward.kwargs.ocr.score_key=ocr_match \
+  --output-dir outputs/ngu_p0_sd3_5_base_ocr_match
+```
+
+3. 按每题成功率分桶，分桶规则和采样数一起写进 `ngu_p0_buckets.json`：
+
+```bash
+.venv/bin/python - outputs/ngu_p0_sd3_5_base_ocr_match <<'EOF'
+import collections, json, sys
+from pathlib import Path
+run = Path(sys.argv[1])
+hits = collections.defaultdict(list)
+for line in (run / "scores.jsonl").read_text().splitlines():
+    row = json.loads(line)
+    hits[row["prompt_index"], row["prompt"]].append(row["r_ocr"] == 1.0)
+def bucket(rate):
+    if rate == 0.0:
+        return "unsolved"
+    if rate == 1.0:
+        return "solved"
+    return "hard" if rate <= 0.25 else "medium" if rate < 0.75 else "easy"
+prompts = [{"prompt_index": i, "prompt": p, "samples": len(f), "success_rate": sum(f) / len(f),
+            "bucket": bucket(sum(f) / len(f))} for (i, p), f in sorted(hits.items())]
+counts = collections.Counter(item["bucket"] for item in prompts)
+report = {"success": "r_ocr == 1.0 (ocr_match: normalized whole-text equality)",
+          "buckets": "unsolved p=0 | hard 0<p<=0.25 | medium 0.25<p<0.75 | easy 0.75<=p<1 | solved p=1",
+          "bucket_counts": dict(counts), "prompts": prompts}
+(run / "ngu_p0_buckets.json").write_text(json.dumps(report, indent=2))
+print(json.dumps({"prompts": len(prompts), "bucket_counts": dict(counts)}))
+EOF
+```
+
+   这个分桶脚本已在合成的 `scores.jsonl`（20 题 × 16 样本）上跑通。
+
+判定：`unsolved` 和 `hard` 两个桶加起来占比很小的话，NGU 在这个任务上没有可分配的
+预算，就把这个结论写回本文。否则拿这个分布去比较 `p(1−p)` 和本文的重采规则，再决定
+P1 怎么做。
