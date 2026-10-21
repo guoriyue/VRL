@@ -860,11 +860,14 @@ class OnlineTrainer:
             return await self._streaming_update(prompts, next_example_batch=next_prompts)
         from vrl.utils.profiling import capture_torch_trace
 
+        # Every rank captures the step; a directory per rank keeps the ranks of
+        # one node from overwriting each other's summary and manifest.
         with capture_torch_trace(
             self.config.torch_profiler,
             step=self.state.step,
             device=self.device,
             worker_name="online_trainer",
+            trace_subdir=f"trainer/rank{self._strategy.context.rank}",
         ):
             batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
             return await self.train_on_collections(_one_collection(batch))
