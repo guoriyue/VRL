@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any) -> Any:
+def resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any) -> Any:
     """Project CLI inputs through the production model-build resolver.
 
     The explicit public precision policy owns parameter storage, autocast,
@@ -198,7 +198,7 @@ def main() -> None:
         if args.device is not None
         else ("cuda" if torch.cuda.is_available() else "cpu"),
     )
-    build = _resolve_probe_model_build(args, entry, device)
+    build = resolve_probe_model_build(args, entry, device)
     print(f"[probe] building {family} bundle from {args.path} ...")
     bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model

@@ -46,7 +46,7 @@ def test_probe_uses_existing_cosmos_lora_preset():
             str(preset),
         ]
     )
-    build = generate._resolve_probe_model_build(
+    build = generate.resolve_probe_model_build(
         args, get_model_family_entry("cosmos-predict2.5"), torch.device("cpu")
     )
     assert build.use_lora
@@ -70,7 +70,7 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
         ],
     )
 
-    build = generate._resolve_probe_model_build(
+    build = generate.resolve_probe_model_build(
         args,
         get_model_family_entry("sana"),
         torch.device("cpu"),
@@ -106,7 +106,7 @@ def test_probe_model_build_derives_quantization_from_role_precision(
         ],
     )
 
-    build = generate._resolve_probe_model_build(
+    build = generate.resolve_probe_model_build(
         args,
         get_model_family_entry("sana"),
         torch.device("cpu"),
