@@ -235,9 +235,14 @@ class TrainerProcessGroup(DefaultProcessGroup):
         if not context.distributed:
             return cls()
         backend = "nccl" if context.device.type == "cuda" else "gloo"
+        device_kwargs = {}
         if context.device.type == "cuda":
             # ``context.device`` is the CUDA ordinal inside this rank's masked view.
             torch.cuda.set_device(context.device)
+            # Binding the group to that device connects NCCL eagerly and lets
+            # device-mesh subgroups split from it; torch 2.15's torchcomms
+            # default requires a bound device.
+            device_kwargs["device_id"] = context.device
         # Symmetric runs keep torch's default timeout and its exact call shape;
         # only context-parallel runs lengthen it (see collective_timeout).
         timeout_kwargs = {"timeout": collective_timeout(context)} if context.cp_size > 1 else {}
@@ -246,6 +251,7 @@ class TrainerProcessGroup(DefaultProcessGroup):
             rank=context.rank,
             world_size=context.world_size,
             **timeout_kwargs,
+            **device_kwargs,
         )
         try:
             if backend == "nccl":

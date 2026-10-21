@@ -65,11 +65,21 @@ class EngineProcessGroup(DefaultProcessGroup):
 
     @classmethod
     def open(cls, config: ProcessGroupConfig) -> EngineProcessGroup:
+        device_kwargs = {}
+        if config.backend == "nccl":
+            import torch
+
+            # An nccl rank is a Ray actor granted one whole GPU, so its only
+            # visible card is the current device, the one its model is built
+            # on. Binding it connects NCCL eagerly; torch 2.15's torchcomms
+            # default requires a bound device.
+            device_kwargs["device_id"] = torch.device("cuda", torch.cuda.current_device())
         owner = cls._create(
             backend=config.backend,
             init_method=f"tcp://{config.master_addr}:{config.master_port}",
             rank=config.group_rank,
             world_size=config.group_world_size,
+            **device_kwargs,
         )
         logger.info(
             "rank process group up: backend=%s rank=%d/%d rendezvous=%s:%d",

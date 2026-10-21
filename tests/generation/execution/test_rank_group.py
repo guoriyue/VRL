@@ -105,6 +105,25 @@ def test_two_ranks_rendezvous_all_gather_and_leave() -> None:
     assert results == {0: [0, 1], 1: [0, 1]}
 
 
+@pytest.mark.parametrize(("backend", "bound_device"), [("nccl", "cuda:0"), ("gloo", None)])
+def test_only_an_nccl_engine_group_binds_the_rank_gpu(monkeypatch, backend, bound_device) -> None:
+    """A GPU rank sees its one card as the current device; gloo ranks bind none."""
+
+    import torch
+    import torch.distributed as dist
+
+    init_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(dist, "init_process_group", lambda **kwargs: init_calls.append(kwargs))
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+
+    EngineProcessGroup.open(ProcessGroupConfig("127.0.0.1", 29500, 1, 2, backend=backend))
+
+    assert init_calls[0].get("device_id") == (
+        None if bound_device is None else torch.device(bound_device)
+    )
+
+
 def test_spec_rejects_degenerate_and_out_of_range_shapes() -> None:
     with pytest.raises(ValueError, match="multi-rank"):
         ProcessGroupConfig("127.0.0.1", 29500, 0, 1)

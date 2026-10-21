@@ -686,7 +686,9 @@ def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) ->
     TrainerProcessGroup.open(context).shutdown()
 
     assert bound_devices == [torch.device("cuda:0")]
-    assert init_calls == [{"backend": "nccl", "rank": 3, "world_size": 4}]
+    assert init_calls == [
+        {"backend": "nccl", "rank": 3, "world_size": 4, "device_id": torch.device("cuda:0")}
+    ]
 
 
 # ── prepare_model family gate / build_strategy §10 gates (no process group) ──
