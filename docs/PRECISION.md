@@ -101,6 +101,13 @@ rollout batch 4 replayed as batch 1:
 | SD3.5 Medium (BF16) | max \|Δlogprob\| 1.1e-1, first divergence `context_embedder` | 3.7e-9 |
 | SANA 1600M (FP16) | 1.5e-3 | 7.5e-4; the remainder comes from cuBLAS and cuDNN kernel choice for the LoRA projections and the 1x1 `conv_point` |
 
+Attention backends are a separate source. Each SDPA backend is batch-invariant
+on its own, but flash, efficient and cuDNN attention reduce in different orders:
+on SD3.5 a flash rollout replayed with cuDNN or efficient attention reaches
+max |Δlogprob| 8.8e-2 on the last step. Ring context parallelism forces
+`_native_cudnn` on the trainer while an unsharded or Ulysses rollout lets SDPA
+pick, so such recipes cannot be held to bitwise replay parity.
+
 Denoise step time did not change: SD3.5 Medium 131 ms/step (batch 4, 512px) and
 309-310 ms/step (batch 2, 1024px); SANA 1600M 225 ms/step (batch 4, 1024px).
 
