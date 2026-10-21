@@ -286,6 +286,23 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
     assert out.shape == (2, 64, 4096)
 
 
+def test_fused_bias_reaches_the_output_of_an_fp32_layer():
+    """The bias rides the GEMM epilogue in the bf16 output dtype, also for an
+    fp32 master layer fed fp32 activations. CPU ``_scaled_mm`` runs the
+    tensorwise recipe, so this path is checked outside the GPU lane."""
+    torch.manual_seed(0)
+    lin = nn.Linear(256, 64)
+    with torch.no_grad():
+        lin.bias.copy_(torch.linspace(-8.0, 8.0, 64))  # dominates the GEMM term
+    fp8 = Fp8Linear(lin, recipe="tensorwise")
+    x = torch.randn(3, 5, 256)
+    out = fp8(x)
+    ref = lin(x)
+    assert out.dtype == torch.float32 and out.shape == (3, 5, 64)
+    rel = (out - ref).abs().mean() / ref.abs().mean()
+    assert rel < 0.03, f"fp8 output should carry the bias (drift {rel:.4f})"
+
+
 # --- FP8 rollout guards: no silent base-dtype fallback (CPU) ---------------------
 
 
