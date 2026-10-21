@@ -73,7 +73,9 @@ def test_cpu_offload_parking_releases_segment_pinned_by_blas_workspace():
         del x, y
         release_cuda_memory_for_parking()
         assert torch.cuda.memory_reserved() >= 2 * 1024**3
-        assert 0 < torch.cuda.memory_allocated() < 32 * 1024**2
+        # cuBLAS's workspace: about 8.5 MiB under torch 2.11, exactly 32 MiB
+        # under torch 2.13 on an RTX 5090.
+        assert 0 < torch.cuda.memory_allocated() <= 64 * 1024**2
         release_cuda_memory_for_parking(clear_blas_workspaces=True)
         assert torch.cuda.memory_allocated() == 0
         assert torch.cuda.memory_reserved() == 0
