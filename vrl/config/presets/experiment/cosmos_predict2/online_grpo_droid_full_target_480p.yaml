@@ -29,10 +29,10 @@ model:
   # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   revision: null
-  # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
-  # torch.utils.checkpoint into an InternalTorchDynamoError — see activation_checkpointing.py),
-  # and at 480p_93f full-param we NEED grad-ckpt for memory, so we take the eager+checkpointing
-  # branch and forgo compile's ~1.25x. predict2_2b defaults torch_compile.enable=true.
+  # Compile OFF: at 480p_93f full-param we NEED grad-ckpt for memory. Compile with full
+  # checkpointing is allowed since 2026-10-20 (validation.compile_conflicts) but is
+  # unmeasured for this recipe, so it keeps the measured eager+checkpointing branch.
+  # predict2_2b defaults torch_compile.enable=true.
   torch_compile:
     enable: false
 

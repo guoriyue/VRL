@@ -162,7 +162,7 @@ def test_compile_off_never_conflicts() -> None:
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        ({"actor": {"gradient_checkpointing": True}}, "gradient_checkpointing"),
+        ({"actor": {"gradient_checkpointing": "selective"}}, "gradient_checkpointing"),
         ({"distributed": {"training": {"strategy": "fsdp"}}}, "strategy=fsdp"),
         (
             {"distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}}},
@@ -179,6 +179,16 @@ def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -
     assert expected in conflicts[0].message
 
 
+def test_full_checkpointing_compiles_with_the_replay_policy() -> None:
+    # Measured on torch 2.11: full checkpointing ran replay forward+backward
+    # under regional and root compile (SD3.5, Cosmos-Predict2.5, Wan2.1).
+    from vrl.config.validation import compile_conflicts
+
+    cfg = _compile_cfg(actor={"gradient_checkpointing": "full"})
+
+    assert compile_conflicts(parse_config(cfg)) == ()
+
+
 def test_several_conflicts_are_reported_together() -> None:
     """One pass over the matrix, not fail-on-first: the user sees all of them."""
     from vrl.config.validation import compile_conflicts
@@ -186,7 +196,7 @@ def test_several_conflicts_are_reported_together() -> None:
     conflicts = compile_conflicts(
         parse_config(
             _compile_cfg(
-                actor={"gradient_checkpointing": True},
+                actor={"gradient_checkpointing": "selective"},
                 distributed={
                     "training": {"strategy": "fsdp"},
                     "resources": {"rollout": {"gpus_per_engine": 2}},
@@ -205,7 +215,7 @@ def test_compile_gate_raises_with_every_reason() -> None:
         require_training_config(
             _compile_cfg(
                 precision={"float32_precision": "tf32", "training": {"dtype": "bf16"}},
-                actor={"gradient_checkpointing": True},
+                actor={"gradient_checkpointing": "selective"},
                 distributed={"training": {"strategy": "fsdp"}},
             ),
         )
@@ -230,7 +240,7 @@ def test_rollout_scope_releases_trainer_conflicts() -> None:
 
     cfg = _scoped_compile_cfg(
         "rollout",
-        actor={"gradient_checkpointing": True},
+        actor={"gradient_checkpointing": "selective"},
         distributed={"training": {"strategy": "fsdp"}},
     )
 
@@ -265,7 +275,7 @@ def test_replay_scope_releases_rollout_conflicts() -> None:
 def test_replay_scope_keeps_trainer_conflicts() -> None:
     from vrl.config.validation import compile_conflicts
 
-    cfg = _scoped_compile_cfg("replay", actor={"gradient_checkpointing": True})
+    cfg = _scoped_compile_cfg("replay", actor={"gradient_checkpointing": "selective"})
 
     conflicts = compile_conflicts(parse_config(cfg))
     assert len(conflicts) == 1

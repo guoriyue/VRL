@@ -86,12 +86,6 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
     mode = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
     if mode == "off":
         return
-    from vrl.config.validation import compile_conflicts
-
-    for conflict in compile_conflicts(root):
-        if conflict.feature == "gradient_checkpointing":
-            raise ValueError(conflict.message)
-
     for name, module in bundle.trainable_modules.items():
         enable = getattr(module, "enable_gradient_checkpointing", None)
         if enable is None:

@@ -23,8 +23,9 @@ model:
   use_lora: true
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   revision: null
-  # Eager: robust for an unattended overnight run. compile needs gradient_checkpointing
-  # off (mutually exclusive), and compile-alone OOMs at 480p activations -- so eager.
+  # Eager: robust for an unattended overnight run; compile-alone OOMs at 480p
+  # activations. Compile with full checkpointing is allowed since 2026-10-20
+  # but is unmeasured for this recipe.
   torch_compile: {enable: false}
   lora:
     rank: 32

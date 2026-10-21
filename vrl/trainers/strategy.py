@@ -968,8 +968,8 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     """Construct the training strategy named by the resolved context.
 
     The single dispatch point from config/context to a concrete strategy.
-    ``fsdp`` reads its FSDP2 knobs from ``distributed.training.fsdp`` and runs the
-    replay-compile compatibility check before constructing ``FSDPStrategy``.
+    ``fsdp`` reads its FSDP2 knobs from ``distributed.training.fsdp``; config
+    load (``compile_conflicts``) already refused a compiled FSDP2 replay.
     """
 
     from vrl.config.schema import TrainingSection
@@ -990,23 +990,11 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     if configured_strategy == "single_process":
         return SingleProcessStrategy(context, offload=offload)
     if configured_strategy == "fsdp":
-        from vrl.models.interfaces.runtime import torch_compile_for_role
-
         if offload is not None:
             raise NotImplementedError(
                 "distributed.training.strategy=fsdp cannot stream roots under "
                 "actor.offload: FSDP2 shards the blocks it would stream; use "
                 "distributed.training.fsdp.cpu_offload instead.",
-            )
-
-        compile_block = config.model.torch_compile if config.model is not None else None
-        if torch_compile_for_role(compile_block, "replay"):
-            raise NotImplementedError(
-                "distributed.training.strategy=fsdp cannot compile the replay policy: "
-                "torch.compile (inductor graph capture) is unsound with FSDP2 "
-                "fully_shard's reshard-after-forward all-gathers. Set "
-                "model.torch_compile.enable=false, or model.torch_compile.scope=rollout "
-                "to keep the FSDP2 replay policy eager while the rollout policy compiles.",
             )
         if training.fsdp is None:
             raise AssertionError("typed fsdp config was not resolved")

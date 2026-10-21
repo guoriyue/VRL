@@ -124,33 +124,6 @@ def test_selective_gradient_checkpointing_reports_legacy_full_fallback(
     assert "falling back to full checkpointing" in caplog.text
 
 
-def test_checkpointing_rejects_replay_compile_but_accepts_rollout_scope() -> None:
-    """The collision is with compiling the REPLAY policy; a rollout-scoped
-    compile leaves the checkpointed trainer eager and must pass."""
-
-    def _cfg(compile_block: dict):
-        # The check reads the compile matrix off a parsed root, as the runtime
-        # apply path hands it one.
-        return parse_config(
-            OmegaConf.create(
-                {
-                    "actor": {"gradient_checkpointing": "full"},
-                    "model": {"family": "sd3_5", "torch_compile": compile_block},
-                },
-            )
-        )
-
-    with pytest.raises(ValueError, match="gradient_checkpointing"):
-        enable_transformer_gradient_checkpointing(None, _cfg({"enable": True}))
-
-    module = SimpleNamespace(enable_gradient_checkpointing=lambda: None)
-    bundle = SimpleNamespace(trainable_modules={"transformer": module})
-    enable_transformer_gradient_checkpointing(
-        bundle,
-        _cfg({"enable": True, "scope": "rollout"}),
-    )
-
-
 def test_selective_checkpointing_preserves_errors_inside_supported_method() -> None:
     calls: list[object] = []
 

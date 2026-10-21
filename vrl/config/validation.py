@@ -95,35 +95,40 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
             )
         )
 
-    # torch.compile traces torch.utils.checkpoint into an InternalTorchDynamoError
-    # (measured for full and selective alike), and inductor's min-cut partitioner
-    # already does automatic selective recompute.
+    # Full activation checkpointing composes with torch.compile: measured with
+    # replay forward+backward on torch 2.11 for SD3.5 Medium (regional and root
+    # compile, with and without single-rank FSDP2), Cosmos-Predict2.5 2B
+    # (regional and root) and Wan2.1 1.3B (regional). Selective checkpointing
+    # does not: dynamo cannot trace its context_fn ("checkpoint not implemented
+    # for NestedUserFunctionVariable context_fn", Wan2.1 1.3B regional), and
+    # the CPU-offload variant was never measured with compile.
     checkpointing = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
-    if compiles_replay and checkpointing != "off":
+    if compiles_replay and checkpointing in ("selective", "full_cpu"):
         conflicts.append(
             CompileConflict(
                 "gradient_checkpointing",
-                f"actor.gradient_checkpointing={checkpointing!r}: torch.compile traces "
-                "torch.utils.checkpoint into an InternalTorchDynamoError, and its "
-                "min-cut partitioner already does automatic selective recompute. Pick "
-                "one — compile alone (preferred when it fits memory), eager + "
-                "checkpointing, or model.torch_compile.scope=rollout to keep the "
-                "trainer eager while the rollout policy compiles.",
+                f"actor.gradient_checkpointing={checkpointing!r}: torch.compile cannot "
+                "trace selective checkpointing's context_fn (InternalTorchDynamoError on "
+                "Wan2.1), and full_cpu is unmeasured with compile. Use full "
+                "checkpointing with compile, eager + this mode, or "
+                "model.torch_compile.scope=rollout to keep the trainer eager while the "
+                "rollout policy compiles.",
             )
         )
 
     distributed = root.distributed
     training = None if distributed is None else distributed.training
     strategy = "single_process" if training is None else str(training.strategy)
-    # Inductor graph capture is unsound with FSDP2's reshard-after-forward
-    # all-gathers. Previously only caught when the strategy was built, which is
-    # after config load, so a bad recipe surfaced later than it needed to.
+    # Regional and root compile with FSDP2 replay ran forward+backward on a
+    # single rank (SD3.5 Medium, torch 2.11, both wrap orders), but no
+    # multi-rank run has checked the compiled graphs against FSDP2's
+    # reshard-after-forward all-gathers yet, so the combination stays refused.
     if compiles_replay and strategy == "fsdp":
         conflicts.append(
             CompileConflict(
                 "fsdp",
-                "distributed.training.strategy=fsdp: torch.compile (inductor graph "
-                "capture) is unsound with FSDP2 fully_shard's reshard-after-forward "
+                "distributed.training.strategy=fsdp: compiling the FSDP2 replay policy "
+                "is verified on one rank only, not across ranks' reshard-after-forward "
                 "all-gathers. model.torch_compile.scope=rollout keeps the FSDP2 "
                 "replay policy eager while the rollout policy compiles.",
             )

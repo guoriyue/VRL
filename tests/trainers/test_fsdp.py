@@ -812,19 +812,6 @@ def test_fsdp_shutdown_leaves_the_process_group_to_the_process(monkeypatch) -> N
     assert destroyed == []
 
 
-def test_build_strategy_fsdp_rejects_train_compile() -> None:
-    # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers;
-    # the build_strategy §10 gate must reject it.
-    with pytest.raises(NotImplementedError, match="torch_compile"):
-        build_strategy(
-            _strategy_config(
-                "fsdp",
-                model={"torch_compile": {"enable": True}},
-            ),
-            _cpu_fsdp_context(),
-        )
-
-
 def test_build_strategy_fsdp_accepts_rollout_scoped_compile() -> None:
     # scope=rollout keeps the FSDP2 replay policy eager, so the §10 gate must
     # not fire: only a compile that binds the replay role is unsound here.
