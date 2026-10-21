@@ -183,6 +183,13 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
     ) -> None:
         super().__init__(gatherer=gatherer)
         self.model = model
+        # The last prompt's conditioning. Every encode hook reads only the
+        # request's sampling/denoise options and the batch's prompt input, and a
+        # request's batches come prompt by prompt, so the batches of one prompt
+        # (generation batch smaller than the group) encode it once. The key spells
+        # out those inputs, not just the request id: a caller may reuse one
+        # request object with new inputs.
+        self._encoded_prompt: tuple[tuple[Any, ...], dict[str, Any]] | None = None
 
     # -- protocol ------------------------------------------------------
 
@@ -278,12 +285,25 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         params = self.parse_sampling_params(request)
 
         started = time.perf_counter()
-        with profile_range("generation.prompt_encode"):
-            encoded = self.encode_prompt_for_batch(
-                generation_request=request,
-                params=params,
-                batch=batch,
-            )
+        key = (
+            str(request.request_id),
+            batch.prompt_index,
+            repr(request.inputs[batch.prompt_index]),
+            repr(request.sampling),
+            repr(request.denoise),
+        )
+        if self._encoded_prompt is None or self._encoded_prompt[0] != key:
+            with profile_range("generation.prompt_encode"):
+                self._encoded_prompt = (
+                    key,
+                    self.encode_prompt_for_batch(
+                        generation_request=request,
+                        params=params,
+                        batch=batch,
+                    ),
+                )
+        # A shallow copy: downstream hooks may add keys, never rewrite tensors.
+        encoded = dict(self._encoded_prompt[1])
         stage_durations["encode"] = time.perf_counter() - started
 
         started = time.perf_counter()
