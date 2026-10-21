@@ -542,14 +542,12 @@ class FSDPStrategy(TrainerParking):
                 # parameters for DTensors but leaves these references intact.
                 sources[name] = dict(handle.state_dict()) if self.context.is_primary else {}
 
-        prepared_handles: list[tuple[str, nn.Module, Any, torch.dtype]] = []
-        for name, handle, writer in handles:
+        for name, handle, _writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
             if self._shard_trainable_only:
                 dtypes = {p.dtype for p in handle.parameters() if p.requires_grad}
                 if len(dtypes) != 1:
                     raise ValueError("trainable-only FSDP requires one trainable parameter dtype")
-                parameter_dtype = next(iter(dtypes))
             else:
                 if self._precision_policy == "none":
                     # A leading frozen FP32 norm does not determine the LoRA
@@ -574,7 +572,6 @@ class FSDPStrategy(TrainerParking):
                     parameter_dtype,
                     allow_cast=self._precision_policy == "actor",
                 )
-            prepared_handles.append((name, handle, writer, parameter_dtype))
         if self.context_parallel:
             from vrl.trainers.context_parallel import enable_context_parallel
             from vrl.trainers.fsdp import build_context_parallel_mesh, unwrap_module
@@ -585,14 +582,14 @@ class FSDPStrategy(TrainerParking):
                 ulysses_degree=self._ulysses_degree,
                 ring_degree=self._ring_degree,
             )
-            for _name, handle, _writer, _dtype in prepared_handles:
+            for _name, handle, _writer in handles:
                 enable_context_parallel(
                     unwrap_module(handle),
                     mesh=cp_mesh,
                     ulysses_degree=self._ulysses_degree,
                     ring_degree=self._ring_degree,
                 )
-        for name, handle, writer, parameter_dtype in prepared_handles:
+        for name, handle, writer in handles:
             if self._shard_trainable_only and not any(p.is_meta for p in handle.parameters()):
                 # fully_shard does not place ignored frozen parameters. The
                 # replay loader may have staged the entire transformer on CPU.
@@ -602,10 +599,7 @@ class FSDPStrategy(TrainerParking):
             wrapped = apply_fsdp(
                 handle,
                 mesh=mesh,
-                mp_policy=mixed_precision_policy(
-                    self._precision_policy,
-                    parameter_dtype=parameter_dtype,
-                ),
+                mp_policy=mixed_precision_policy(self._precision_policy),
                 reshard_after_forward=self._reshard_after_forward,
                 cpu_offload=self._cpu_offload,
                 ignored_params=(

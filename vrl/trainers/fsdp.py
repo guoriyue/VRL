@@ -82,31 +82,27 @@ def build_context_parallel_mesh(
     )
 
 
-def mixed_precision_policy(
-    name: str,
-    *,
-    parameter_dtype: torch.dtype | None = None,
-) -> Any:
+def mixed_precision_policy(name: str) -> Any:
     """Map the config knob to an FSDP2 ``MixedPrecisionPolicy``.
 
-    ``actor`` keeps the model builder's resolved parameter dtype and performs
-    gradient reduction in fp32. FSDP must not introduce a second parameter-dtype
-    owner: most families follow top-level precision, while SANA deliberately
-    stores native fp16 parameters with outer autocast disabled. ``none`` leaves
-    both parameters and reduction in their native dtype.
+    Neither policy casts parameters or forward inputs for compute: an FSDP
+    replay computes in exactly the dtypes single-process replay does.
+    ``normalize_fsdp_parameter_dtype`` has already given ``actor`` one trainable
+    storage dtype (the model builder's), while frozen parameters keep theirs,
+    such as the FP32 norms and modulation tables diffusers pins under a BF16
+    model (Wan, SANA). Casting those pins for compute moved Wan2.1's FSDP replay
+    4.8e-3 off its rollout log-prob. ``actor`` reduces gradients in fp32;
+    ``none`` reduces in the native dtype. No input cast either: each family's
+    forward owns its input dtypes (SANA keeps its timestep in fp32 under fp16
+    parameters).
     """
 
     from torch.distributed.fsdp import MixedPrecisionPolicy
 
     if name == "none":
-        return MixedPrecisionPolicy()
+        return MixedPrecisionPolicy(cast_forward_inputs=False)
     if name == "actor":
-        if parameter_dtype is None:
-            raise ValueError("FSDP actor precision requires the resolved parameter dtype")
-        return MixedPrecisionPolicy(
-            param_dtype=parameter_dtype,
-            reduce_dtype=torch.float32,
-        )
+        return MixedPrecisionPolicy(reduce_dtype=torch.float32, cast_forward_inputs=False)
     raise ValueError(
         f"distributed.training.fsdp.precision_policy must be 'actor' or 'none', got {name!r}",
     )
@@ -188,23 +184,18 @@ def apply_fsdp(
     parameters are DTensors sharded over ``mesh``; its ``forward`` is unchanged.
     """
 
-    from dataclasses import replace
-
     from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
 
     offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
     if ignored_params is not None:
         offload_kwargs["ignored_params"] = ignored_params
 
-    # Only the root module casts forward inputs to the compute dtype; inner blocks
-    # receive already-cast activations, so re-casting them is wasted work.
-    block_mp_policy = replace(mp_policy, cast_forward_inputs=False)
     base = unwrap_module(handle)
     for block in iter_blocks(base):
         fully_shard(
             block,
             mesh=mesh,
-            mp_policy=block_mp_policy,
+            mp_policy=mp_policy,
             reshard_after_forward=reshard_after_forward,
             **offload_kwargs,
         )
@@ -622,10 +613,11 @@ def normalize_fsdp_parameter_dtype(
     frozen floating parameters to retain their own storage dtype.
     Diffusers deliberately leaves a small set of normalization/conditioning
     parameters in FP32 even when the resolved model dtype is BF16. The actor
-    policy stores all model parameters in its resolved low precision and relies
-    on the FP32-master optimizer for update precision, so normalize those source
-    tensors before sharding. A ``none`` policy preserves frozen floating
-    parameters and rejects mismatched trainable dtypes instead of casting them.
+    policy stores every trainable parameter in its resolved low precision and
+    relies on the FP32-master optimizer for update precision, so it casts
+    mismatched trainable tensors before sharding. A ``none`` policy rejects them
+    instead. Both keep frozen floating parameters as loaded, so a LoRA replay
+    computes its pinned FP32 modules in FP32, as single-process replay does.
     """
 
     if not target_dtype.is_floating_point:
@@ -634,7 +626,7 @@ def normalize_fsdp_parameter_dtype(
         (name, parameter)
         for name, parameter in module.named_parameters()
         if parameter.dtype != target_dtype
-        and (allow_cast or parameter.requires_grad or not parameter.is_floating_point())
+        and (parameter.requires_grad or not parameter.is_floating_point())
     ]
     if not mismatched:
         return

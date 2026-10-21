@@ -14,7 +14,7 @@ the build_strategy §10 gates need no process group and run unconditionally.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import torch
@@ -156,15 +156,13 @@ def test_iter_blocks_fails_without_no_split_modules() -> None:
         list(iter_blocks(net))
 
 
-def test_mixed_precision_policy_actor_uses_resolved_params_fp32_reduce() -> None:
-    policy = mixed_precision_policy("actor", parameter_dtype=torch.float16)
-    assert policy.param_dtype == torch.float16
+def test_mixed_precision_policy_actor_reduces_in_fp32_without_compute_casts() -> None:
+    # Compute stays in the stored dtypes (frozen FP32 pins included), as in
+    # single-process replay; only the gradient reduction is promoted.
+    policy = mixed_precision_policy("actor")
+    assert policy.param_dtype is None
     assert policy.reduce_dtype == torch.float32
-
-
-def test_mixed_precision_policy_actor_requires_resolved_parameter_dtype() -> None:
-    with pytest.raises(ValueError, match="resolved parameter dtype"):
-        mixed_precision_policy("actor")
+    assert not policy.cast_forward_inputs
 
 
 def test_mixed_precision_policy_rejects_unknown() -> None:
@@ -177,25 +175,34 @@ def test_trainable_only_fsdp_requires_native_precision() -> None:
         _fsdp_strategy(_cpu_fsdp_context(), shard_trainable_only=True)
 
 
-def test_apply_fsdp_casts_only_root_forward_inputs(monkeypatch) -> None:
-    import torch.distributed.fsdp as torch_fsdp
+def test_apply_fsdp_leaves_forward_input_dtypes_to_the_model(cpu_process_group) -> None:
+    # SANA keeps its timestep in fp32 under fp16 parameters. Single-process
+    # replay never casts forward inputs, so FSDP must not either: a root cast
+    # moved SANA's FSDP replay 2.4e-3 off its rollout log-prob.
+    class TimestepDiT(nn.Module):
+        _no_split_modules: ClassVar[list[str]] = ["ToyBlock"]
 
-    calls: list[tuple[nn.Module, object]] = []
+        def __init__(self) -> None:
+            super().__init__()
+            self.blocks = nn.ModuleList([ToyBlock()])
+            self.timestep_dtypes: list[torch.dtype] = []
 
-    def record_fully_shard(module, **kwargs):
-        calls.append((module, kwargs["mp_policy"]))
-        return module
+        def forward(self, x: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+            self.timestep_dtypes.append(timestep.dtype)
+            for block in self.blocks:
+                x = block(x)
+            return x
 
-    monkeypatch.setattr(torch_fsdp, "fully_shard", record_fully_shard)
-    policy = mixed_precision_policy("actor", parameter_dtype=torch.bfloat16)
-    net = ToyTransformer()
+    net = TimestepDiT().to(torch.bfloat16)
+    apply_fsdp(
+        net,
+        mesh=build_fsdp_mesh(_cpu_fsdp_context()),
+        mp_policy=mixed_precision_policy("actor"),
+    )
 
-    apply_fsdp(net, mesh=object(), mp_policy=policy)
+    net(torch.randn(3, 4, dtype=torch.bfloat16), torch.tensor([500.0]))
 
-    assert len(calls) == 3
-    assert all(not call_policy.cast_forward_inputs for _, call_policy in calls[:-1])
-    assert calls[-1] == (net, policy)
-    assert calls[-1][1].cast_forward_inputs
+    assert net.timestep_dtypes == [torch.float32]
 
 
 def test_normalize_fsdp_parameter_dtype_casts_mixed_actor_sources(caplog) -> None:
@@ -225,7 +232,8 @@ def test_normalize_fsdp_parameter_dtype_rejects_mixed_native_policy() -> None:
         )
 
 
-def test_native_fsdp_preserves_frozen_float32_parameters() -> None:
+@pytest.mark.parametrize("allow_cast", [False, True], ids=["none", "actor"])
+def test_fsdp_normalization_preserves_frozen_float32_parameters(allow_cast: bool) -> None:
     net = ToyTransformer().to(dtype=torch.bfloat16)
     net.head.to(dtype=torch.float32).requires_grad_(False)
     with torch.no_grad():
@@ -234,7 +242,7 @@ def test_native_fsdp_preserves_frozen_float32_parameters() -> None:
     before = [parameter.detach().clone() for parameter in net.head.parameters()]
     pointers = [parameter.data_ptr() for parameter in net.head.parameters()]
 
-    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=False)
+    normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=allow_cast)
 
     assert {p.dtype for p in net.parameters() if p.requires_grad} == {torch.bfloat16}
     for parameter, expected, pointer in zip(net.head.parameters(), before, pointers, strict=True):
