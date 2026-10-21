@@ -78,6 +78,10 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
    - 默认设置（True）下，K=5600 这类长 K 的 down-proj 有 batch 依赖：同一个样本在 B=1 和 B≥2 时结果不同，bf16 下 max|Δ| 约 3e-2，fp16 下约 4e-3，误差也更大。
    - 设为 False 后，在 tok 256/1024/4096、K 2240/5600 的所有组合上，B=1–32 都逐位一致，误差还更小。速度只有 tok=256、K=5600 这一档慢约 16%，其余持平。
    - 同条件下，SDPA（flash/efficient/cudnn 三种后端）各自都与 batch 无关；layer_norm 和 rms_norm 也与 batch 无关。但**不同后端之间**，bf16 差约 1e-3，就是 R2。
+   - FP8 rowwise（`fp8.py` 的做法）同条件下与 batch 无关，`use_fast_accum` 开关结果完全相同。总误差 3.7e-2 几乎全部来自量化，累加误差只有 1.7e-3。所以 FP8 rollout 要改善的是量化本身（T3 four-over-six、两侧同一套 recipe），而不是归约。
+     - 一个小改进：bias 现在是在 GEMM 输出 bf16 之后才加（`fp8.py:114-115`），改用 `_scaled_mm(bias=...)` 在 kernel 内融合，相对误差从 2.34e-3 降到 1.66e-3。`use_fast_accum` 保持默认的 False。
+     - 测不到的部分：Hopper 的 FP8 tensor core 累加只保留约 14 位尾数（DeepSeek-V3 每 128 个元素提升一次到 fp32）。如果将来在 H100 上跑 FP8 rollout，需要单独测。
+   - R4 已经顺带测了：logprob 式的 fp32 `.mean` 相对 fp64 的误差约 1e-7，随 batch 的变化约 1.2e-7，不是逐位一致，但远低于 1e-6。P0.4 只需要在真实的 `sde_step_with_logprob` 上复核一次；P1 里"换成固定顺序"那一条，只有追求逐位一致时才做。
    - 做法：在 `apply_float32_precision`（`vrl/models/precision.py:35`）旁边，同一个 owner 里设置 `allow_bf16/fp16_reduced_precision_reduction=False`，`trace.py:155` 已经在记录这个状态。然后在 gen batch ≠ replay batch 下跑一次 `full_sequence_probe --check-replay`。上线前要在 L4、L40S 上复测，cuBLAS 的启发式随架构变化。
 1. 再在 P0 的探针里手动开启：`batch_invariant_ops`、`allow_tf32=False`、`allow_bf16_reduced_precision_reduction=False`，同时固定 SDPA 后端。compile 打开的那一组，再加上 `torch._inductor.config.deterministic=True`（2.11 已有），必要时再加 `split_reductions=False`。
    - 逐项打开，每打开一项记一次 |Δlogprob|，得到"每个归约来源各贡献多少"的表，不只给全开时的最终结论。
