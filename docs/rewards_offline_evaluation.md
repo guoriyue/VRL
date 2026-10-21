@@ -199,7 +199,7 @@ asset identities. It retains failed/missing pairs without assigning zero deltas.
 Positive deltas mean numerically larger scores; error axes can have the opposite
 quality direction. A score increase under noise is a case to inspect, not automatic
 proof of reward hacking. These perturbations are not human annotations and never
-enter preference calibration as invented labels.
+serve as labels for `agreement`.
 
 The perturbation recipe lives in `reward.stress`; the report is
 `Analysis.stress`. The trainer, reward scalar aggregation, model adapter shapes
