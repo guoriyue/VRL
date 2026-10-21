@@ -962,8 +962,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
     """Construct the training strategy named by the resolved context.
 
     The single dispatch point from config/context to a concrete strategy.
-    ``fsdp`` reads its FSDP2 knobs from ``distributed.training.fsdp``; config
-    load (``compile_conflicts``) already refused a compiled FSDP2 replay.
+    ``fsdp`` reads its FSDP2 knobs from ``distributed.training.fsdp``.
     """
 
     from vrl.config.schema import TrainingSection

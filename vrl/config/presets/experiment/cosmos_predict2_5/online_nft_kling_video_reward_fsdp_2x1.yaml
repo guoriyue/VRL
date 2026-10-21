@@ -39,8 +39,6 @@
 # own GPU. NCCL needs the two servers to reach each other on --master_port and the
 # NCCL ports (set NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME if multi-homed).
 #
-# FSDP-specific constraint (fails fast at build_strategy):
-#   - model.torch_compile.enable=true (unsound with reshard-after-forward all-gathers)
 defaults:
   - /experiment/cosmos_predict2_5/online_nft_kling_video_reward
 
@@ -65,9 +63,7 @@ distributed:
   # (trainer) GPU: 2 GPUs total, no spare card. Same as the DDP variant.
 
 model:
-  # Compiling the FSDP2 replay policy is refused at config load (verified on one
-  # rank only, not across ranks' reshard-after-forward all-gathers).
-  # Set it false in the config so the run is self-contained (the DDP variant passed
-  # this as a launch override; FSDP requires it off).
+  # Eager: a compiled FSDP2 replay is allowed (validation.compile_conflicts) but
+  # unmeasured for this recipe on GPUs, so it keeps the measured eager branch.
   torch_compile:
     enable: false

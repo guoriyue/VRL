@@ -88,8 +88,9 @@ model:
   local_files_only: true
   torch_compile:
     enable: true
-    # Rollout only: the FSDP2 trainer runs eager + gradient checkpointing,
-    # both of which inductor refuses. Measured 446s -> 324s per 4-video group.
+    # Rollout only, measured 446s -> 324s per 4-video group. Compiling the
+    # FSDP2 replay with full checkpointing is allowed but unmeasured at this
+    # geometry, so the trainer keeps its measured eager branch.
     scope: rollout
     mode: default
 

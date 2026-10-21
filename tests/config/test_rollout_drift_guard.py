@@ -123,7 +123,7 @@ def test_explicit_expert_block_is_honored() -> None:
 #
 # One home for every torch.compile incompatibility. Each was discovered
 # separately and used to live somewhere different -- grad-checkpointing in the
-# trainer, FSDP2 in the strategy builder, sequence parallelism nowhere at all --
+# trainer, sequence parallelism nowhere at all --
 # so adding the next one meant first finding the others.
 
 
@@ -163,7 +163,6 @@ def test_compile_off_never_conflicts() -> None:
     ("overrides", "expected"),
     [
         ({"actor": {"gradient_checkpointing": "selective"}}, "gradient_checkpointing"),
-        ({"distributed": {"training": {"strategy": "fsdp"}}}, "strategy=fsdp"),
         (
             {"distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}}},
             "gpus_per_engine=2",
@@ -179,12 +178,17 @@ def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -
     assert expected in conflicts[0].message
 
 
-def test_full_checkpointing_compiles_with_the_replay_policy() -> None:
+def test_full_checkpointing_and_fsdp_compile_with_the_replay_policy() -> None:
     # Measured on torch 2.11: full checkpointing ran replay forward+backward
-    # under regional and root compile (SD3.5, Cosmos-Predict2.5, Wan2.1).
+    # under regional and root compile (SD3.5, Cosmos-Predict2.5, Wan2.1), and
+    # a compiled FSDP2 replay trains like the unsharded compiled module
+    # (tests/trainers/test_fsdp_compile_distributed.py).
     from vrl.config.validation import compile_conflicts
 
-    cfg = _compile_cfg(actor={"gradient_checkpointing": "full"})
+    cfg = _compile_cfg(
+        actor={"gradient_checkpointing": "full"},
+        distributed={"training": {"strategy": "fsdp"}},
+    )
 
     assert compile_conflicts(parse_config(cfg)) == ()
 
@@ -197,15 +201,12 @@ def test_several_conflicts_are_reported_together() -> None:
         parse_config(
             _compile_cfg(
                 actor={"gradient_checkpointing": "selective"},
-                distributed={
-                    "training": {"strategy": "fsdp"},
-                    "resources": {"rollout": {"gpus_per_engine": 2}},
-                },
+                distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
             )
         ),
     )
 
-    assert len(conflicts) == 3
+    assert len(conflicts) == 2
 
 
 def test_compile_gate_raises_with_every_reason() -> None:
@@ -216,17 +217,17 @@ def test_compile_gate_raises_with_every_reason() -> None:
             _compile_cfg(
                 precision={"float32_precision": "tf32", "training": {"dtype": "bf16"}},
                 actor={"gradient_checkpointing": "selective"},
-                distributed={"training": {"strategy": "fsdp"}},
+                distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
             ),
         )
     message = str(excinfo.value)
     assert "gradient_checkpointing" in message
-    assert "strategy=fsdp" in message
+    assert "gpus_per_engine=2" in message
 
 
 # Every conflict in the matrix binds one build role, so ``scope`` releases the
 # conflicts of the role it excludes -- and ONLY those. The rollout-scope case is
-# the production unlock: FSDP2 + checkpointing trainers with a compiled rollout.
+# the production unlock: selective-checkpointing trainers with a compiled rollout.
 
 
 def _scoped_compile_cfg(scope: str, **overrides) -> OmegaConf:
@@ -238,11 +239,7 @@ def _scoped_compile_cfg(scope: str, **overrides) -> OmegaConf:
 def test_rollout_scope_releases_trainer_conflicts() -> None:
     from vrl.config.validation import compile_conflicts
 
-    cfg = _scoped_compile_cfg(
-        "rollout",
-        actor={"gradient_checkpointing": "selective"},
-        distributed={"training": {"strategy": "fsdp"}},
-    )
+    cfg = _scoped_compile_cfg("rollout", actor={"gradient_checkpointing": "selective"})
 
     assert compile_conflicts(parse_config(cfg)) == ()
 

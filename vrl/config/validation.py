@@ -58,8 +58,8 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
 
     ONE home for the compile compatibility matrix. Each of these was discovered
     separately and used to be enforced somewhere different — grad-checkpointing
-    in the trainer, FSDP2 in the strategy builder, sequence parallelism nowhere
-    at all — so adding the fifth meant first finding the other four. They are
+    in the trainer, sequence parallelism nowhere at all — so adding the next
+    one meant first finding the others. They are
     all decided by config keys, so config load is where they belong: a
     combination that can never run should fail before a GPU is touched.
 
@@ -116,23 +116,12 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
             )
         )
 
+    # FSDP2 replay is not a conflict. On two Gloo ranks a tiny SD3 transformer
+    # compiled regionally or at the root, with full checkpointing, then
+    # sharded with reshard-after-forward, trains like the same compiled module
+    # unsharded (tests/trainers/test_fsdp_compile_distributed.py): FSDP2's
+    # all-gather and reduce-scatter hooks run outside the compiled graphs.
     distributed = root.distributed
-    training = None if distributed is None else distributed.training
-    strategy = "single_process" if training is None else str(training.strategy)
-    # Regional and root compile with FSDP2 replay ran forward+backward on a
-    # single rank (SD3.5 Medium, torch 2.11, both wrap orders), but no
-    # multi-rank run has checked the compiled graphs against FSDP2's
-    # reshard-after-forward all-gathers yet, so the combination stays refused.
-    if compiles_replay and strategy == "fsdp":
-        conflicts.append(
-            CompileConflict(
-                "fsdp",
-                "distributed.training.strategy=fsdp: compiling the FSDP2 replay policy "
-                "is verified on one rank only, not across ranks' reshard-after-forward "
-                "all-gathers. model.torch_compile.scope=rollout keeps the FSDP2 "
-                "replay policy eager while the rollout policy compiles.",
-            )
-        )
 
     # Sequence parallelism is installed by the rollout WORKER, after the family
     # builder has already compiled the policy core: the installer swaps every

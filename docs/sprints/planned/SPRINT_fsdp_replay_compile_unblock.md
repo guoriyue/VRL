@@ -100,6 +100,18 @@ SD3.5 Medium，batch 2，512px：
 - 删掉了 `enable_transformer_gradient_checkpointing` 和 `build_strategy` 里重复的运行时检查。所有入口都经过 `BuiltConfigs.from_cfg` → `require_training_config`，配置加载时就会拒绝。
 - 两个 Cosmos preset 里过时的注释已更新。
 
+### 多 rank 验证与放开 compile × FSDP（2026-10-21）
+单卡机器上用两个 Gloo rank 在 CPU 上验证。上面那条保留理由说的是：多 rank 下 reshard-after-forward 的 all-gather 和编译图配合还没测过。这里测的就是这一点：
+- 对象：tiny diffusers SD3 transformer（3 层）；按 online 的构建顺序（compile → full AC → `FSDPStrategy.prepare_model`，reshard_after_forward=True）；每个 rank 用 batch 的一半，跑 4 步 AdamW。
+- 参照：单进程、不分片、同一种 compile 的模块用整个 batch 训练。
+- 结果：与参照的最大差异，第一步梯度 1.5–2.6e-8（梯度量级 0.10），4 步后参数 1.8–6.0e-7。eager、regional、root、regional+AC、root+AC 五种在同一个噪声水平，分片没有引入额外误差。
+- 编译确实生效：rank 0 上 regional 有 2 张图，root 有 5 张，加 AC 后都是 3 张。root+AC 在 checkpoint 的 `disable` 处有 1 个 graph break，只影响速度，不影响数值。
+- 原因：FSDP2 的 all-gather 和 reduce-scatter 都在 hook 里，dynamo 不追踪这些 hook，它们在编译图外 eager 执行。GPU 上 stream 的调度也走同一段 eager 代码。
+
+据此 `config(validation)` 删掉了 compile × FSDP 冲突。现在 FSDP replay 和单进程 replay 的 compile 规则一致，selective/full_cpu AC 和 SP 仍然拒绝。回归测试：`tests/trainers/test_fsdp_compile_distributed.py`（regional 和 root 两种，各加 full AC，约 40 s）。写这个测试时还发现一个陷阱：spawn 出来的 rank 不在 conftest 的 CUDA pin 范围内，inductor 会在第一个 checkpoint 前向里初始化 CUDA，`torch.utils.checkpoint` 不允许这样，所以测试里的 rank 隐藏了 CUDA。
+
+仍未测：NCCL 下多卡的速度和显存。上面单 rank 的表说明 compile 能快 25–30%，多卡是否保持这个比例要有第二张卡才能测。各 FSDP preset 仍然用 eager，注释已改成"允许但该配方未实测"。
+
 ### 数值上的限制（决定了 compile 能用在哪里）
 compile 后的 replay 和 eager rollout 不是同一张图，最后一步差 0.1。两侧都 compile 也不行：replay 开 grad 时是 autograd 图，和 rollout 的 inference 图仍差 7e-2（Wan 1.3e-2）。所以：
 - 只在开了 TIS/RS（精度标签不同）的配方里，replay compile 是安全的；

@@ -38,7 +38,7 @@ algorithm:
 model:
   use_lora: false               # FULL-PARAM: shard + train the whole transformer
   torch_compile:
-    enable: false               # fsdp gate: unsound with reshard-after-forward all-gathers
+    enable: false               # eager: compiled FSDP2 replay is allowed but unmeasured here
 
 distributed:
   training:

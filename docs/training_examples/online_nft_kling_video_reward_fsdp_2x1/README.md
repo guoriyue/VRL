@@ -61,7 +61,7 @@ Override per run via env vars (see the script header), e.g. `OUT=...`,
   `EXTRA_OVERRIDES` when resuming an interrupted run.
 - **No `find_unused_parameters`**: a DDP reducer knob; FSDP has no reducer.
 - **EMA on, torch.compile off**: the recipe inherits EMA from the base NFT
-  config; compile remains unsupported with FSDP2 reshard-after-forward.
+  config; a compiled FSDP2 replay is allowed but unmeasured for this recipe.
 
 ## Note on cost
 
