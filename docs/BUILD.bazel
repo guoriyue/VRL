@@ -1,0 +1,8 @@
+package(default_visibility = ["//tests:__pkg__"])
+
+# Planned sprint docs that test real_cover labels cite as tracked_in= (the
+# conftest check needs each cited document on disk inside the test sandbox).
+filegroup(
+    name = "sprint_plans",
+    srcs = glob(["sprints/planned/*.md"]),
+)

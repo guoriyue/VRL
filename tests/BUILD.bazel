@@ -94,12 +94,12 @@ vrl_pytest(
         ("quality", []),
         ("ray", []),
         ("reward", []),
-        ("rewards", []),
+        ("rewards", ["//docs:sprint_plans"]),
         ("rollouts", []),
         ("scripts", []),
         ("trainers", []),
         ("trajectory", []),
-        ("utils", []),
+        ("utils", ["//docs:sprint_plans"]),
     ]
 ]
 
@@ -155,7 +155,7 @@ vrl_pytest(
     size = "enormous",
     srcs = TEST_TREE,
     args = ["-m", "'slow_test and not e2e'"],
-    data = ["//manifests:manifests"],
+    data = ["//docs:sprint_plans", "//manifests:manifests"],
     env = CPU_ENV,
     tags = ["exclusive"],
 )

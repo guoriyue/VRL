@@ -1,5 +1,8 @@
 # Directories Bazel must not treat as packages: the legacy venv carries BUILD
-# files inside torch, and data/outputs are ignored run artifacts.
+# files inside torch, data/outputs are ignored run artifacts, and .claude holds
+# agent worktrees whose own bazel-* links make `bazel test //...` crawl into a
+# second copy of the repo.
 .venv
+.claude
 data
 outputs
