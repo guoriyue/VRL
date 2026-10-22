@@ -122,3 +122,56 @@ compile 后的 replay 和 eager rollout 不是同一张图，最后一步差 0.1
 
 ### P3 graph break 普查
 SD3.5、SANA、Wan2.1 1.3B 的 regional compile 都是 **0 个 graph break**（`TORCH_LOGS=graph_breaks`）。所以 `fullgraph=True` 不会带来速度收益；按家族加开关又属于保护性机制，不做。
+
+### 条目核对与收尾（2026-10-21，CPU，未用 GPU）
+逐条对照源码核对，结论如下：
+
+| 条目 | 状态 | 依据 |
+|---|---|---|
+| P0 重测 | 已完成 | 上面的实测表 |
+| P1.1 改成 AC → compile → fully_shard | **不改**，有实测依据 | P0 的对照组（c）没有失败：现有顺序 compile → AC → fully_shard 在单 rank 上能跑（regional + full AC + FSDP 1.30 s），2 个 Gloo rank 上与不分片参照一致。两种 FSDP 包装顺序速度相同（compile → FSDP 1.00 s，FSDP → compile 0.98 s）。root compile + checkpoint 本身就是"compile 包住 AC"的形态，也能跑。改顺序没有要解决的失败，也没有速度收益。代码仍是 `build.py:145-147` compile → `online.py:622` AC → `prepare_model` |
+| P1.2 删除/收窄冲突 | 已完成 | `vrl/config/validation.py` 只剩 full_cpu checkpointing 和 SP 两条；`strategy.py`、`activation_checkpointing.py` 的运行时拒绝已删（`aa1c01062`） |
+| P1.3 更新测试 | 已完成 | `tests/config/test_rollout_drift_guard.py`、`tests/trainers/test_fsdp_compile_distributed.py` |
+| P1.4 FSDP preset 开 compile 的验收 | 已备好命令，需要 2 张卡 | 见下文 |
+| P1.4 阈值收紧到 1e-6 | 不做，有实测依据 | 两侧都 compile 时，带 grad 的 replay 和 rollout 仍差 7e-2（Wan 1.3e-2），见"数值上的限制" |
+| P2.1 `save_cache_artifacts` / mega-cache | 不做，有实测依据 | 同机 warm 缓存已经由持久的 `TORCHINDUCTOR_CACHE_DIR` 提供（regional 16.6 → 4.0 s，root 62–72 → 6.1 s）。mega-cache 在单机上不会再多省时间，收益达不到 P2 验收线（5 分钟）；跨机分发目前没有需求 |
+| P2.2 不共享可写 inductor cache | 核对过，不需要改 | `vrl-train` 设的 `TORCHINDUCTOR_CACHE_DIR` 默认值只是把 inductor 默认的按用户共享目录（`/tmp/torchinductor_<user>`）挪到不会被重启清空的位置，没有多出新的共享方。inductor 写缓存是原子的（`torch/_inductor/codecache.py:write_atomic`：先写 `.{pid}.{tid}.tmp` 再 rename）。P94 讲的竞态针对 mega-cache 加载，这里没有用 mega-cache |
+| P3.1 graph break 普查 | SD3.5/SANA/Wan 已完成；其余家族没有测 | P3.2 已决定不加 `fullgraph=True`，所以普查结果只会写进本文件，不会改代码。命令见下文 |
+| P3.3 torch 2.14 nested graph breaks | 延后到升级 sprint | 计划本来就这么写 |
+| selective AC × compile | **本次放开**（`trainers(checkpointing): let torch.compile trace selective checkpointing`） | 见下一节 |
+
+#### selective AC × compile：根因在 VRL，已修
+之前记录的 Wan 失败 `checkpoint not implemented for NestedUserFunctionVariable context_fn` 不是 dynamo 本身的限制。原因是 `selective_checkpoint_func` 把 `context_fn` 写成了在函数里创建的 lambda。dynamo 追踪到这个调用时（root compile 下，transformer 的 forward 会逐 block 调用它），`context_fn` 只接受普通函数或 `functools.partial`（`torch/_dynamo/variables/higher_order_ops.py` 中的 `CheckpointHigherOrderVariable`）。改成 `functools.partial(create_selective_checkpoint_contexts, _selective_checkpoint_policy)` 之后：
+- CPU 上的 tiny SD3（3 层）和 tiny Wan（2 层），selective AC 加 regional / root compile，梯度和不做 checkpoint 的 eager 一致：最大差 1.5e-8 到 2.0e-7，梯度量级 0.1。修复前，两个家族的 root compile 都能复现原来的报错（regional 在 CPU 上本来就能跑）。
+- `tests/trainers/test_activation_checkpointing.py` 新增一个测试：root compile 一个逐 block 调用 `selective_checkpoint_func` 的模块（`fullgraph=True`），梯度和 eager 一致。换回 lambda 后这个测试失败。
+- `tests/trainers/test_fsdp_compile_distributed.py` 增加了 root compile + selective 这一组（2 个 Gloo rank，FSDP2，reshard_after_forward）。和不分片参照的差异在 2e-6 以内，整个测试约 30 s。换回 lambda 后 rank 报同样的错误。
+- `validation.py` 现在只拒绝 full_cpu checkpointing 加 compile 的组合。原因是没测过，而 `save_on_cpu(pin_memory=True)` 需要 CUDA，CPU 上验证不了。
+
+GPU 上还没测的：selective 加 root compile 的速度和显存。SD3.5 上 regional + selective（±FSDP）在 P0 已经测过：1.14–1.24 s，16.7–16.9 GB。
+
+#### P1.4 验收命令（需要 2 张卡，本次没有运行）
+Wan2.1 1.3B 的 FSDP preset 按 2 rank 跑，A/B 两组除 `model.torch_compile.scope` 外完全相同。两组都开 TIS+RS，因为两侧 compile 后 replay 和 rollout 有约 1e-2 的漂移，严格的 0.0 parity 门限会直接失败。开了修正后，gate 只在漂移超过 ln 10 时才拒绝，其余记为告警。下面的 override 组合已在 CPU 上通过 `BuiltConfigs.from_cfg` 检查。preset 里 `/mnt/nvme` 的路径是 L40S 机器上的；在别的机器上跑，要把 `reward.kwargs.hpsv3.worker_config.*` 和 `distributed.resources.trainer.parking.disk_directory` 改成本机路径。
+
+```bash
+# A：现状，只 compile rollout，replay 用 eager
+CUDA_VISIBLE_DEVICES=0,1 VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
+torchrun --standalone --nproc_per_node=2 -m vrl.scripts.train \
+  --config experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s \
+  distributed.training.gpus_per_node=2 \
+  model.torch_compile.scope=rollout model.torch_compile.regional=true \
+  trainer.precision_correction.tis_mode=truncate trainer.precision_correction.rs_mode=seq_mean_k1 \
+  trainer.profile=true trainer.total_epochs=3 \
+  trainer.output_dir=outputs/wan_hpsv3_flash_grpo/fsdp_compile_ab/eager_replay
+# B：rollout 和 FSDP2 replay 都做 regional compile（full AC 不变）
+#   与 A 相同，只改 model.torch_compile.scope=all，
+#   以及 trainer.output_dir=outputs/wan_hpsv3_flash_grpo/fsdp_compile_ab/compiled_replay
+```
+验收时看：两组 `training_debug.jsonl` 里的 `replay_parity_gate` 记录（`max_abs_diff`，B 应在 1e-2 量级，且远小于 ln 10）；trainer `profile` 阶段的 replay+backward 耗时（B 应该更低，单 rank 上的比例是 25–30%）；显存峰值；update 1 的 `pre_update_clip_fraction`。
+
+#### P3.1 剩余家族的普查命令（单卡，本次没有运行）
+```bash
+CUDA_VISIBLE_DEVICES=0 TORCH_LOGS=graph_breaks \
+python -m vrl.scripts.generation.parity_divergence_probe --family <flux|qwen_image|qwen_image_21|krea2|moss_image|cosmos-predict2.5|...> \
+  --path <checkpoint> --dtype bf16 --float32-precision ieee --no-outer-autocast \
+  --rollout-compile --replay-compile --rollout-batch 1 --replay-batch 1 --steps 2 2>&1 | grep -c "Graph break"
+```
