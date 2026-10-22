@@ -104,7 +104,7 @@ T1 中 negative prompt 跨 prompt 缓存（2026-10-21 复核，不做）：
 
 GPU 待测（命令已准备，2026-10-21 未运行：本机唯一的 GPU 被其他 session 占用）：
 
-- T1 正向复用的 GPU 耗时。A/B 两个 checkout：HEAD 和 `67310a63c`（`e9b936c59` 的父提交）。旧 checkout 用 `git worktree add <old_tree> 67310a63c` 建，跑旧版时加 `PYTHONPATH=<old_tree>`。`<venv>` 必须带 vLLM 的 CuMemAllocator（colocated parking 需要），例如 session scratchpad 里的 `venv_main`：
+- T1 正向复用的 GPU 耗时。A/B 两个 checkout：HEAD 和 `trainers(fsdp): tidy what the precision and compile changes left behind`（`generation(executor): encode each prompt once across its batches` 的父提交）。旧 checkout 用 `git worktree add <old_tree> <父提交>` 建，跑旧版时加 `PYTHONPATH=<old_tree>`。`<venv>` 必须带 vLLM 的 CuMemAllocator（colocated parking 需要），例如 session scratchpad 里的 `venv_main`：
 
   ```
   CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -121,7 +121,7 @@ GPU 待测（命令已准备，2026-10-21 未运行：本机唯一的 GPU 被其
 
   验收：HEAD 的生成时间低于旧版（估计约 11%）。逐位一致已由 CPU 测试覆盖，编码是确定性的。
 
-- T3 的 reward 对比（上表写着"没有做"）：HEAD 与 `e121a7d9a`（`a44ec644b` 的父提交）各跑一次 `experiment/sd3_5/online_grpo_pickscore precision.rollout.quantization.format=nvfp4 trainer.total_epochs=1`，比较 `metrics.csv` 里 step 0（更新之前、同种子）的 `reward_mean`。
+- T3 的 reward 对比（上表写着"没有做"）：HEAD 与 `dacf5afe8`（origin/main，`nn(quantization): choose NVFP4 block scales four over six` 的父提交）各跑一次 `experiment/sd3_5/online_grpo_pickscore precision.rollout.quantization.format=nvfp4 trainer.total_epochs=1`，比较 `metrics.csv` 里 step 0（更新之前、同种子）的 `reward_mean`。
 
 §3 的三项不做在 2026-10-21 复核时维持：仓库里没有 SGLang-Diffusion 或 vLLM-Omni 后端；sequence parallel 仍只有 SD3 注册（`vrl/models/families/registry.py` 中唯一的 `sequence_parallel_installer`）；`vrl/config/presets` 里没有 preset 开启 TeaCache 或 rollout 量化，更没有两种近似同时启用。T5 维持不做（上表的生产配置空闲比例都低于 15%）。
 

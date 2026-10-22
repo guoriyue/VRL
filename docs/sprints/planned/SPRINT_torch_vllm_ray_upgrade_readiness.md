@@ -108,15 +108,15 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 ### 逐项状态
 | 项 | 状态 | 依据 |
 |---|---|---|
-| P0.1 `device_id` | 已完成 | `3e80af016`；`vrl/trainers/distributed.py:283`、`vrl/generation/execution/rank_group.py:77`、`tools/delivery/node_rank.py:21` |
-| P0 风险：cp≥2 且 dp≥2 的子组 split | 本轮补了 GPU 测试，未在 GPU 上跑 | `91e3ff1b0`，见下 |
+| P0.1 `device_id` | 已完成 | `fix(distributed): bind NCCL default groups to the rank device`；`vrl/trainers/distributed.py:283`、`vrl/generation/execution/rank_group.py:77`、`tools/delivery/node_rank.py:21` |
+| P0 风险：cp≥2 且 dp≥2 的子组 split | 本轮补了 GPU 测试，未在 GPU 上跑 | `tests(trainers): check cp=2 x dp=2 groups form under a device-bound NCCL group`，见下 |
 | P0.2 torchcomms 对照 | 需用户决定 | `torchcomms` 不在 lock 里，要先改 lock |
 | P1 升级分支 | 在升级分支上，合入需用户决定 | `6628b1e97`、`911965ce7`，见下 |
 | P1 `bazel test //...` CPU lanes | main 上已跑通（2026-10-21 晚） | 网络恢复后在 main 的独立 worktree 里跑：26 个 target 先是 24 过 2 挂，两处都是 origin 上就有的问题，已修：`build(lint): lint reward/ in the Bazel gate and pin datasets as third-party`（gate 的 runfiles 里没有 `reward/`，本地又有未跟踪的 `datasets/` 数据目录，两边 isort 分类相反）；`tests(ray): wait for the GPU holder's GPUs before the next placement test`（被 kill 的 2-GPU actor 在 raylet 里还要占 GPU 0/1 约 2 秒，下一个 placement 测试拿到 GPU 2/3）。复跑两个 lane 都过。升级分支上的 `bazel test //...` 要等合入决定。另：bazel 跑完会把 `MODULE.bazel.lock` 改写成与工作区里未提交的那份逐字节相同，说明 main 上提交的 lock 已过期，要不要提交由用户定 |
-| P2 token 认证行为 | 已实测（§4）；launch 文档本轮补上 | `a9a8f8fc8` |
+| P2 token 认证行为 | 已实测（§4）；launch 文档本轮补上 | `docs(cross_node): pick one Ray auth mode on every node before Ray 2.59` |
 | P2 VRL 是否显式设 `RAY_AUTH_MODE` | 需用户决定 | 见下 |
 | 私有 API 核对 | 已完成（§4），本轮复核了源码 | 见下 |
-| 弃用警告扫描 | 本轮完成；修了一处 Pillow 弃用 | `78d41642b` |
+| 弃用警告扫描 | 本轮完成；修了一处 Pillow 弃用 | `rewards(local_edit): read the gray plane with Image.get_flattened_data` |
 | P3 收获清单（10 项） | 不做 | 都要升级后实测，按表里"何时做"的门槛触发 |
 | §3 不做（`torch.accelerator` 改名、GPU CI lane） | 不做 | 维持原结论 |
 | `.venv` 缺 vllm | 需用户决定 | 见 §4"顺带发现" |
@@ -135,7 +135,7 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 - `parking.py:781-787`：vLLM 0.32 的 `allocator_and_pools` 是 `dict[str, list]`，0.21 是 `dict[str, tuple]`。`pop(tag)` 在两个版本下都对。`building()` 是一次性的，每个 tag 只有一项，所以 `del retained` 的效果相同。
 
 ### 需用户决定
-- **合入升级**：建议 cherry-pick `6628b1e97`（pyproject/uv.lock/MODULE.bazel.lock，加上 `tests/build/torch_cuda_test.py` 的版本断言）和 `911965ce7`（cuBLAS workspace 上限放宽到 64 MiB），不要直接 merge 分支。原因是分支基于 `cb380f0f6`，上面另有 6 个 commit（`e96e9a5f4`..`dd6577449`），它们在 main 上已经以 rebase 后的哈希存在（`f64e07084`、`e1ccfc288`、`cae124178`、`cd2480e0d`、`c59653968`；`dd6577449` 在 main 上拆成了 `e6dffcb64` 和 `488237944`）。这两个 commit 改的文件在 `dd6577449` 和当前 main 之间没有变化，cherry-pick 能直接应用。
+- **合入升级**：建议 cherry-pick `6628b1e97`（pyproject/uv.lock/MODULE.bazel.lock，加上 `tests/build/torch_cuda_test.py` 的版本断言）和 `911965ce7`（cuBLAS workspace 上限放宽到 64 MiB），不要直接 merge 分支。原因是分支基于 `cb380f0f6`（升级分支自己的历史，哈希不变），上面另有 6 个 commit（`e96e9a5f4`..`dd6577449`），它们在 main 上已经以 rebase 后的哈希存在（`scripts(generation): add a rollout/replay parity divergence probe`、`models(precision): reduce fp16/bf16 GEMMs in full precision`、`feat(score_report): add the joint pass-rate score for constrained objectives`、`feat(rewards): route a reward component to its own prompts by metadata`、`feat(trainer): record host wall-clock trainer phases on every step`；`dd6577449` 在 main 上拆成了 `feat(rollout): measure the rollout -> reward media handoff` 和 `feat(rollout): stage pipelined reward media once, on the rank`）。这两个 commit 改的文件在 `dd6577449` 和当前 main 之间没有变化，cherry-pick 能直接应用。
 - **合入后的跟进**（合入前都不能做，否则 2.11 会坏或文档不对）：删掉 `parking.py:175-176` 的单数回退；更新 cross_node runbook 里两处 "Ray 2.55.1" 的版本描述（新的 token 一节和 Teardown 一节）；更新本文件 §0 的锁定版本；跑 `bazel test //...` 和上面的 4 卡测试。
 - **VRL 是否自己设 `RAY_AUTH_MODE`**：Ray 2.59 下，自有本地集群（`vrl/scripts/common/online.py:127` 的 `address="local"`）会开启认证、打 WARNING，并把 `RAY_AUTH_MODE=token` 留在 driver 环境里。另外按源码推断（未实测）：同一主机上多个 torchrun rank 各自 `ray.init` 时（如 `online_grpo_hpsv3_fsdp_4x_l40s`），如果 `~/.ray/auth_token` 还不存在，几个 rank 会同时生成并写同一个文件，存在一个很小的 token 不一致窗口。在 launcher 里显式设 `disabled` 或预先生成 token 都能消除，但这是安全策略选择，不在这里替用户定。
 - **torchcomms（P0.2）**：要先把 `torchcomms` 加进 lock，然后用 `TORCH_DISTRIBUTED_USE_TORCHCOMMS=1 bazel test --config=gpu //tests:gpu_tests` 做对照。

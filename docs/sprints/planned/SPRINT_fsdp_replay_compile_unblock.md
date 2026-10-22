@@ -132,7 +132,7 @@ SD3.5、SANA、Wan2.1 1.3B 的 regional compile 都是 **0 个 graph break**（`
 |---|---|---|
 | P0 重测 | 已完成 | 上面的实测表 |
 | P1.1 改成 AC → compile → fully_shard | **不改**，有实测依据 | P0 的对照组（c）没有失败：现有顺序 compile → AC → fully_shard 在单 rank 上能跑（regional + full AC + FSDP 1.30 s），2 个 Gloo rank 上与不分片参照一致。两种 FSDP 包装顺序速度相同（compile → FSDP 1.00 s，FSDP → compile 0.98 s）。root compile + checkpoint 本身就是"compile 包住 AC"的形态，也能跑。改顺序没有要解决的失败，也没有速度收益。代码仍是 `build.py:145-147` compile → `online.py:622` AC → `prepare_model` |
-| P1.2 删除/收窄冲突 | 已完成 | `vrl/config/validation.py` 只剩 full_cpu checkpointing 和 SP 两条；`strategy.py`、`activation_checkpointing.py` 的运行时拒绝已删（`aa1c01062`） |
+| P1.2 删除/收窄冲突 | 已完成 | `vrl/config/validation.py` 只剩 full_cpu checkpointing 和 SP 两条；`strategy.py`、`activation_checkpointing.py` 的运行时拒绝已删（`config(validation): allow torch.compile with full activation checkpointing`） |
 | P1.3 更新测试 | 已完成 | `tests/config/test_rollout_drift_guard.py`、`tests/trainers/test_fsdp_compile_distributed.py` |
 | P1.4 FSDP preset 开 compile 的验收 | 已备好命令，需要 2 张卡 | 见下文 |
 | P1.4 阈值收紧到 1e-6 | 不做，有实测依据 | 两侧都 compile 时，带 grad 的 replay 和 rollout 仍差 7e-2（Wan 1.3e-2），见"数值上的限制" |

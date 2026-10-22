@@ -111,7 +111,7 @@ skill：`reward/skills/reward/{SKILL,qualification,scoring}.md`，`.claude/skill
 
 ## 9. 实施记录（2026-10-21）
 
-逐项对照源码核对，基线是本地 main `546b0d871`。
+逐项对照源码核对，基线是本地 main `config(validation): allow torch.compile with an FSDP2 replay`。
 
 | 项 | 状态 | 依据 |
 |---|---|---|
