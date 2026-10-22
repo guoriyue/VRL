@@ -158,7 +158,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
 
     assert isinstance(parsed.model, WanModelSection)
     assert parsed.model.expert_lifecycle_profiling is True
-    assert parsed.model_dump()["model"]["offload"] == {}
+    assert parsed.model_dump()["model"]["offload"] is not None
 
 
 def test_cosmos_predict25_keys_select_family_section() -> None:

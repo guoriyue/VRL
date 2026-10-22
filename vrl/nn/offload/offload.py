@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vrl.nn.offload.host_pinning import DEFAULT_SHARE_DIRECTORY
+
 if TYPE_CHECKING:
     import torch.nn as nn
 
@@ -24,17 +26,32 @@ class Offload:
     trains on one 32 GB card. The rollout build carries the section to the
     OffloadPass; the training strategies and the offline recipes read it at
     root placement.
+
+    ``pin_host`` makes the streamed weights DMA sources
+    (``vrl.nn.offload.host_pinning``): locked in place, or, for a loader's
+    file-backed weights, in one content-keyed copy under ``share_directory``
+    (tmpfs, shared by every process on the host). It costs host RAM equal to
+    the frozen weights; ``false`` keeps them pageable at about a third of the
+    copy bandwidth, and a host that cannot pin them falls back to that with a
+    warning.
     """
+
+    pin_host: bool = True
+    # A string: the section crosses the Ray launch wire as primitives.
+    share_directory: str = str(DEFAULT_SHARE_DIRECTORY)
 
     @classmethod
     def from_section(cls, section: Any) -> Offload | None:
-        """The runtime form of a parsed ``offload`` section; ``None`` stays resident."""
+        """The runtime form of a parsed ``offload`` section; ``None`` stays resident.
+
+        An option left unset in the section (``None``) takes this class's default.
+        """
 
         if section is None or isinstance(section, cls):
             return section
         if not isinstance(section, Mapping):
             section = section.model_dump()
-        return cls(**section)
+        return cls(**{name: value for name, value in section.items() if value is not None})
 
     def place(self, roots: Mapping[str, nn.Module], *, device: Any) -> int:
         """Stream every host-resident root of ``roots`` on ``device``; return the blocks streamed.
@@ -52,7 +69,13 @@ class Offload:
         for name, root in roots.items():
             if any(parameter.device.type != "cpu" for parameter in root.parameters()):
                 continue
-            count = len(HostStreaming.install(root, device=device).blocks)
+            streaming = HostStreaming.install(
+                root,
+                device=device,
+                pin_host=self.pin_host,
+                share_directory=self.share_directory,
+            )
+            count = len(streaming.blocks)
             logger.info("%s: %d frozen blocks streamed from the host", name, count)
             streamed += count
         return streamed

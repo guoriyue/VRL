@@ -2,7 +2,8 @@
 
 A bf16 ~20B transformer is ~40 GB; a 32 GB card holds its LoRA leaves, its stem
 and head, and one block at a time. :class:`HostStreaming` leaves the frozen
-weights of every repeated block on the host and makes each block's call run
+weights of every repeated block on the host, pinned as DMA sources
+(``vrl.nn.offload.host_pinning``), and makes each block's call run
 ``torch.func.functional_call`` over device copies of them, fetched one block
 ahead by a :class:`~vrl.nn.offload.prefetch.Prefetcher`. The copies are call
 temporaries (non-reentrant activation checkpointing recreates them in
@@ -12,13 +13,18 @@ backward) and the host masters keep their identity, so parameter names,
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any, ClassVar
 
 import torch
 import torch.nn as nn
 
+from vrl.nn.offload.host_pinning import DEFAULT_SHARE_DIRECTORY, HostPinning
 from vrl.nn.offload.prefetch import Prefetcher
 from vrl.nn.optimization.regional_compile import repeated_block_lists
+
+logger = logging.getLogger(__name__)
 
 
 class HostStreaming:
@@ -29,12 +35,21 @@ class HostStreaming:
         self.prefetcher = prefetcher
 
     @classmethod
-    def install(cls, root: nn.Module, *, device: torch.device | str) -> HostStreaming:
+    def install(
+        cls,
+        root: nn.Module,
+        *,
+        device: torch.device | str,
+        pin_host: bool = True,
+        share_directory: Path | str = DEFAULT_SHARE_DIRECTORY,
+    ) -> HostStreaming:
         """Place ``root`` on ``device`` except the frozen weights of its repeated blocks.
 
         Everything outside the repeated block lists moves whole; inside them
         only the trainable leaves move, the frozen weights stay on the host
-        and each block streams them per call.
+        and each block streams them per call. ``pin_host`` (CUDA only) pins
+        those weights through :class:`HostPinning` so each copy runs at link
+        speed; without it the copies are bounded by the host memcpy.
         """
 
         device = torch.device(device)
@@ -66,6 +81,13 @@ class HostStreaming:
             state = {name: p for name, p in block.named_parameters() if not p.requires_grad}
             state.update(block.named_buffers())
             units.append({name: t for name, t in state.items() if t.device.type == "cpu"})
+        if pin_host and device.type == "cuda":
+            pinned = HostPinning(share_directory).pin(
+                (f"{index}.{name}", tensor)
+                for index, unit in enumerate(units)
+                for name, tensor in unit.items()
+            )
+            logger.info("host streaming: %.1f GiB of frozen weights pinned", pinned / 2**30)
         streaming = cls(blocks, Prefetcher(units, device))
         for index, (block, unit) in enumerate(zip(blocks, units, strict=True)):
             resident = {

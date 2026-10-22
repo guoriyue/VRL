@@ -43,9 +43,19 @@ frozen weights
 (`vrl/nn/offload/block_streaming.py`). The copies are prefetched one block ahead
 on a CUDA copy stream, so the PCIe transfer of block `i + 1` overlaps the
 compute of block `i` in the forward pass and in the checkpoint recompute of
-the backward pass. Before prefetching, with each block copied synchronously in
-front of its own compute, a 640x640 update took about 12.5 s on an RTX 5090
-against ~3 s with the blocks resident on a 48 GB card.
+the backward pass. The frozen weights are pinned as DMA sources: the loader's
+private file mappings cannot be registered without the kernel copying them per
+process, so they are copied once into one content-keyed file under
+`/dev/shm/vrl-host-streaming/`, which the trainer and the rollout worker both
+map, register and read from (one pinned physical copy, reused by later runs;
+`vrl/nn/offload/host_pinning.py`). Pinning locks host RAM equal to the frozen
+weights; `offload.pin_host: false` keeps them pageable instead, as does a host
+that cannot pin them (a non-tmpfs or too small `offload.share_directory`, a
+driver refusal), and each copy is then bounded by the host memcpy at about
+17 GB/s instead of the link at about 50 GB/s. Before
+prefetching, with each block copied synchronously in front of its own compute,
+a 640x640 update took about 12.5 s on an RTX 5090 against ~3 s with the blocks
+resident on a 48 GB card.
 
 ## Supervised flow matching
 

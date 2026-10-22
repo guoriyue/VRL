@@ -40,3 +40,6 @@ def test_a_root_a_loader_already_dispatched_is_left_alone() -> None:
 def test_the_parsed_section_and_its_absence_have_runtime_forms() -> None:
     assert Offload.from_section(None) is None
     assert Offload.from_section({}) == Offload()
+    # An unset option takes the package default; a set one is kept.
+    section = {"pin_host": False, "share_directory": None}
+    assert Offload.from_section(section) == Offload(pin_host=False)

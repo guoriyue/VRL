@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import os
+import shutil
+from pathlib import Path
 
 import pytest
 import torch
@@ -136,31 +139,55 @@ def test_a_policy_without_repeated_blocks_cannot_stream() -> None:
 
 
 @pytest.mark.gpu
-def test_cuda_prefetch_matches_the_resident_policy() -> None:
-    """Copies issued on the copy stream, waited on and recorded by the consumer,
-    give the resident policy's outputs and gradients over repeated passes."""
+@pytest.mark.parametrize("pin_host", [True, False], ids=["pinned", "pageable"])
+def test_cuda_prefetch_matches_the_resident_policy(pin_host: bool, tmp_path: Path) -> None:
+    """Every upload path matches the resident policy: pinned anonymous memory, the
+    shared tmpfs copy of a file-backed weight, and plain pageable copies."""
 
     torch.manual_seed(3)
     plain = _Policy().cuda()
     streamed = copy.deepcopy(plain).cpu()
     # One buffer already on the card: it must pass through, not round-trip.
     streamed.blocks[1].gain = streamed.blocks[1].gain.cuda()
-    streaming = HostStreaming.install(streamed, device="cuda")
+    # One weight memory-mapped from a file, as a checkpoint loader leaves it.
+    weight = streamed.blocks[2].frozen.weight
+    (tmp_path / "w.bin").write_bytes(
+        weight.detach().contiguous().view(torch.uint8).numpy().tobytes()
+    )
+    weight.data = torch.from_file(
+        str(tmp_path / "w.bin"), shared=False, size=weight.numel(), dtype=weight.dtype
+    ).view(weight.shape)
+    # The shared copy must live on tmpfs: the driver refuses to pin pages of a disk file.
+    share = Path("/dev/shm") / f"vrl-host-streaming-test-{os.getpid()}"
+    try:
+        streaming = HostStreaming.install(
+            streamed, device="cuda", pin_host=pin_host, share_directory=share
+        )
+        # Registration pins whole pages, and a 4x4 weight shares its page with
+        # whatever the allocator put beside it (possibly a page the other
+        # parametrization pinned), so only the file-mapped weight, alone on
+        # its pages, can be asserted unpinned.
+        if pin_host:
+            assert streamed.blocks[0].frozen.weight.is_pinned()
+        assert streamed.blocks[2].frozen.weight.is_pinned() is pin_host
+        assert bool(list(share.glob("*.bin"))) is pin_host
 
-    x = torch.randn(2, 4, device="cuda", requires_grad=True)
-    x_plain = x.detach().clone().requires_grad_(True)
-    for _ in range(3):
-        torch.testing.assert_close(streamed(x), plain(x))
-    _checkpointed_blocks(streamed, x).sum().backward()
-    _checkpointed_blocks(plain, x_plain).sum().backward()
-    torch.cuda.synchronize()
-    torch.testing.assert_close(x.grad, x_plain.grad)
-    for (name, parameter), (_, reference) in zip(
-        streamed.named_parameters(), plain.named_parameters(), strict=True
-    ):
-        if parameter.requires_grad:
-            torch.testing.assert_close(parameter.grad, reference.grad, msg=name)
-            assert parameter.device.type == "cuda"
-        else:
-            assert parameter.device.type == "cpu"
-    assert streaming.counters["prefetch_hits"] > 0
+        x = torch.randn(2, 4, device="cuda", requires_grad=True)
+        x_plain = x.detach().clone().requires_grad_(True)
+        for _ in range(3):
+            torch.testing.assert_close(streamed(x), plain(x))
+        _checkpointed_blocks(streamed, x).sum().backward()
+        _checkpointed_blocks(plain, x_plain).sum().backward()
+        torch.cuda.synchronize()
+        torch.testing.assert_close(x.grad, x_plain.grad)
+        for (name, parameter), (_, reference) in zip(
+            streamed.named_parameters(), plain.named_parameters(), strict=True
+        ):
+            if parameter.requires_grad:
+                torch.testing.assert_close(parameter.grad, reference.grad, msg=name)
+                assert parameter.device.type == "cuda"
+            else:
+                assert parameter.device.type == "cpu"
+        assert streaming.counters["prefetch_hits"] > 0
+    finally:
+        shutil.rmtree(share, ignore_errors=True)
