@@ -109,7 +109,7 @@ GPU 待测（命令已准备，2026-10-21 未运行：本机唯一的 GPU 被其
   ```
   CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   RAY_memory_usage_threshold=0.97 <venv>/bin/vrl-train \
-    --config experiment/sd3_5/online_grpo_pickscore_safety_weighted \
+    --config experiment/sd3_5/online_grpo_pickscore rollout.samples_per_generation_batch=1 \
     trainer.total_epochs=4 trainer.save_freq=9999 trainer.output_dir=outputs/bench_t1_<arm>
   ```
 
