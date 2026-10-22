@@ -36,15 +36,3 @@ def test_prefetcher_hands_out_each_unit_and_copies_the_predicted_one_ahead() -> 
 
     # Only the first unit of each pass misses.
     assert (prefetcher.hits, prefetcher.misses) == (4, 2)
-
-
-def test_a_custom_order_replaces_the_default_prediction() -> None:
-    units = [{"w": torch.tensor(float(i))} for i in range(4)]
-    prefetcher = Prefetcher(
-        units, "cpu", next_unit=lambda last, current, count: (current + 2) % count
-    )
-
-    for index in (0, 2, 0, 2):
-        prefetcher.acquire(index)
-
-    assert (prefetcher.hits, prefetcher.misses) == (3, 1)

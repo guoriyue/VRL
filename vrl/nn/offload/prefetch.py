@@ -4,9 +4,9 @@ A :class:`Prefetcher` holds numbered units (mappings of named host tensors)
 and hands out device copies of one unit at a time. While unit ``i`` is in use,
 the copy of the unit expected next is already under way on a dedicated CUDA
 stream, so each transfer hides behind the compute that precedes its use
-instead of stalling in front of it. Which unit comes next is a function of the
-call sequence (``next_unit``); the default, ``Prefetcher.pass_direction``,
-reads a layered model's passes off the order of its block calls. The copies
+instead of stalling in front of it. Which unit comes next is read off the
+call sequence (``pass_direction``): a layered model's forward pass and the
+checkpoint recompute of its backward pass, each from its own end. The copies
 are temporaries: the caller holds them for one use, and ``record_stream`` lets
 the allocator recycle them once the stream that used them is done.
 
@@ -17,27 +17,19 @@ the host memcpy.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 import torch
-
-NextUnit = Callable[[int | None, int, int], int | None]
-"""``(last, current, count) -> next``: the unit to copy while ``current`` is in use."""
 
 
 class Prefetcher:
     """Hands out device copies of its units, one unit copied ahead of its use."""
 
     def __init__(
-        self,
-        units: Sequence[Mapping[str, torch.Tensor]],
-        device: torch.device | str,
-        *,
-        next_unit: NextUnit | None = None,
+        self, units: Sequence[Mapping[str, torch.Tensor]], device: torch.device | str
     ) -> None:
-        self._units = [dict(unit) for unit in units]
+        self._units = units
         self._device = torch.device(device)
-        self._next_unit = next_unit or self.pass_direction
         self._stream = (
             torch.cuda.Stream(device=self._device) if self._device.type == "cuda" else None
         )
@@ -48,10 +40,13 @@ class Prefetcher:
 
     @staticmethod
     def pass_direction(last: int | None, current: int, count: int) -> int | None:
-        """The default order: consecutive ascending calls are a forward pass,
-        descending ones the checkpoint recompute of backward; a first call, a
-        repeated call or a jump starts a new pass from its end (the last unit
-        runs backward, any other forward)."""
+        """The unit to copy while ``current`` is in use, read off the call order.
+
+        Consecutive ascending calls are a forward pass, descending ones the
+        checkpoint recompute of backward; a first call, a repeated call or a
+        jump starts a new pass from its end (the last unit runs backward, any
+        other forward).
+        """
 
         if last is None or abs(current - last) != 1:
             step = -1 if current == count - 1 else 1
@@ -75,7 +70,7 @@ class Prefetcher:
             current.wait_event(ready)
             for tensor in copies.values():
                 tensor.record_stream(current)
-        upcoming = self._next_unit(self._last, index, len(self._units))
+        upcoming = self.pass_direction(self._last, index, len(self._units))
         self._last = index
         if upcoming is not None:
             self._ahead = (upcoming, *self._copy(upcoming))
@@ -99,4 +94,4 @@ class Prefetcher:
         return copies, ready
 
 
-__all__ = ["NextUnit", "Prefetcher"]
+__all__ = ["Prefetcher"]
