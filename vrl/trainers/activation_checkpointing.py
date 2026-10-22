@@ -17,6 +17,7 @@ archive/main-20261016:docs/sprints/parked/SPRINT_training_mfu_selective_checkpoi
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any
@@ -56,14 +57,19 @@ def _selective_checkpoint_policy(ctx, op, *args, **kwargs):
 def selective_checkpoint_func(module, *args):
     """Drop-in for diffusers' gradient_checkpointing_func that applies SAC.
 
-    Public so the backward_mfu_probe can measure the exact production policy
-    instead of duplicating it.
+    ``context_fn`` is a partial, not a lambda: when torch.compile traces this
+    call (a root-compiled transformer forward loops over its blocks through
+    it), dynamo accepts only a plain function or a partial and raises
+    "checkpoint not implemented for NestedUserFunctionVariable context_fn" on
+    a lambda created in the traced frame.
     """
     return checkpoint(
         module.__call__,
         *args,
         use_reentrant=False,
-        context_fn=lambda: create_selective_checkpoint_contexts(_selective_checkpoint_policy),
+        context_fn=functools.partial(
+            create_selective_checkpoint_contexts, _selective_checkpoint_policy
+        ),
     )
 
 

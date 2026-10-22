@@ -1,7 +1,7 @@
 """A compiled FSDP2 replay trains like the same compiled transformer unsharded.
 
 Two Gloo ranks shard a tiny diffusers SD3 transformer in the online build
-order (compile, then full activation checkpointing, then
+order (compile, then full or selective activation checkpointing, then
 ``FSDPStrategy.prepare_model`` with reshard-after-forward), each rank on its
 half of one batch, for several AdamW steps. Regional and root compile must
 match one process training the same compiled transformer on the whole batch:
@@ -21,13 +21,15 @@ from torch import nn
 from tests.trainers._strategy_policies import run_ranks
 
 STEPS = 3
-VARIANTS = ("regional", "root")
+# (compile, checkpointing): root compile traces the selective policy itself.
+VARIANTS = (("regional", "full"), ("root", "full"), ("root", "selective"))
 
 
-def _transformer(variant: str) -> nn.Module:
+def _transformer(variant: tuple[str, str]) -> nn.Module:
     from diffusers import SD3Transformer2DModel
 
     from vrl.nn.optimization.regional_compile import compile_repeated_blocks
+    from vrl.trainers.activation_checkpointing import selective_checkpoint_func
 
     torch.manual_seed(3)
     transformer = SD3Transformer2DModel(
@@ -43,11 +45,16 @@ def _transformer(variant: str) -> nn.Module:
         out_channels=4,
         pos_embed_max_size=16,
     )
-    if variant == "regional":
+    compile_scope, checkpointing = variant
+    if compile_scope == "regional":
         compile_repeated_blocks(transformer, mode="default")
     else:
         transformer = torch.compile(transformer, mode="default", fullgraph=False)
-    getattr(transformer, "_orig_mod", transformer).enable_gradient_checkpointing()
+    getattr(transformer, "_orig_mod", transformer).enable_gradient_checkpointing(
+        gradient_checkpointing_func=(
+            selective_checkpoint_func if checkpointing == "selective" else None
+        ),
+    )
     return transformer.train()
 
 
@@ -145,5 +152,9 @@ def test_compiled_fsdp_replay_trains_like_the_unsharded_compiled_transformer() -
             assert sharded.keys() == expected.keys()
             for name, value in sharded.items():
                 np.testing.assert_allclose(
-                    value, expected[name].detach().numpy(), rtol=0, atol=2e-6, err_msg=name
+                    value,
+                    expected[name].detach().numpy(),
+                    rtol=0,
+                    atol=2e-6,
+                    err_msg=f"{variant} {name}",
                 )

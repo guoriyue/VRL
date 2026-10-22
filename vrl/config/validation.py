@@ -95,32 +95,34 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
             )
         )
 
-    # Full activation checkpointing composes with torch.compile: measured with
-    # replay forward+backward on torch 2.11 for SD3.5 Medium (regional and root
-    # compile, with and without single-rank FSDP2), Cosmos-Predict2.5 2B
-    # (regional and root) and Wan2.1 1.3B (regional). Selective checkpointing
-    # does not: dynamo cannot trace its context_fn ("checkpoint not implemented
-    # for NestedUserFunctionVariable context_fn", Wan2.1 1.3B regional), and
-    # the CPU-offload variant was never measured with compile.
+    # Full and selective activation checkpointing compose with torch.compile.
+    # Full: replay forward+backward measured on torch 2.11 for SD3.5 Medium
+    # (regional and root compile, with and without single-rank FSDP2),
+    # Cosmos-Predict2.5 2B (regional and root) and Wan2.1 1.3B (regional).
+    # Selective: SD3.5 Medium regional with and without FSDP2 on GPU, and
+    # tiny SD3/Wan transformers under regional and root compile on CPU match
+    # eager gradients once its context_fn is a module-level function
+    # (tests/trainers/test_activation_checkpointing.py, and root compile under
+    # FSDP2 in tests/trainers/test_fsdp_compile_distributed.py). The
+    # CPU-offload variant was never measured with compile.
     checkpointing = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
-    if compiles_replay and checkpointing in ("selective", "full_cpu"):
+    if compiles_replay and checkpointing == "full_cpu":
         conflicts.append(
             CompileConflict(
                 "gradient_checkpointing",
-                f"actor.gradient_checkpointing={checkpointing!r}: torch.compile cannot "
-                "trace selective checkpointing's context_fn (InternalTorchDynamoError on "
-                "Wan2.1), and full_cpu is unmeasured with compile. Use full "
-                "checkpointing with compile, eager + this mode, or "
+                "actor.gradient_checkpointing='full_cpu': unmeasured with torch.compile. "
+                "Use full or selective checkpointing with compile, eager + full_cpu, or "
                 "model.torch_compile.scope=rollout to keep the trainer eager while the "
                 "rollout policy compiles.",
             )
         )
 
     # FSDP2 replay is not a conflict. On two Gloo ranks a tiny SD3 transformer
-    # compiled regionally or at the root, with full checkpointing, then
-    # sharded with reshard-after-forward, trains like the same compiled module
-    # unsharded (tests/trainers/test_fsdp_compile_distributed.py): FSDP2's
-    # all-gather and reduce-scatter hooks run outside the compiled graphs.
+    # compiled regionally or at the root with full checkpointing, or at the
+    # root with selective checkpointing, then sharded with
+    # reshard-after-forward, trains like the same compiled module unsharded
+    # (tests/trainers/test_fsdp_compile_distributed.py): FSDP2's all-gather
+    # and reduce-scatter hooks run outside the compiled graphs.
     distributed = root.distributed
 
     # Sequence parallelism is installed by the rollout WORKER, after the family

@@ -12,6 +12,7 @@ from vrl.config.schema import parse_config
 from vrl.trainers.activation_checkpointing import (
     cpu_checkpoint_func,
     enable_transformer_gradient_checkpointing,
+    selective_checkpoint_func,
 )
 
 
@@ -138,3 +139,33 @@ def test_selective_checkpointing_preserves_errors_inside_supported_method() -> N
         enable_transformer_gradient_checkpointing(bundle, parse_config(_config("selective")))
 
     assert len(calls) == 1
+
+
+def test_root_compile_traces_selective_checkpointing_to_eager_gradients() -> None:
+    # A root-compiled transformer forward loops over its blocks through the
+    # checkpointing function, so dynamo traces selective_checkpoint_func itself;
+    # a context_fn closure created there was an InternalTorchDynamoError.
+    class _Blocks(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.blocks = torch.nn.ModuleList(
+                torch.nn.Sequential(torch.nn.Linear(8, 8), torch.nn.SiLU()) for _ in range(2)
+            )
+            self.checkpointed = False
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            for block in self.blocks:
+                x = selective_checkpoint_func(block, x) if self.checkpointed else block(x)
+            return x
+
+    torch.manual_seed(11)
+    eager = _Blocks()
+    compiled_root = copy.deepcopy(eager)
+    compiled_root.checkpointed = True
+    x = torch.randn(4, 8)
+
+    eager(x).square().sum().backward()
+    torch.compile(compiled_root, fullgraph=True)(x).square().sum().backward()
+
+    for left, right in zip(eager.parameters(), compiled_root.parameters(), strict=True):
+        torch.testing.assert_close(right.grad, left.grad, rtol=1e-5, atol=1e-6)
