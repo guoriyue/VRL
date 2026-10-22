@@ -108,6 +108,14 @@ def test_current_gpu_ids_reports_the_actor_assignment(local_ray):
         parsed, raw = local_ray.get(holder.ids.remote(), timeout=60)
     finally:
         local_ray.kill(holder, no_restart=True)
+        # The raylet keeps GPUs 0 and 1 for up to ~2 s after kill, even after
+        # the actor reads as dead, so a placement group created then gets GPUs 2
+        # and 3 while later tests in this package cluster name 0 and 1. A task
+        # that needs every GPU runs only once the raylet has freed them all.
+        gpus = local_ray.cluster_resources()["GPU"]
+        local_ray.get(
+            local_ray.remote(num_cpus=0, num_gpus=gpus)(lambda: None).remote(), timeout=60
+        )
 
     assert len(parsed) == 2
     assert parsed == [int(value) for value in raw]
