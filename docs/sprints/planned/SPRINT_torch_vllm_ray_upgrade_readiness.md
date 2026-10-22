@@ -112,7 +112,7 @@ CI 没有 GPU lane：`gpu_tests`、`gpu_vllm_tests` 都是 manual，所以升级
 | P0 风险：cp≥2 且 dp≥2 的子组 split | 本轮补了 GPU 测试，未在 GPU 上跑 | `91e3ff1b0`，见下 |
 | P0.2 torchcomms 对照 | 需用户决定 | `torchcomms` 不在 lock 里，要先改 lock |
 | P1 升级分支 | 在升级分支上，合入需用户决定 | `6628b1e97`、`911965ce7`，见下 |
-| P1 `bazel test //...` CPU lanes | 未跑 | 本机拉依赖时 `Unknown host`；命令见下 |
+| P1 `bazel test //...` CPU lanes | main 上已跑通（2026-10-21 晚） | 网络恢复后在 main 的独立 worktree 里跑：26 个 target 先是 24 过 2 挂，两处都是 origin 上就有的问题，已修：`build(lint): lint reward/ in the Bazel gate and pin datasets as third-party`（gate 的 runfiles 里没有 `reward/`，本地又有未跟踪的 `datasets/` 数据目录，两边 isort 分类相反）；`tests(ray): wait for the GPU holder's GPUs before the next placement test`（被 kill 的 2-GPU actor 在 raylet 里还要占 GPU 0/1 约 2 秒，下一个 placement 测试拿到 GPU 2/3）。复跑两个 lane 都过。升级分支上的 `bazel test //...` 要等合入决定。另：bazel 跑完会把 `MODULE.bazel.lock` 改写成与工作区里未提交的那份逐字节相同，说明 main 上提交的 lock 已过期，要不要提交由用户定 |
 | P2 token 认证行为 | 已实测（§4）；launch 文档本轮补上 | `a9a8f8fc8` |
 | P2 VRL 是否显式设 `RAY_AUTH_MODE` | 需用户决定 | 见下 |
 | 私有 API 核对 | 已完成（§4），本轮复核了源码 | 见下 |
