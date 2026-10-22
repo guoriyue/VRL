@@ -86,8 +86,9 @@ class RayGenerationWorker:
         """Run this rank's share of a request's batches in one call.
 
         Each batch payload is staged into the object store right after its host
-        copy, so the returned value carries only references and this rank is
-        free for the next request the moment its last batch is staged. A
+        copy, its reward media boxed into an object of its own first, so the
+        returned value carries only references and this rank is free for the
+        next request the moment its last batch is staged. A
         non-primary rank of a multi-rank engine stages nothing. A stale policy
         slot comes back as a ``StaleSlotDiscard`` value, not a raised error, so
         the driver releases the actor slot and counts a graceful discard. See
@@ -98,12 +99,19 @@ class RayGenerationWorker:
         request_id = str(request.request_id)
         total_batches = len(sample_batches)
         primary = self._is_primary_rank
+
+        def stage(payload: Any) -> Any:
+            # The media goes into an object of its own first; the payload then
+            # carries only references to it.
+            reference_reward_media(payload, request, primary=True)
+            return ray.put(payload)
+
         try:
             staged = self.core.execute_request_batches(
                 request,
                 sample_batches,
                 # Non-primary ranks keep nothing: the engine result is the primary's.
-                stage_batch_result=ray.put if primary else (lambda payload: None),
+                stage_batch_result=stage if primary else (lambda payload: None),
             )
         except StaleSlotDiscard as discard:
             return discard

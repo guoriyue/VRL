@@ -1,9 +1,11 @@
 """CPU actor that merges a request's staged batch payloads into one output.
 
-The GPU rank stages each batch into the object store as it is produced and
-returns only references. Merging (the gatherer's concatenation and trajectory
-build) and boxing the reward media then run here, in a process without a model,
-so the rank is free for the next request while this one is assembled. One
+The GPU rank stages each batch into the object store as it is produced, with
+the batch's reward media already boxed into an object of its own, and returns
+only references. Merging (the gatherer's concatenation and trajectory build)
+then runs here, in a process without a model, so the rank is free for the next
+request while this one is assembled; the media references are concatenated,
+never fetched or staged again. One
 finalizer is launched per engine, pinned to the engine's primary bundle; the
 executor hands each request to whichever finalizer is free, so with several
 engines the merge reads part of its input from other nodes' object stores.
@@ -15,7 +17,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from vrl.generation.protocols import GenerationBatchGatherer
-from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import current_node_ip
@@ -67,7 +68,6 @@ class RayGenerationFinalizer:
                 f"{type(self.gatherer).__name__}.merge_generation_batches returned "
                 f"{type(output).__name__}, expected GenerationOutput",
             )
-        reference_reward_media(output, request, primary=True)
         return output
 
 

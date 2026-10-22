@@ -1,9 +1,9 @@
 """Box online reward media into the Ray object store, once per payload.
 
-Both places a generation output leaves a Ray actor use this: the rank actor's
-per-batch path and the finalizer's per-request merge. The media stays boxed
-until the reward consumer resolves it, so the driver forwards references
-without fetching tensors.
+The rank actor boxes each generation batch's media, on both the per-batch and
+the pipelined per-request path; the pipelined finalizer only concatenates the
+batches' references. The media stays boxed until the reward consumer resolves
+it, so the driver forwards references without fetching tensors.
 """
 
 from __future__ import annotations

@@ -246,9 +246,11 @@ class StagedBatchRefs:
     The rank stages each batch payload with ``ray.put`` right after its pinned
     host copy (compute, copy, stage, next batch: staging is not overlapped
     within the request), so the payloads never travel inside the actor's return
-    value and the rank is free the moment its last batch is staged. The driver
-    hands the references to a finalizer actor, which merges them while the rank
-    already generates the next request.
+    value and the rank is free the moment its last batch is staged. The batch's
+    reward media is boxed into its own object first, so the payload carries
+    only references to it and the finalizer forwards them without fetching or
+    re-staging the media. The driver hands the references to a finalizer actor,
+    which merges them while the rank already generates the next request.
     Non-primary ranks of a multi-rank engine run the same loop for its
     collectives but stage nothing and report empty tuples.
     """

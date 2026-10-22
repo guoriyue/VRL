@@ -86,11 +86,11 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_finalized_pipelined_output_uses_same_reference_adapter(
+async def test_finalized_pipelined_output_forwards_the_rank_media_objects(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ):
-    """The real finalizer boxes the merged media exactly as the per-batch rank does:
-    one object for the merged request, per-sample views of it."""
+    """The pipelined rank boxes each batch's media as the per-batch path does; the
+    finalizer forwards those views instead of staging the merged media again."""
 
     async with ray_sana_runtime(
         monkeypatch,
@@ -104,9 +104,10 @@ async def test_finalized_pipelined_output_uses_same_reference_adapter(
         )
 
     refs = output.output
-    assert [ref.sample_index for ref in refs] == [0, 1]
-    assert refs[0].object_ref == refs[1].object_ref
     assert all(isinstance(ref, MediaReference) for ref in refs)
+    # One object per generation batch, as the rank staged it.
+    assert [ref.sample_index for ref in refs] == [0, 0]
+    assert refs[0].object_ref != refs[1].object_ref
     assert {ref.nbytes for ref in refs} == {3 * 32 * 32}
 
 
