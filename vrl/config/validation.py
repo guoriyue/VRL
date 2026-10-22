@@ -47,8 +47,7 @@ def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolic
 class CompileConflict:
     """One feature that cannot coexist with the requested torch.compile."""
 
-    # The config feature that collides, stable for programmatic filtering
-    # (the runtime checkpointing pass re-checks only its own entry).
+    # The config feature that collides, stable for programmatic filtering.
     feature: str
     message: str
 

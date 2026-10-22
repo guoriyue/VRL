@@ -102,13 +102,10 @@ def torch_compile_for_role(
     """Resolve one raw ``model.torch_compile`` block for one build role.
 
     The single (block, role) -> compile decision. Consumers: the
-    ``ModelBuild.torch_compile`` property (role from the build itself), the
-    config-load compile matrix, and the two trainer-side runtime guards
-    (FSDP2 in ``trainers/strategy.py``, grad-checkpointing in
-    ``trainers/activation_checkpointing.py``) — all replay-role questions
-    asked before a build exists. One definition so a scope added here cannot
-    leave a guard reading the raw ``enable`` key and vetoing a role it does
-    not bind.
+    ``ModelBuild.torch_compile`` property (role from the build itself) and the
+    config-load compile matrix, which asks before a build exists. One
+    definition so a scope added here cannot leave the matrix reading the raw
+    ``enable`` key and vetoing a role it does not bind.
 
     ``block`` is the typed ``TorchCompileSection`` (RootConfig) or the plain
     mapping ``ModelBuild.model_config`` carries across the process boundary;
@@ -342,9 +339,9 @@ class ModelBuild:
         """``model.torch_compile`` block only when it covers this build's role.
 
         ``scope`` narrows compilation to one side of the rollout/replay split:
-        under gradient checkpointing or FSDP2 the replay policy must stay
-        eager while the rollout policy can still compile (and mirrored for
-        sequence-parallel rollouts). The role is decided by the build itself —
+        a recipe can keep a measured eager replay (or full_cpu checkpointing)
+        while the rollout policy compiles, and mirrored for sequence-parallel
+        rollouts. The role is decided by the build itself —
         ``rollout`` present or ``None`` — so every consumer (the rollout
         ``CompilePass``, ``build_family_replay_runtime_bundle``, the loader's
         quantization conflict) reads one role-correct answer instead of
