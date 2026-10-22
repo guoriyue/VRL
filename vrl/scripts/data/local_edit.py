@@ -162,9 +162,8 @@ def rows_from_omniedit(
     resamples the reference to its own geometry, as it did for 442 px COCO crops).
     """
 
-    from PIL import Image
-
     from datasets import load_dataset
+    from PIL import Image
 
     rng = random.Random(seed)
     (out / "img").mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,7 @@ if __name__ == "__main__":
     ruff = ruff_bin()
     status = 0
     # Only the tracked tree: runfiles also hold rules_python's generated bootstrap.
-    roots = ["vrl", "tests", "tools"]
+    roots = ["vrl", "reward", "tests", "tools"]
     exclude = ["--exclude", "*_stage2_bootstrap.py,*.venv"]
     for command in (["check", *roots], ["format", "--check", *roots]):
         status |= subprocess.run([ruff, *command, "--no-cache", *exclude], check=False).returncode

@@ -79,7 +79,7 @@ py_binary(
 # Lint gates. They read sources from runfiles, so the tracked tree is data.
 filegroup(
     name = "python_sources",
-    srcs = glob(["vrl/**/*.py"]) + [
+    srcs = glob(["vrl/**/*.py", "reward/**/*.py"]) + [
         "pyproject.toml",
         "//tests:python_sources",
         "//tools:python_sources",

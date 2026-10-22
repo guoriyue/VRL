@@ -193,6 +193,9 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["vrl"]
+# The untracked datasets/ data directory at the repo root is not a package;
+# without this a local checkout sorts Hugging Face `datasets` as first-party.
+known-third-party = ["datasets"]
 
 [tool.ruff.format]
 quote-style = "double"
