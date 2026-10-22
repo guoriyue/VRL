@@ -6,8 +6,10 @@ with ``materialize_weights=False``) and ``prepare_model`` fills it after
 sharding from rank 0's tensors, so a checkpoint is read into host memory once
 per node. Two real gloo ranks on a tiny real ``SD3Transformer2DModel``: every
 gathered parameter and every buffer must equal rank 0's pre-shard values and no
-meta storage may survive, for both the fully sharded and the adapter-only
-(replicated frozen base) layouts.
+meta storage may survive, for the fully sharded and the adapter-only
+(replicated frozen base) layouts, and for a root the replay build compiled
+(``torch_compile_transformer`` with ``regional=False``), whose state-dict keys
+carry ``torch.compile``'s ``_orig_mod.`` prefix.
 """
 
 from __future__ import annotations
@@ -73,6 +75,7 @@ def _run_rank(
     queue: mp.Queue,
     repo: str,
     shard_trainable_only: bool,
+    compiled: bool,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -99,10 +102,12 @@ def _run_rank(
             if rank == 0
             else None
         )
+        if compiled:
+            policy.torch_compile_transformer("default")
 
         strategy.prepare_model(policy)
 
-        transformer = policy.transformer
+        transformer = getattr(policy.transformer, "_orig_mod", policy.transformer)
         meta_left = any(t.is_meta for t in (*transformer.parameters(), *transformer.buffers()))
         # Compare every tensor with rank 0's reference: gather DTensor shards to full
         # values, then broadcast rank 0's reference for the equality check.
@@ -121,9 +126,11 @@ def _run_rank(
         dist.destroy_process_group()
 
 
-@pytest.mark.parametrize("shard_trainable_only", [False, True])
+@pytest.mark.parametrize(
+    ("shard_trainable_only", "compiled"), [(False, False), (True, False), (False, True)]
+)
 def test_non_primary_ranks_are_filled_from_rank_zero(
-    tmp_path: Path, shard_trainable_only: bool
+    tmp_path: Path, shard_trainable_only: bool, compiled: bool
 ) -> None:
     repo = tmp_path / "tiny-sd3"
     build_tiny_transformer("sd3", seed=123).save_pretrained(repo / "transformer")
@@ -136,7 +143,7 @@ def test_non_primary_ranks_are_filled_from_rank_zero(
             trainable=trainable,
         )
         for rank, (skeleton_before, meta_left, mismatched, trainable) in run_ranks(
-            _run_rank, 2, str(repo), shard_trainable_only, timeout=300
+            _run_rank, 2, str(repo), shard_trainable_only, compiled, timeout=300
         ).items()
     }
     # Only the non-primary rank built a skeleton; nothing stays on meta afterwards.

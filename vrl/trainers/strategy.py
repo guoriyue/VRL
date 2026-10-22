@@ -511,6 +511,7 @@ class FSDPStrategy(TrainerParking):
 
     def prepare_model(self, model: Any) -> Any:
         """Shard the policy's trainable transformer in place and return the policy."""
+        from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import (
             apply_fsdp,
             mixed_precision_policy,
@@ -540,7 +541,13 @@ class FSDPStrategy(TrainerParking):
                 self._match_primary_dtypes(handle)
                 # Plain host tensors on the primary; fully_shard swaps the module's
                 # parameters for DTensors but leaves these references intact.
-                sources[name] = dict(handle.state_dict()) if self.context.is_primary else {}
+                # DCP's set_model_state_dict keys a compiled root without
+                # torch.compile's ``_orig_mod.`` prefix; take the source there too.
+                sources[name] = (
+                    dict(unwrap_compile_and_ddp(handle).state_dict())
+                    if self.context.is_primary
+                    else {}
+                )
 
         for name, handle, _writer in handles:
             if self._shard_trainable_only:
