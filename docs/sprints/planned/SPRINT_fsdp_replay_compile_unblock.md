@@ -110,6 +110,8 @@ SD3.5 Medium，batch 2，512px：
 
 据此 `config(validation)` 删掉了 compile × FSDP 冲突。现在 FSDP replay 和单进程 replay 的 compile 规则一致，selective/full_cpu AC 和 SP 仍然拒绝。回归测试：`tests/trainers/test_fsdp_compile_distributed.py`（regional 和 root 两种，各加 full AC，约 40 s）。写这个测试时还发现一个陷阱：spawn 出来的 rank 不在 conftest 的 CUDA pin 范围内，inductor 会在第一个 checkpoint 前向里初始化 CUDA，`torch.utils.checkpoint` 不允许这样，所以测试里的 rank 隐藏了 CUDA。
 
+**补充（2026-10-21 晚，CPU 端到端）。** 用 tiny SANA 的真实栈在 CPU/gloo 上跑完整的 online recipe 时发现：上面的测试让每个 rank 都持有真实权重，没有走到真实运行的路径。真实运行中只有 rank 0 加载权重，其他 rank 建 meta 骨架，再由 rank 0 填充。FSDP 加 root compile 时，rank 0 的填充源带着 `_orig_mod.` 前缀，DCP 报 `Missing key`，所以每个多卡运行都会在 `prepare_model` 崩掉。已修：`trainers(fsdp): fill a root-compiled skeleton from unprefixed primary keys`。回归测试在 `tests/trainers/test_fsdp_primary_weight_fill.py`，加了 root compile 一行：修复前失败，修复后通过。修复后 2 rank FSDP + compile 的完整 recipe 跑 3 个 epoch，loss 和 grad_norm 与 eager FSDP 在 6 位小数内一致；从这个 checkpoint 2→1 卡 resume，与 eager 的 2→1 resume 相差约 1e-5。CPU 上要让 recipe 跑多 rank，测试驱动里把 `DistributedTrainingContext.from_root` 的设备换成了 cpu（生产代码对 fsdp/ddp 固定用 `cuda:<local_rank>`），所以 CUDA 设备映射和 NCCL 没有覆盖到。tiny SANA 没有重复 block，regional compile 没法在这条路径上测。
+
 仍未测：NCCL 下多卡的速度和显存。上面单 rank 的表说明 compile 能快 25–30%，多卡是否保持这个比例要有第二张卡才能测。各 FSDP preset 仍然用 eager，注释已改成"允许但该配方未实测"。
 
 ### 数值上的限制（决定了 compile 能用在哪里）
