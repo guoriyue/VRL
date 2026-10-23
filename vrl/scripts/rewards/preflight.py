@@ -39,7 +39,6 @@ import torch
 from vrl.config.loading import load_config
 from vrl.models.families.semantics import task_modality
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.scripts.eval._device import resolve_eval_device
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +257,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             cfg,
             prompts=args.prompts,
             use_eval_manifest=bool(args.eval),
-            device=resolve_eval_device(args.device),
+            device=torch.device(
+                ("cuda:0" if torch.cuda.is_available() else "cpu")
+                if args.device == "auto"
+                else args.device
+            ),
             seed=int(args.seed),
         )
     except Exception:
