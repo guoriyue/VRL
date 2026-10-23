@@ -18,8 +18,8 @@ every `vrl` Bazel target; the main repo (`vrl/`) needs no `sys.path` injection.
 | submodule        | exposes                                                       |
 | ---------------- | ------------------------------------------------------------ |
 | `videophy`       | `mplug_owl_video`                                            |
-| `VMBench`        | _(not imported — run via CLI)_ motion-eval benchmark; fold scores in with `--merge-json` |
-| `DynamicEval`    | _(not imported — run via CLI)_ dynamic-scene eval; fold scores in with `--merge-json` |
+| `VMBench`        | _(not imported — run via CLI)_ motion-eval benchmark          |
+| `DynamicEval`    | _(not imported — run via CLI)_ dynamic-scene eval             |
 | `vdn-minimax-h3` | `src` — VDN-H3 hybrid window-softmax / linear attention (see the name note below) |
 
 

@@ -36,14 +36,6 @@ vrl_library(
     requirements = videoeval_requirements,
 )
 
-# bazel run //:video_reward_suite -- ...   (fixed video-eval suite)
-py_binary(
-    name = "video_reward_suite",
-    srcs = ["vrl/scripts/eval/video_reward_suite.py"],
-    main = "vrl/scripts/eval/video_reward_suite.py",
-    deps = [":vrl_videoeval"],
-)
-
 # Shared-GPU topology: the model/reward stack plus vLLM's CuMem allocator for
 # memory parking. Both hubs come from one uv.lock and every shared pin is
 # identical, so this is the README's "vllm --no-deps overlay" made explicit.

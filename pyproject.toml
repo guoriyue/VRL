@@ -120,10 +120,10 @@ ocr = [
 ar-vllm = [
     "vllm>=0.21.0,<0.22",
 ]
-# Fixed video-eval suite extras (vrl/scripts/eval/video_reward_suite.py). VBench
-# is PyPI-packaged so it is a dependency here; the other motion-eval benchmarks
+# VBench video-eval stack (Bazel target //:vrl_videoeval). VBench is
+# PyPI-packaged so it is a dependency here; the other motion-eval benchmarks
 # (VMBench, DynamicEval) ship no packaging and are vendored as submodules under
-# third_party/ — run their CLIs and fold results in via --merge-json.
+# third_party/ — run their CLIs.
 videoeval = [
     "vbench==0.1.5",
 ]
