@@ -63,11 +63,20 @@ resident on a 48 GB card.
 rendered scenes with full per-layer truth (`algorithm.kind: diffusion_sft`, the
 offline `OfflineSFTTrainer`). `vrl/scripts/denoise/encode_layered_scenes.py`
 caches each scene's condition tokens, prompt embeds, packed target frames and
-token weights with the family model; `vrl/scripts/eval/layered_decompose_eval.py`
-decomposes cached scenes with one adapter and scores the known-layer axes. It
-takes the same `--config` and overrides as training, plus `--adapter` (omit it
-for the base model), `--seeds` and `--output`; pass `data.split=heldout` to
-evaluate the held-out scenes. The
+token weights with the family model. It takes the same `--config` and overrides
+as `vrl-train` and encodes every `<split>/` directory under each `data.manifest`
+root:
+
+```bash
+python -m vrl.scripts.denoise.encode_layered_scenes \
+  --config experiment/qwen_image_layered/offline_sft_layered_scenes \
+  model.use_lora=false model.lora=null
+```
+
+`vrl/scripts/eval/layered_decompose_eval.py` decomposes cached scenes with one
+adapter and scores the known-layer axes. It takes the same `--config` and
+overrides as training, plus `--adapter` (omit it for the base model), `--seeds`
+and `--output`; pass `data.split=heldout` to evaluate the held-out scenes. The
 experiments and the data layout are in `archive/main-20261016:docs/research/layering_scene_family/`.
 
 ## Smoke

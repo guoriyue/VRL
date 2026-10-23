@@ -2,28 +2,29 @@
 
 Each scene directory holds ``source.png`` and, when it carries truth, one
 ``layer_<i>.png`` per layer (back to front) plus an optional
-``inferable_mask.png``. The family model of ``--experiment`` encodes the source
-into condition tokens and prompt embeds (``encode_prompt``) and the frames into
-packed target latents (``encode_video_to_latents``), so the cache is pinned to
-the model revision the run trains with. The transparent spare-layer target
-``empty_frame.pt`` is written beside the splits. The contract is documented in
+``inferable_mask.png``. A scene without layers is truth-free: it caches only
+its conditioning, with ``sampling.layers`` as its layer budget. The family
+model of ``--config`` encodes the source into condition tokens and prompt
+embeds (``encode_prompt``) and the frames into packed target latents
+(``encode_video_to_latents``), so the cache is pinned to the model revision
+the run trains with. Every root of ``data.manifest`` is encoded, every
+``<split>/`` directory under it; scenes that already hold ``cache.pt`` are
+skipped. The transparent spare-layer target ``empty_frame.pt`` is written
+beside the splits. The contract is documented in
 ``vrl/trainers/data/layered_scenes.py``.
 
     python -m vrl.scripts.denoise.encode_layered_scenes \\
-        --experiment qwen_image_layered/offline_sft_layered_scenes \\
-        --root data/layered_scenes/dataset_v3 --splits train heldout model.use_lora=false
+        --config experiment/qwen_image_layered/offline_sft_layered_scenes \\
+        data.manifest=data/layered_scenes/dataset_v3 model.use_lora=false model.lora=null
 
-Truth-free photos become scenes first: ``--photos a.jpg b.jpg --out DIR --layers 6``
-center-crops each to the sampling size under ``DIR/test/scene_r<NN>/source.png``
-and caches it with that fixed layer budget. On a 32 GB card add
-``precision.rollout.quantization.format=fp8`` so the full pipeline loads.
+On a 32 GB card add ``precision.rollout.quantization.format=fp8`` so the full
+pipeline loads.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -35,40 +36,13 @@ DEFAULT_PROMPT = "a clean, well composed image"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--experiment", required=True, help="experiment config name")
-    parser.add_argument("--root", type=Path, help="dataset root holding <split>/<scene>/")
-    parser.add_argument("--splits", nargs="+", default=["train", "heldout"])
-    parser.add_argument("--photos", nargs="+", type=Path, help="photos to crop into --out/test")
-    parser.add_argument("--out", type=Path, help="dataset root the photos are written to")
-    parser.add_argument("--layers", type=int, help="layer budget cached for truth-free photos")
-    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="the fixed decomposition prompt")
-    parser.add_argument("--source-note", help="provenance and license of the photos")
-    parser.add_argument("--device", default=None, help="cuda/cpu (default: cuda if available)")
-    parser.add_argument("--limit", type=int, default=None, help="encode only the first N scenes")
+    parser.add_argument("--config", required=True, help="Bundled config name or YAML path.")
     parser.add_argument("overrides", nargs="*", help="preset overlays and dotlist overrides")
     return parser
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def crop_photo(photo: Path, scene: Path, *, height: int, width: int) -> dict[str, Any]:
-    """Center-crop ``photo`` to the sampling aspect, resize it and write ``scene/source.png``."""
-
-    from PIL import Image
-
-    scene.mkdir(parents=True, exist_ok=True)
-    image = Image.open(photo).convert("RGB")
-    w, h = image.size
-    scale = min(w / width, h / height)
-    crop_w, crop_h = round(width * scale), round(height * scale)
-    left, top = (w - crop_w) // 2, (h - crop_h) // 2
-    image = image.crop((left, top, left + crop_w, top + crop_h)).resize(
-        (width, height), Image.Resampling.LANCZOS
-    )
-    image.save(scene / "source.png")
-    return {"scene": scene.name, "photo": str(photo), "original_size": [w, h]}
 
 
 def scene_frames(scene: Path, layer_count: int) -> Any:
@@ -94,9 +68,13 @@ def encode_scene(
     prompt: str,
     height: int,
     width: int,
-    layers: int | None = None,
+    layers: int,
 ) -> dict[str, Any]:
-    """Cache one scene: conditioning for every scene, targets and weights when it has truth."""
+    """Cache one scene: conditioning for every scene, targets and weights when it has truth.
+
+    ``layers`` is the budget recorded for a truth-free scene; a scene with
+    ``layer_*.png`` records its own layer count.
+    """
 
     import torch
     from PIL import Image
@@ -113,8 +91,6 @@ def encode_scene(
         )
     layer_paths = sorted(scene.glob("layer_*.png"))
     layer_count = len(layer_paths)
-    if layer_count == 0 and layers is None:
-        raise ValueError(f"{scene} has no layer_*.png; pass --layers for a truth-free photo")
     with torch.no_grad():
         encoded = model.encode_prompt(
             prompt,
@@ -136,7 +112,7 @@ def encode_scene(
         "prompt": prompt,
         "height": height,
         "width": width,
-        "layers": layer_count or int(layers),
+        "layers": layer_count or layers,
         "source_sha256": _sha256(scene / "source.png"),
     }
     if layer_count:
@@ -158,47 +134,25 @@ def encode_scene(
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO)
-    if (args.root is None) == (args.photos is None):
-        raise ValueError("pass exactly one of --root or --photos")
-    if args.photos is not None and (args.out is None or args.layers is None):
-        raise ValueError("--photos needs --out and --layers")
 
     import torch
 
+    from vrl.config.data import manifest_sources
     from vrl.config.loading import load_config
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
     from vrl.trainers.data.layered_scenes import EMPTY_FRAME_FILE, LAYERED_SCENE_CACHE
 
-    cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)
-    root = parse_config(cfg)
-    if root.model is None or root.sampling is None:
-        raise ValueError("scene encoding requires model and sampling configuration")
+    root = parse_config(load_config(args.config, overrides=args.overrides))
+    if root.model is None or root.sampling is None or root.data is None:
+        raise ValueError("scene encoding requires model, sampling and data configuration")
     entry = get_model_family_entry(str(root.model.family))
     if entry.family != "qwen_image_layered":
         raise ValueError(f"layered scenes encode through qwen_image_layered, not {entry.family!r}")
     height, width = int(root.sampling.height), int(root.sampling.width)
-    device = torch.device(
-        args.device
-        if args.device is not None
-        else ("cuda" if torch.cuda.is_available() else "cpu"),
-    )
-
-    if args.photos is not None:
-        rows = [
-            crop_photo(
-                photo, args.out / "test" / f"scene_r{index:02d}", height=height, width=width
-            )
-            for index, photo in enumerate(args.photos)
-        ]
-        card = {"layers": args.layers, "rows": rows, "scope": "Truth-free evaluation only."}
-        if args.source_note:
-            card["source"] = args.source_note
-        (args.out / "photos.json").write_text(json.dumps(card, indent=2) + "\n")
-        dataset_root, splits = args.out, ["test"]
-    else:
-        dataset_root, splits = args.root, args.splits
+    layers = int(root.sampling.layers)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     build = entry.resolve_model_build(
         root,
@@ -213,34 +167,38 @@ def main(argv: list[str] | None = None) -> None:
         "model_revision": str(root.model.revision or ""),
     }
 
-    empty_path = dataset_root / EMPTY_FRAME_FILE
-    if not empty_path.exists():
-        with torch.no_grad():
-            latent = model.encode_video_to_latents(
-                torch.zeros(1, 4, 1, height, width, device=device)
-            )
-        torch.save({"latent": latent.detach().float().cpu(), **provenance}, empty_path)
-        logger.info("wrote the transparent spare-layer target to %s", empty_path)
+    for source in manifest_sources(root.data.manifest):
+        dataset_root = Path(source).expanduser()
+        empty_path = dataset_root / EMPTY_FRAME_FILE
+        if not empty_path.exists():
+            with torch.no_grad():
+                latent = model.encode_video_to_latents(
+                    torch.zeros(1, 4, 1, height, width, device=device)
+                )
+            torch.save({"latent": latent.detach().float().cpu(), **provenance}, empty_path)
+            logger.info("wrote the transparent spare-layer target to %s", empty_path)
 
-    done = 0
-    for split in splits:
-        scenes = sorted(p for p in (dataset_root / split).glob("*") if (p / "source.png").exists())
-        for scene in scenes[: args.limit]:
-            if (scene / LAYERED_SCENE_CACHE).exists():
-                continue
-            cache = encode_scene(
-                model, scene, prompt=args.prompt, height=height, width=width, layers=args.layers
-            )
-            torch.save({**cache, **provenance, "split": split}, scene / LAYERED_SCENE_CACHE)
-            done += 1
-            logger.info(
-                "cached %s/%s layers=%d %s",
-                split,
-                scene.name,
-                cache["layers"],
-                {k: round(v, 4) for k, v in cache.get("weight_stats", {}).items()},
-            )
-    logger.info("cached %d scenes under %s", done, dataset_root)
+        done = 0
+        for split_dir in sorted(p for p in dataset_root.iterdir() if p.is_dir()):
+            scenes = sorted(p for p in split_dir.iterdir() if (p / "source.png").exists())
+            for scene in scenes:
+                if (scene / LAYERED_SCENE_CACHE).exists():
+                    continue
+                cache = encode_scene(
+                    model, scene, prompt=DEFAULT_PROMPT, height=height, width=width, layers=layers
+                )
+                torch.save(
+                    {**cache, **provenance, "split": split_dir.name}, scene / LAYERED_SCENE_CACHE
+                )
+                done += 1
+                logger.info(
+                    "cached %s/%s layers=%d %s",
+                    split_dir.name,
+                    scene.name,
+                    cache["layers"],
+                    {k: round(v, 4) for k, v in cache.get("weight_stats", {}).items()},
+                )
+        logger.info("cached %d scenes under %s", done, dataset_root)
 
 
 if __name__ == "__main__":

@@ -1,17 +1,15 @@
-"""CPU tests for the layered scene encoder: cropping, frame stacking and the cache it writes."""
+"""CPU tests for the layered scene encoder: frame stacking and the cache it writes."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
 
-from vrl.scripts.denoise import encode_layered_scenes
-from vrl.scripts.denoise.encode_layered_scenes import crop_photo, encode_scene, scene_frames
+from vrl.scripts.denoise.encode_layered_scenes import encode_scene, scene_frames
 
 _SIZE = 64
 _TOKENS = (_SIZE // 16) ** 2
@@ -59,22 +57,6 @@ def _scene(root: Path, *, inferable: bool) -> Path:
     return scene
 
 
-def test_crop_photo_keeps_the_center_at_the_sampling_aspect(tmp_path) -> None:
-    photo = np.zeros((60, 100, 3), dtype=np.uint8)
-    photo[:, 20:80] = 255  # the central 60x60 is white
-    Image.fromarray(photo, "RGB").save(tmp_path / "photo.png")
-
-    row = crop_photo(tmp_path / "photo.png", tmp_path / "scene", height=32, width=32)
-
-    cropped = np.asarray(Image.open(tmp_path / "scene" / "source.png"))
-    assert cropped.shape == (32, 32, 3) and cropped.min() == 255
-    assert row == {
-        "scene": "scene",
-        "photo": str(tmp_path / "photo.png"),
-        "original_size": [100, 60],
-    }
-
-
 def test_scene_frames_put_the_opaque_source_before_the_layers(tmp_path) -> None:
     scene = _scene(tmp_path, inferable=False)
 
@@ -90,7 +72,7 @@ def test_encode_scene_caches_conditioning_targets_and_raised_weights(tmp_path) -
     scene = _scene(tmp_path, inferable=True)
     model = _FakeLayeredModel()
 
-    cache = encode_scene(model, scene, prompt="a clean image", height=_SIZE, width=_SIZE)
+    cache = encode_scene(model, scene, prompt="a clean image", height=_SIZE, width=_SIZE, layers=4)
 
     assert model.calls[0]["prompt"] == "a clean image"
     assert (model.calls[0]["height"], model.calls[0]["width"]) == (_SIZE, _SIZE)
@@ -111,20 +93,19 @@ def test_scene_without_inferable_mask_gets_uniform_weights(tmp_path) -> None:
         prompt="p",
         height=_SIZE,
         width=_SIZE,
+        layers=4,
     )
 
     torch.testing.assert_close(cache["weights_weighted"], torch.ones(1, 3 * _TOKENS, 1))
     assert cache["weight_stats"] == {}
 
 
-def test_truth_free_photo_needs_a_layer_budget_and_caches_no_target(tmp_path) -> None:
+def test_truth_free_scene_records_the_layer_budget_and_caches_no_target(tmp_path) -> None:
     scene = tmp_path / "scene_r00"
     scene.mkdir()
     Image.new("RGB", (_SIZE, _SIZE)).save(scene / "source.png")
     model = _FakeLayeredModel()
 
-    with pytest.raises(ValueError, match="--layers"):
-        encode_scene(model, scene, prompt="p", height=_SIZE, width=_SIZE)
     cache = encode_scene(model, scene, prompt="p", height=_SIZE, width=_SIZE, layers=6)
 
     assert cache["layers"] == 6 and "target_latents" not in cache
@@ -134,18 +115,4 @@ def test_truth_free_photo_needs_a_layer_budget_and_caches_no_target(tmp_path) ->
 def test_source_at_another_size_is_refused(tmp_path) -> None:
     scene = _scene(tmp_path, inferable=False)
     with pytest.raises(ValueError, match="sampling size"):
-        encode_scene(_FakeLayeredModel(), scene, prompt="p", height=32, width=32)
-
-
-def test_entrypoint_rejects_ambiguous_inputs_before_loading_anything(monkeypatch) -> None:
-    monkeypatch.setattr(
-        encode_layered_scenes,
-        "build_parser",
-        lambda: SimpleNamespace(
-            parse_args=lambda argv: SimpleNamespace(
-                root=Path("scenes"), photos=[Path("a.jpg")], out=None, layers=None
-            )
-        ),
-    )
-    with pytest.raises(ValueError, match="exactly one of --root or --photos"):
-        encode_layered_scenes.main([])
+        encode_scene(_FakeLayeredModel(), scene, prompt="p", height=32, width=32, layers=4)
