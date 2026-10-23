@@ -10,6 +10,8 @@ manifest for Wan I2V training:
 
 The generated PNGs and manifests live under ``data/external`` (or
 ``VRL_DATA_ROOT``) so binary artifacts never get committed to git.
+
+    python -m vrl.scripts.data.videophy_i2v
 """
 
 from __future__ import annotations
@@ -28,7 +30,6 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 
-from vrl.scripts.data.common import default_cache_dir, emit
 from vrl.utils.json_files import write_json, write_jsonl
 from vrl.utils.paths import RootedPaths, repo_root, user_path
 
@@ -38,7 +39,6 @@ DEFAULT_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("videophysics/videophy2_train", "videophy2_training.csv", "train"),
     ("videophysics/videophy2_test", "videophy2_test.csv", "test"),
 )
-COMMAND_NAME = "videophy-i2v"
 DATASET_NAME = "videophy_i2v"
 DECODE_METHOD = "imageio_ffmpeg_first_frame"
 
@@ -81,8 +81,10 @@ class SelectedVideo:
     source_row: VideoPhyVideoRow
 
 
-def register(subparsers: Any) -> None:
-    parser = subparsers.add_parser(COMMAND_NAME)
+def main(argv: Sequence[str] | None = None) -> None:
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--source",
         action="append",
@@ -98,7 +100,6 @@ def register(subparsers: Any) -> None:
         "--eval-prompts", type=Path, default=repo_root() / "manifests/videophy/eval.txt"
     )
     parser.add_argument("--data-root", type=Path, default=None)
-    parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     parser.add_argument("--width", type=int, default=832)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument(
@@ -112,18 +113,37 @@ def register(subparsers: Any) -> None:
         action="store_true",
         help="Keep downloaded mp4 files under data/external instead of deleting them after frame extraction.",
     )
-    parser.set_defaults(func=_cmd_videophy_i2v)
+    args = parser.parse_args(argv)
 
-
-def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    return ((f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),)
-
-
-def expected_manifest_sources() -> dict[str, str]:
-    return {
-        f"data/external/{DATASET_NAME}/manifests/train.jsonl": "manifests/videophy/train.txt",
-        f"data/external/{DATASET_NAME}/manifests/eval.jsonl": "manifests/videophy/eval.txt",
-    }
+    data_root = RootedPaths.data_root(args.data_root).root
+    specs: list[tuple[str, str, str]] = []
+    for spec in args.source or ():
+        parts = spec.split(":")
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
+        specs.append((parts[0], parts[1], parts[2]))
+    sources = [
+        VideoPhySource(
+            repo_id=repo_id,
+            csv_file=csv_file,
+            split=split,
+            csv_path=HuggingFaceRepoRevision(repo_id, "main").download_file(
+                csv_file, repo_type="dataset"
+            ),
+        )
+        for repo_id, csv_file, split in (specs or DEFAULT_SOURCES)
+    ]
+    report = prepare_videophy_i2v_dataset(
+        sources=sources,
+        train_prompts=user_path(args.train_prompts),
+        eval_prompts=user_path(args.eval_prompts),
+        data_root=data_root,
+        limit=args.limit,
+        keep_videos=args.keep_videos,
+        width=args.width,
+        height=args.height,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
 
 
 def prepare_videophy_i2v_dataset(
@@ -417,40 +437,6 @@ def _resize_image(image_path: Path, *, width: int, height: int) -> tuple[int, in
     return original_size
 
 
-def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
-    from vrl.utils.hf_hub import HuggingFaceRepoRevision
-
-    data_root = RootedPaths.data_root(args.data_root).root
-    specs: list[tuple[str, str, str]] = []
-    for spec in args.source or ():
-        parts = spec.split(":")
-        if len(parts) != 3 or not all(parts):
-            raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
-        specs.append((parts[0], parts[1], parts[2]))
-    sources = [
-        VideoPhySource(
-            repo_id=repo_id,
-            csv_file=csv_file,
-            split=split,
-            csv_path=HuggingFaceRepoRevision(repo_id, "main").download_file(
-                csv_file, repo_type="dataset", cache_dir=args.cache_dir
-            ),
-        )
-        for repo_id, csv_file, split in (specs or DEFAULT_SOURCES)
-    ]
-    report = prepare_videophy_i2v_dataset(
-        sources=sources,
-        train_prompts=user_path(args.train_prompts),
-        eval_prompts=user_path(args.eval_prompts),
-        data_root=data_root,
-        limit=args.limit,
-        keep_videos=args.keep_videos,
-        width=args.width,
-        height=args.height,
-    )
-    emit(report)
-
-
 def _read_prompts(path: Path) -> list[str]:
     return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -477,10 +463,12 @@ __all__ = [
     "SelectedVideo",
     "VideoPhySource",
     "VideoPhyVideoRow",
-    "expected_manifest_sources",
     "load_videophy_video_rows",
-    "manifest_setup_hints",
+    "main",
     "prepare_videophy_i2v_dataset",
-    "register",
     "select_videos_for_prompts",
 ]
+
+
+if __name__ == "__main__":
+    main()

@@ -167,7 +167,7 @@
 |---|---|---|---|---|
 | G1 | reward 失败走显式策略（drop 样本 / drop 组 / 重试 / 失败整步），不静默 0、也不一律整步失败 | S2 RFC；MiMo GAR "grader 输出不可用时回退原 advantage" | `vrl/rewards/runtime.py` 超时路径；`MultiReward.score_batch` | 小 |
 | G2 | prompt 集分类法字段（类别、运动类型、难度档）+ 按类别报告 reward | D4 HunyuanVideo 100+ 类、Lens 分类法、Qwen 按类别权重 | manifest metadata、`provenance.py` spec、`analyze_scores` 分层（复用 `reward paired --stratify-by`） | 小 |
-| G3 | 语义级去重与 train/eval 泄漏检查（顺序不同 / 同义改写 / n-gram） | D1 9-gram、D4 Flow-GRPO 顺序去重 | `vrl/scripts/data/common.py`，`report.json` 的 `prompt_overlap` 扩展为近似重叠 | 小 |
+| G3 | 语义级去重与 train/eval 泄漏检查（顺序不同 / 同义改写 / n-gram） | D1 9-gram、D4 Flow-GRPO 顺序去重 | 各构建脚本写 `report.json` 处，`prompt_overlap` 扩展为近似重叠 | 小 |
 | G4 | 离线难度剖面：目标 checkpoint 每 prompt 采 k 个样本，记极差/方差，写进 manifest | D1、D2、R14 AdaGRPO | 复用 `rescore_media` + `eval.sampling`；输出进 admission 账本 | 中 |
 | G5 | 训练中按阶段剔除已饱和 prompt（POLARIS）/ DAPO 式补采到满 batch | D2、D3 | admission sprint §2 策略 2/3 | 中 |
 | G6 | reward 评估加 best-of-N 选择一致率与低分位域聚合 | §3 PPE、RewardBench 2 | `vrl/rewards/diagnostics.py` 新报告项 | 小 |

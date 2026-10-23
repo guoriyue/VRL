@@ -1,15 +1,16 @@
-"""CLI wiring for importing public LeRobot datasets into Video2World manifests."""
+"""CLI for importing public LeRobot datasets into Video2World manifests.
+
+python -m vrl.scripts.data.video_world.cli {video-world-bridge,video-world-targets}
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import (
-    default_cache_dir,
-    emit,
-)
 from vrl.scripts.data.manifest_artifacts import DatasetFileReport
 from vrl.scripts.data.video_world.dataset_index import (
     build_target_video_world_rows,
@@ -20,28 +21,29 @@ from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_target_clips,
 )
 from vrl.utils.json_files import write_json, write_jsonl
-from vrl.utils.paths import RootedPaths, user_path
+from vrl.utils.paths import RootedPaths
 
 COMMAND_NAME = "video-world-bridge"
 TARGET_COMMAND_NAME = "video-world-targets"
 DATASET_NAME = "video_world"
 
 
-def register(subparsers: Any) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    subparsers = parser.add_subparsers(dest="command", required=True)
     bridge = subparsers.add_parser(COMMAND_NAME)
     bridge.set_defaults(func=_cmd_video_world_bridge)
     targets = subparsers.add_parser(TARGET_COMMAND_NAME)
     targets.set_defaults(func=_cmd_video_world_targets)
-    for parser, limit, name in ((bridge, 50, "robot"), (targets, 100, "droid_targets")):
-        parser.add_argument("--repo-id", default="lerobot/droid_100")
-        parser.add_argument("--limit", type=int, default=limit)
-        parser.add_argument("--eval-limit", type=int, default=8)
-        parser.add_argument("--data-root", type=Path, default=None)
-        parser.add_argument("--manifest-dir", type=Path, default=None)
-        parser.add_argument("--name", default=name)
-        parser.add_argument("--source", default="droid")
-        parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
-        parser.add_argument(
+    for command, limit, name in ((bridge, 50, "robot"), (targets, 100, "droid_targets")):
+        command.add_argument("--repo-id", default="lerobot/droid_100")
+        command.add_argument("--limit", type=int, default=limit)
+        command.add_argument("--eval-limit", type=int, default=8)
+        command.add_argument("--data-root", type=Path, default=None)
+        command.add_argument("--manifest-dir", type=Path, default=None)
+        command.add_argument("--name", default=name)
+        command.add_argument("--source", default="droid")
+        command.add_argument(
             "--camera",
             default="",
             help="observation.images.<name> video key; default = first camera",
@@ -52,30 +54,8 @@ def register(subparsers: Any) -> None:
         default=33,
         help="Maximum frames copied from each public demonstration clip.",
     )
-
-
-def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    full_targets = (
-        TARGET_COMMAND_NAME,
-        "--repo-id",
-        "lerobot/droid_1.0.1",
-        "--name",
-        "droid_full_targets",
-        "--limit",
-        "1000",
-        "--eval-limit",
-        "64",
-        "--camera",
-        "observation.images.exterior_1_left",
-    )
-    targets = (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets")
-    return (
-        (f"data/external/{DATASET_NAME}/manifests/droid_full_targets_", full_targets),
-        (f"data/external/{DATASET_NAME}/droid_full_targets_report.json", full_targets),
-        (f"data/external/{DATASET_NAME}/manifests/droid_targets_", targets),
-        (f"data/external/{DATASET_NAME}/droid_targets_report.json", targets),
-        (f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),
-    )
+    args = parser.parse_args(argv)
+    args.func(args)
 
 
 def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
@@ -84,7 +64,6 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         episodes = iter_lerobot_first_frames(
             args.repo_id,
             limit=args.limit,
-            cache_dir=user_path(args.cache_dir),
             camera=args.camera,
         )
         rows = build_video_world_rows(
@@ -127,7 +106,6 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
         episodes = iter_lerobot_target_clips(
             args.repo_id,
             limit=args.limit,
-            cache_dir=user_path(args.cache_dir),
             camera=args.camera,
             max_target_frames=args.max_target_frames,
         )
@@ -215,13 +193,11 @@ def _write_manifests_and_report(
         "validation_summary": validation_summary,
     }
     write_json(video_root / f"{args.name}_report.json", report)
-    emit(report)
+    print(json.dumps(report, indent=2, sort_keys=True))
 
 
-__all__ = [
-    "COMMAND_NAME",
-    "DATASET_NAME",
-    "TARGET_COMMAND_NAME",
-    "manifest_setup_hints",
-    "register",
-]
+__all__ = ["COMMAND_NAME", "DATASET_NAME", "TARGET_COMMAND_NAME", "main"]
+
+
+if __name__ == "__main__":
+    main()

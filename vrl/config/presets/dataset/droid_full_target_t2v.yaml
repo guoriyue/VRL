@@ -3,7 +3,7 @@
 # target_video remains the clean SFT target and fixed-eval reference.
 # Build the source manifests using droid_full_target_v2w.yaml, then derive this
 # text-only view with:
-#   python -m vrl.scripts.data.setup derive-text-video-targets \
+#   python -m vrl.scripts.data.derive_text_video_targets \
 #     --train-manifest data/external/video_world/manifests/droid_full_targets_train.jsonl \
 #     --eval-manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl \
 #     --data-root data/external \

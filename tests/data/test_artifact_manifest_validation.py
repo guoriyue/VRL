@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from vrl.scripts.data import setup as setup_cli
 from vrl.scripts.data.manifest_artifacts import (
     DatasetFileReport,
 )
@@ -154,30 +153,6 @@ def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
             data_root=tmp_path,
             required_artifact_fields=("reference_images",),
         )
-
-
-def test_setup_cli_creates_ignored_external_dirs(
-    tmp_path: Path,
-) -> None:
-    """``init-dirs video-world`` creates the git-ignored ``references`` and ``targets``
-    directories under the data root.
-    """
-    data_root = tmp_path / "external"
-
-    assert (
-        setup_cli.main(
-            [
-                "init-dirs",
-                "video-world",
-                "--data-root",
-                str(data_root),
-            ],
-        )
-        is None
-    )
-
-    assert (data_root / "video_world" / "references").is_dir()
-    assert (data_root / "video_world" / "targets").is_dir()
 
 
 def test_artifact_field_rejects_non_path_values(tmp_path):

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-from argparse import Namespace
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
-from vrl.scripts.data import bootstrap, setup
+from vrl.scripts.data import derive_text_video_targets
 from vrl.scripts.data.derive_text_video_targets import derive_text_video_rows
 
 
@@ -64,7 +61,7 @@ def _source_row(*, target_video: str, source_episode: str) -> dict[str, object]:
     }
 
 
-def test_setup_cli_derives_and_validates_text_video_manifests(tmp_path: Path) -> None:
+def test_cli_derives_and_validates_text_video_manifests(tmp_path: Path) -> None:
     data_root = tmp_path / "data" / "external"
     targets = data_root / "video_world" / "targets"
     targets.mkdir(parents=True)
@@ -97,9 +94,8 @@ def test_setup_cli_derives_and_validates_text_video_manifests(tmp_path: Path) ->
     )
     output_dir = data_root / "video_world" / "manifests"
 
-    setup.main(
+    derive_text_video_targets.main(
         [
-            "derive-text-video-targets",
             "--train-manifest",
             str(train_source),
             "--eval-manifest",
@@ -120,62 +116,3 @@ def test_setup_cli_derives_and_validates_text_video_manifests(tmp_path: Path) ->
     assert json.loads(eval_output.read_text())["task_type"] == "text_to_video"
     assert report["train_rows"] == report["eval_rows"] == 1
     assert report["validation_summary"]["artifact_count"] == 1
-
-
-def test_bootstrap_returns_canonical_derived_manifest_command(tmp_path: Path) -> None:
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {
-            "loader": "prompt_manifest",
-            "manifest": ("data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl"),
-            "eval_manifest": (
-                "data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl"
-            ),
-            "source_report": (
-                "data/external/video_world/manifests/droid_full_targets_t2v_report.json"
-            ),
-        },
-        repo_root=tmp_path,
-    )
-
-    commands = {f.fetch_command for f in experiment.files}
-    assert experiment.ready is False
-    assert len(commands) == 1
-    command = commands.pop()
-    assert command.startswith(
-        "python -m vrl.scripts.data.setup derive-text-video-targets ",
-    )
-    assert "--data-root data/external" in command
-    assert "--output-dir data/external/video_world/manifests" in command
-
-
-def test_bootstrap_runs_shared_derived_manifest_producer_once(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    config = OmegaConf.create(
-        {
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": (
-                    "data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl"
-                ),
-                "eval_manifest": (
-                    "data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl"
-                ),
-                "source_report": (
-                    "data/external/video_world/manifests/droid_full_targets_t2v_report.json"
-                ),
-            },
-        },
-    )
-    commands: list[list[str]] = []
-    monkeypatch.setattr("vrl.config.loading.load_config", lambda *args, **kwargs: config)
-    monkeypatch.setattr(bootstrap, "_repo_root", lambda: tmp_path)
-    monkeypatch.setattr("vrl.scripts.data.setup.main", commands.append)
-
-    bootstrap._cmd_for_experiment(
-        Namespace(experiment="test/derived", override=[], run=True),
-    )
-
-    assert len(commands) == 1
-    assert commands[0][0] == "derive-text-video-targets"

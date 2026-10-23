@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vrl.scripts.data import bootstrap
 from vrl.scripts.data.videophy_i2v import (
     DECODE_METHOD,
     VideoPhySource,
@@ -196,52 +195,3 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(
     assert Image.open(dataset_root / train_rows[0]["image"]).size == (832, 480)
     assert not list((dataset_root / "videos" / "train").glob("*.mp4"))
     assert (dataset_root / "report.json").exists()
-
-
-def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) -> None:
-    """Missing VideoPhy I2V manifests leave the experiment not ready and point every file at the
-    ``videophy-i2v`` command.
-    """
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {
-            "loader": "prompt_image_manifest",
-            "manifest": "data/external/videophy_i2v/manifests/train.jsonl",
-            "eval_manifest": "data/external/videophy_i2v/manifests/eval.jsonl",
-        },
-        repo_root=tmp_path,
-    )
-
-    assert experiment.ready is False
-    assert all("videophy-i2v" in f.fetch_command for f in experiment.files)
-
-
-def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) -> None:
-    """A manifest with fewer rows than its prompt file is incomplete: the experiment stays not ready
-    with the shortfall reported, while the complete eval split passes.
-    """
-    split_root = tmp_path / "manifests" / "videophy"
-    split_root.mkdir(parents=True)
-    (split_root / "train.txt").write_text("prompt a\nprompt b\n", encoding="utf-8")
-    (split_root / "eval.txt").write_text("prompt c\n", encoding="utf-8")
-    manifest_root = tmp_path / "data" / "external" / "videophy_i2v" / "manifests"
-    manifest_root.mkdir(parents=True)
-    (manifest_root / "train.jsonl").write_text('{"caption":"prompt a"}\n', encoding="utf-8")
-    (manifest_root / "eval.jsonl").write_text('{"caption":"prompt c"}\n', encoding="utf-8")
-
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {
-            "loader": "prompt_image_manifest",
-            "manifest": "data/external/videophy_i2v/manifests/train.jsonl",
-            "eval_manifest": "data/external/videophy_i2v/manifests/eval.jsonl",
-        },
-        repo_root=tmp_path,
-    )
-
-    train_file = next(f for f in experiment.files if f.role == "manifest")
-    eval_file = next(f for f in experiment.files if f.role == "eval_manifest")
-    assert experiment.ready is False
-    assert train_file.rows == 1
-    assert train_file.expected_rows == 2
-    assert train_file.complete is False
-    assert "videophy-i2v" in train_file.fetch_command
-    assert eval_file.complete is True

@@ -12,7 +12,7 @@
 # Checkpoint (reproduce): download model-480p-16fps.pt from nvidia/Cosmos-Predict2-2B-Video2World
 # and run the diffusers cosmos converter (transformer_type=Cosmos-2.0-Diffusion-2B-Video2World),
 # reusing the 720P vae/text_encoder/tokenizer/scheduler. 567/567 transformer keys map exactly.
-# Dataset: python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 \
+# Dataset: python -m vrl.scripts.data.video_world.cli video-world-targets --repo-id lerobot/droid_1.0.1 \
 #   --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
 # Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (full-param video OOMs without it).
 defaults:

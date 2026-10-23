@@ -20,21 +20,16 @@ from typing import Any
 from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
 
-def _lerobot_file(repo_id: str, cache_dir: Path | None, rel: str) -> str:
+def _lerobot_file(repo_id: str, rel: str) -> str:
     """One file of the LeRobot dataset repo, fetched into the Hugging Face cache."""
 
-    return str(
-        HuggingFaceRepoRevision(repo_id, "main").download_file(
-            rel, repo_type="dataset", cache_dir=cache_dir
-        )
-    )
+    return str(HuggingFaceRepoRevision(repo_id, "main").download_file(rel, repo_type="dataset"))
 
 
 def iter_lerobot_first_frames(
     repo_id: str,
     *,
     limit: int,
-    cache_dir: Path,
     camera: str = "",
 ) -> Iterator[dict[str, Any]]:
     """Yield {image, prompt, episode_id} per episode from a real LeRobot dataset.
@@ -48,7 +43,7 @@ def iter_lerobot_first_frames(
     per-camera mp4 with PyAV streamed over HTTP.
     """
 
-    source = _open_lerobot_source(repo_id, cache_dir=cache_dir, camera=camera)
+    source = _open_lerobot_source(repo_id, camera=camera)
     if source is None:
         return
     info, video_key, is_v20, dl = source
@@ -60,7 +55,6 @@ def iter_lerobot_target_clips(
     repo_id: str,
     *,
     limit: int,
-    cache_dir: Path,
     camera: str = "",
     max_target_frames: int = 33,
 ) -> Iterator[dict[str, Any]]:
@@ -69,7 +63,7 @@ def iter_lerobot_target_clips(
     if max_target_frames <= 0:
         raise ValueError("--max-target-frames must be positive")
 
-    source = _open_lerobot_source(repo_id, cache_dir=cache_dir, camera=camera)
+    source = _open_lerobot_source(repo_id, camera=camera)
     if source is None:
         return
     info, video_key, is_v20, dl = source
@@ -87,7 +81,6 @@ def iter_lerobot_target_clips(
 def _open_lerobot_source(
     repo_id: str,
     *,
-    cache_dir: Path,
     camera: str,
 ) -> tuple[dict[str, Any], str, bool, Callable[[str], str]] | None:
     """Read ``meta/info.json``: (info, video key, is the v2.0 layout, file fetcher).
@@ -96,7 +89,7 @@ def _open_lerobot_source(
     ``observation.images.*`` feature.
     """
 
-    dl = functools.partial(_lerobot_file, repo_id, cache_dir)
+    dl = functools.partial(_lerobot_file, repo_id)
     info = json.loads(Path(dl("meta/info.json")).read_text(encoding="utf-8"))
     features = list(info.get("features", {}).keys())
     video_key = camera or next(

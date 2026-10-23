@@ -1,158 +1,18 @@
+"""Video2World row builders: written media, row shape and the Cosmos consumer's view."""
+
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 import imageio.v2 as imageio
 import pytest
-from omegaconf import OmegaConf
 from PIL import Image
 
-from vrl.config.schema import DataConfig
-from vrl.scripts.data import bootstrap, setup, video_world
-from vrl.trainers.data.prompts import (
-    load_prompt_dataset_index,
-    load_prompt_examples_from_config,
-)
+from vrl.scripts.data import video_world
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.json_files import write_jsonl
 from vrl.utils.paths import RootedPaths
-
-
-def _data_config(payload: dict) -> DataConfig:
-    """A parsed ``data`` section; the prompt loaders require a sampler type."""
-
-    payload = dict(payload)
-    payload.setdefault("sampler", {"type": "random_without_replacement"})
-    return DataConfig.model_validate(payload)
-
-
-def test_runtime_data_loader_derives_plain_prompt_manifest(tmp_path: Path) -> None:
-    manifest = tmp_path / "prompts.txt"
-    manifest.write_text("a red fox\n", encoding="utf-8")
-
-    examples = load_prompt_examples_from_config(
-        _data_config(
-            {
-                "manifest": str(manifest),
-                "preprocessing": {"format": "text"},
-            },
-        ),
-    )
-
-    assert [example.prompt for example in examples] == ["a red fox"]
-    assert examples[0].reference_images == []
-
-
-def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> None:
-    manifest = tmp_path / "prompts.jsonl"
-    manifest.write_text(
-        json.dumps({"image": "reference.png", "caption": "a red fox"}) + "\n",
-        encoding="utf-8",
-    )
-
-    examples = load_prompt_examples_from_config(
-        _data_config(
-            {
-                "manifest": str(manifest),
-                "eval_manifest": str(manifest),
-                "preprocessing": {
-                    "format": "image_caption_jsonl",
-                    "image_field": "image",
-                    "caption_field": "caption",
-                    "conditioning": "reference_image",
-                },
-            },
-        ),
-    )
-
-    assert [example.prompt for example in examples] == ["a red fox"]
-    assert examples[0].reference_images == ["reference.png"]
-
-
-def _write_prompts(path: Path, prompts: list[str]) -> Path:
-    path.write_text(
-        "".join(json.dumps({"prompt": prompt}) + "\n" for prompt in prompts),
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_runtime_data_loader_mixes_manifests_by_declared_counts(tmp_path: Path) -> None:
-    """A {path: count} manifest draws exactly that many prompts from each source."""
-    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", [f"anatomy {i}" for i in range(50)])
-    safety = _write_prompts(tmp_path / "safety.jsonl", [f"safety {i}" for i in range(50)])
-
-    examples = load_prompt_examples_from_config(
-        _data_config(
-            {
-                "loader": "prompt_manifest",
-                "manifest": {str(anatomy): 8, str(safety): 2},
-                "mix_seed": 20260818,
-                "preprocessing": {"format": "jsonl"},
-            },
-        ),
-    )
-
-    prompts = [example.prompt for example in examples]
-    assert len(prompts) == 10
-    assert sum(prompt.startswith("anatomy") for prompt in prompts) == 8
-    assert sum(prompt.startswith("safety") for prompt in prompts) == 2
-
-
-def test_runtime_data_loader_mixture_is_seed_reproducible(tmp_path: Path) -> None:
-    """Same spec and seed reproduce the prompt set; a different seed redraws it."""
-    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", [f"anatomy {i}" for i in range(50)])
-    safety = _write_prompts(tmp_path / "safety.jsonl", [f"safety {i}" for i in range(50)])
-
-    def load(seed: int) -> list[str]:
-        data = {
-            "loader": "prompt_manifest",
-            "manifest": {str(anatomy): 8, str(safety): 2},
-            "mix_seed": seed,
-            "preprocessing": {"format": "jsonl"},
-        }
-        return [e.prompt for e in load_prompt_examples_from_config(_data_config(data))]
-
-    assert load(7) == load(7)
-    assert load(7) != load(8)
-
-
-def test_runtime_data_loader_rejects_mixture_count_over_manifest_size(tmp_path: Path) -> None:
-    """Asking for more prompts than a source holds fails loudly, not silently short."""
-    anatomy = _write_prompts(tmp_path / "anatomy.jsonl", ["only one"])
-
-    with pytest.raises(ValueError, match="only 1 available"):
-        load_prompt_examples_from_config(
-            OmegaConf.create(
-                {
-                    "loader": "prompt_manifest",
-                    "manifest": {str(anatomy): 5},
-                    "mix_seed": 20260818,
-                    "preprocessing": {"format": "jsonl"},
-                },
-            ),
-        )
-
-
-def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None:
-    """Each source of a manifest mixture is its own file with a present/populate status."""
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {
-            "loader": "prompt_manifest",
-            "manifest": {
-                "manifests/danbooru/safety/train_c_adherence.jsonl": 6800,
-                "manifests/danbooru/safety/train.jsonl": 1200,
-            },
-        },
-        repo_root=tmp_path,
-    )
-
-    assert [f.path for f in experiment.files] == [
-        "manifests/danbooru/safety/train_c_adherence.jsonl",
-        "manifests/danbooru/safety/train.jsonl",
-    ]
-    assert experiment.ready is False
 
 
 def test_video_world_bridge_rows_match_cosmos_consumer(
@@ -253,46 +113,6 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
     assert rows[0]["task_type"] == "video2world"
     assert rows[0]["metadata"]["source"] == "droid"
     assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
-
-
-def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> None:
-    """A committed prompt manifest marks the experiment's files ready, with its row count
-    and no fetch command.
-    """
-    manifest_dir = tmp_path / "manifests" / "pickscore_sfw"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "train.txt").write_text("a\nb\nc\n", encoding="utf-8")
-
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {"loader": "prompt_manifest", "manifest": "manifests/pickscore_sfw/train.txt"},
-        repo_root=tmp_path,
-    )
-
-    assert experiment.ready is True
-    assert experiment.files[0].present is True
-    assert experiment.files[0].rows == 3
-    assert experiment.files[0].fetch_command == ""
-
-
-def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
-    """``for-experiment`` on the real Wan Kling experiment reports the config's loader and
-    manifest and finds every file present and complete.
-    """
-    from vrl.config.loading import load_config
-
-    experiment = "wan_2_1/online_grpo_kling_video_reward"
-    setup.main(["for-experiment", experiment])
-    out = json.loads(capsys.readouterr().out)
-
-    # Derive expected loader/manifest from the same config the resolver loads, so the
-    # test tracks the dataset group instead of re-typing its YAML strings.
-    data = load_config(f"experiment/{experiment}").data
-    assert out["experiment"] == experiment
-    assert out["loader"] == data.loader
-    # Resolver behavior contract (the real point of the test), not a config literal:
-    assert out["ready"] is True
-    assert all(f["present"] and f["complete"] and f["fetch_command"] == "" for f in out["files"])
-    assert any(f["path"] == data.manifest for f in out["files"])
 
 
 @pytest.mark.parametrize("source_fps", [0, float("nan")])

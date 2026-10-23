@@ -13,8 +13,8 @@
 | `generation/` | Generation-path correctness probes without Ray or a trainer | Long-term verification |
 
 Run installed training commands through `vrl-train`. Other commands expose their
-CLI with `python -m vrl.scripts.<module> --help`; data preparation is routed through
-`python -m vrl.scripts.data.setup --help`.
+CLI with `python -m vrl.scripts.<module> --help`; each dataset builder under `data/`
+runs on its own as `python -m vrl.scripts.data.<name>`.
 
 ## Lifecycle rules
 

@@ -1,6 +1,6 @@
 # Source-backed Video2World target clips from the public LeRobot DROID sample.
 # Build with:
-#   python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_100 --name droid_targets
+#   python -m vrl.scripts.data.video_world.cli video-world-targets --repo-id lerobot/droid_100 --name droid_targets
 data:
   loader: prompt_manifest
   manifest: data/external/video_world/manifests/droid_targets_train.jsonl
