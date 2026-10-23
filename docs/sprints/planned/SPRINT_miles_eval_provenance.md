@@ -13,8 +13,8 @@ Miles 论文 v1 与当前 main 的差异必须保留，不能混成同一份复�
 
 论文 §2.2.4 的可借鉴点是 delayed result attribution，不是重新把 eval 塞入 trainer。
 VRL 已在 `archive/main-20261016:docs/sprints/done/SPRINT_remove_inline_fixed_eval.md` 删除 inline eval。
-`vrl/scripts/eval/image_checkpoint_eval.py::EvaluationPlan` 已记录模型/runtime 身份，
-并校验 checkpoint digest；`vrl/trainers/checkpointing.py` 是 checkpoint owner。
+`vrl/scripts/eval/image_checkpoint_eval.py::CheckpointEvaluation` 已记录模型/runtime 身份、
+有效配置的 hash，并校验 checkpoint digest；`vrl/trainers/checkpointing.py` 是 checkpoint owner。
 
 差距审计必须逐个检查实际 output report 是否保留 run identity、权重对应的 step、
 dispatch/completion 时间和失败原因；已有字段直接复用，不平行创建 manifest。
@@ -41,6 +41,6 @@ dispatch/completion 时间和失败原因；已有字段直接复用，不平行
 
 ## 应改／应留／非目标
 
-改变报告及外部汇总/派发工具；保留 CheckpointTarget、EvaluationPlan 和独立 evaluator。
+改变报告及外部汇总/派发工具；保留 CheckpointArm、CheckpointEvaluation 和独立 evaluator。
 它们是输入身份与执行边界，不因较薄就合并；schema key 常量保留。
 不恢复 `trainer.eval`，不添加共享-engine eval phase，不新建 Ray eval fleet。

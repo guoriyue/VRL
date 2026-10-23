@@ -167,44 +167,58 @@ evidence, not additional requirements for the shared OCR reward.
 
 ## Compose an independent evaluation policy
 
-The shared image checkpoint evaluator loads generator identity and sampling
-from the run's recorded config. Compose its rewards and held-out data at launch,
-without creating a model/reward-specific evaluator or training-experiment YAML:
+The shared image checkpoint evaluator reads everything from one config: the
+run's recorded `resolved_config.yaml` (`--run-dir`), or a bundled recipe or
+absolute YAML path (`--config`, which evaluates the base model alone).
+Positional overrides use the `vrl-train` grammar and apply to that config, so
+held-out data, rewards and sampling are composed at launch without a
+model/reward-specific evaluator or training-experiment YAML:
 
 ```bash
 python -m vrl.scripts.eval.image_checkpoint_eval \
   --run-dir outputs/sd3_5_color_light_composed \
-  --eval-policy-config reward/wd_tagger \
-  --eval-policy-override +reward=pickscore \
-  --eval-policy-override +dataset=anime_craft \
-  --strata bucket prompt_style --per-stratum 6 \
-  --samples-per-prompt 2 --seed 91000 \
+  +reward=wd_tagger +reward=pickscore +dataset=anime_craft \
+  --limit 64 --samples-per-prompt 2 --seed 91000 \
   --checkpoint candidate=outputs/sd3_5_color_light_composed/checkpoint-final \
   --dry-run
 ```
 
-This requires the recorded run/checkpoint and evaluation data to exist. Policy
-overrides affect only held-out data and judging; they cannot silently replace
-the evaluated generator or sampling settings. If no policy config is supplied,
-overrides apply to a copy of the saved run config. Resolved judging/data content
-is recorded in the evaluation protocol, together with input hashes. Prompt
-metadata is passed through to the selected rewards, including OCR, tagging,
-and object-count targets; reward choice is not hardcoded in the evaluator.
-Scores retain every component and the weighted `r_total`. A batched judge must
-use `images_per_call=1` for independent judgments or enough cells for all arms
+This requires the recorded run/checkpoint and evaluation data to exist.
+`data.eval_manifest` names the held-out prompts (here from the dataset preset;
+`data.eval_manifest=PATH` sets it directly); `--limit N` keeps the first N.
+`+reward=...` presets replace the run's own reward, so `r_total` and the
+loaded scorers are the evaluation's alone; without one, the run's reward is
+scored, and `reward.components.<name>=...` dotlists adjust it. Provenance
+records which evaluation components the run trained on. Sampling overrides
+such as `sampling.width=2048 sampling.height=2048 sampling.num_steps=40`
+evaluate at another resolution or schedule than training (for example
+Qwen-Image-2.1 trained at 512px x 10 steps, evaluated at 2048px x 40); the
+negative prompt is `sampling.negative_prompt`. The effective sampling, judging
+and data content is recorded in the evaluation protocol, together with the
+hashes of the effective config and the manifest. Prompt metadata is passed
+through to the selected rewards, including OCR, tagging, and object-count
+targets; reward choice is not hardcoded in the evaluator. Scores retain every
+component and the weighted `r_total`. A batched judge must use
+`images_per_call=1` for independent judgments or enough cells for all arms
 (base plus checkpoints). If a reward declares `expected_group_size`, it must
-match that arm count. Set these through `--eval-policy-override` as needed;
-the evaluator rejects incompatible training group settings before generation
-instead of silently changing the judging protocol. Nested reward recording
-destinations are removed so scoring cannot append to a training debug archive.
+match that arm count. Set these through overrides as needed; the evaluator
+rejects incompatible training group settings before generation instead of
+silently changing the judging protocol. Nested reward recording destinations
+are removed so scoring cannot append to a training debug archive.
 
-With no checkpoint selector, all complete checkpoints are discovered by their
-recorded epoch, deduplicating `checkpoint-final`. Use `--epochs 4,8,16` for a
-subset or repeat `--checkpoint LABEL=PATH` for explicit candidates. Base is
-always generated first. This entrypoint supports registered full-sequence,
-native-step text-to-image denoisers, not reference-conditioned or autoregressive
-models. SANA's frozen official-solver benchmark and the video-specific benchmark
-protocols remain separate: sharing statistics must not change their sampling.
+With `--run-dir` and no `--checkpoint`, all complete checkpoints are discovered
+by their recorded epoch, deduplicating `checkpoint-final`; repeat
+`--checkpoint [LABEL=]PATH` for explicit candidates. Base is always generated
+first. Generation uses CUDA when it is available (`CUDA_VISIBLE_DEVICES`
+picks the card); local rewards score on the same device after the generator
+is freed. The blinded contact-sheet order derives from `--seed`. This
+entrypoint supports registered full-sequence, native-step text-to-image
+denoisers; manifest rows with `reference_images` run through the family's
+batch executor (reference-conditioned editing) with the same native scheduler,
+and each image records the hash of its initial latents so paired arms provably
+shared noise. Autoregressive models are not supported. SANA's frozen
+official-solver benchmark and the video-specific benchmark protocols remain
+separate: sharing statistics must not change their sampling.
 
 Each evaluation writes `images/` and a content-bound `generation_manifest.json`.
 If scoring fails after generation finishes, rerunning the same command reuses

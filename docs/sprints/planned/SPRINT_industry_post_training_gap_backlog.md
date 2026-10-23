@@ -87,6 +87,8 @@
 - **落地**：`RootConfig.eval.sampling.num_steps`；`resolve_eval_sampling` 的优先级
   是 CLI > `eval.sampling` > `sampling`，所有 checkpoint eval 脚本共用它。
 - **验收**：训练 10 步、eval 40 步的配置能过 `tests/config` 的 schema 校验并实际生效。
+- **现状（2026-10-22）**：`eval.sampling` 与 `resolve_eval_sampling` 都已删除；评测步数是
+  `image_checkpoint_eval` 的位置参数覆盖 `sampling.num_steps=40`，其余继承 run 的 sampling。
 
 ## F. 通用 VLM "Yes 概率" 图像 RM ★★
 

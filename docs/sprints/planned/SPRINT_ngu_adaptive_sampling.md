@@ -165,9 +165,9 @@ collector 的生成／评分／组装边界。现有 schedule protocol 和 reque
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.eval.image_checkpoint_eval \
-  --run-dir <上一步的 run 目录> --base-only \
-  --manifest manifests/ocr/test.txt --limit 256 --samples-per-prompt 16 \
-  --eval-policy-override reward.kwargs.ocr.score_key=ocr_match \
+  --config <上一步的 run 目录的绝对路径>/resolved_config.yaml \
+  data.eval_manifest=manifests/ocr/test.txt reward.kwargs.ocr.score_key=ocr_match \
+  --limit 256 --samples-per-prompt 16 \
   --output-dir outputs/ngu_p0_sd3_5_base_ocr_match
 ```
 

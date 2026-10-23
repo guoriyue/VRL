@@ -69,10 +69,11 @@ replay, including the unconditional branch when true CFG is enabled. The
 transformer KV cache remains disabled because LoRA updates change prefix keys
 and values.
 
-The generic fixed-grid `image_checkpoint_eval` script remains text-only and
-rejects reference-conditioned manifests; use generation requests for
-editing. Full-scene decomposition into an editable layer stack is
-not implemented by these operations.
+The generic fixed-grid `image_checkpoint_eval` script runs manifest rows with
+`reference_images` through this family's batch executor with the native
+scheduler and records each image's initial-latent hash, so base and
+checkpoint arms are compared on identical noise. Full-scene decomposition into
+an editable layer stack is not implemented by these operations.
 
 ## Validation recorded on 2026-09-20
 

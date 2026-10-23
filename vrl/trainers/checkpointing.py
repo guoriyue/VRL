@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 
@@ -22,13 +21,8 @@ from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
 )
-from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file
+from vrl.utils.artifacts import atomic_file, fsync_directory
 from vrl.utils.paths import user_path
-
-if TYPE_CHECKING:
-    from omegaconf import DictConfig
-
-    from vrl.config.schema import RootConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,140 +31,6 @@ _LEGACY_CHECKPOINT_SCHEMA_VERSION = 1
 TRAINING_CHECKPOINT_NAME = "checkpoint.pt"
 LORA_WEIGHTS_NAME = "lora_weights"
 CHECKPOINT_META_NAME = "checkpoint_meta.json"
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One published checkpoint selected for loading, or the base model.
-
-    Evaluation scripts pick comparison arms by ``label``; ``path=None`` is the
-    untouched base model. ``meta`` is the published ``checkpoint_meta.json``
-    (empty for the base arm) so callers validate family / epoch / LoRA
-    agreement against it instead of re-reading the directory, and ``epoch``
-    is its ``completed_epoch``.
-    """
-
-    label: str
-    path: Path | None
-    epoch: int = 0
-    meta: dict[str, Any] = field(default_factory=dict)
-    # Digest of checkpoint.pt captured at selection, so a long evaluation can
-    # detect the checkpoint being rewritten underneath it (opt-in: hashing a
-    # multi-GB payload is not free).
-    checkpoint_sha256: str | None = None
-
-    @classmethod
-    def base(cls, label: str = "base") -> CheckpointTarget:
-        return cls(label=label, path=None)
-
-    @classmethod
-    def from_cli_values(
-        cls,
-        values: Sequence[str],
-        *,
-        run_dir: str | Path | None = None,
-        reserved_label: str | None = None,
-    ) -> list[CheckpointTarget]:
-        """Parse ``--checkpoint [LABEL=]PATH`` arguments into distinct arms.
-
-        An omitted label is the path's leaf name, sanitized to characters that
-        survive both a filename and a report key. A ``checkpoint-final`` leaf
-        takes its run's directory name instead, unless that run is ``run_dir``,
-        the run under evaluation, where "checkpoint-final" says more than the
-        run's own name. A path naming the adapter weights file means the
-        checkpoint directory that holds it. Labels must be distinct because
-        they name the report's columns.
-
-        Every path must be a directory. ``reserved_label`` is the name an
-        entrypoint keeps for an arm of its own, such as an adapter-disabled
-        baseline.
-        """
-
-        targets: list[CheckpointTarget] = []
-        for value in values:
-            text = str(value).strip()
-            if not text:
-                raise ValueError("--checkpoint values must be non-empty")
-            raw_label, separator, raw_path = text.partition("=")
-            path = user_path(raw_path if separator else text)
-            if path.name == LORA_WEIGHTS_NAME:
-                path = path.parent
-            if not separator:
-                inside_run = run_dir is not None and path.parent == user_path(run_dir)
-                raw_label = (
-                    path.parent.name
-                    if path.name == "checkpoint-final" and not inside_run
-                    else path.name
-                )
-            label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
-            if not label:
-                raise ValueError(f"checkpoint label resolved empty for {value!r}")
-            if not path.is_dir():
-                raise FileNotFoundError(f"checkpoint path does not exist: {path}")
-            targets.append(cls(label=label, path=path))
-
-        labels = [target.label for target in targets]
-        if len(set(labels)) != len(labels):
-            raise ValueError(f"checkpoint labels must be unique: {labels}")
-        if reserved_label is not None and reserved_label in labels:
-            raise ValueError(f"{reserved_label!r} is reserved for the entrypoint's own arm")
-        return targets
-
-    @classmethod
-    def load(cls, path: str | Path, *, label: str, digest: bool = False) -> CheckpointTarget:
-        """Pin one complete checkpoint directory and read its published metadata."""
-
-        resolved = user_path(path)
-        if not is_complete_checkpoint(resolved):
-            raise ValueError(f"missing or incomplete checkpoint: {resolved}")
-        meta = dict(read_checkpoint_meta(resolved))
-        epoch = meta.get("completed_epoch")
-        if type(epoch) is not int or epoch < 0:
-            raise ValueError(
-                f"checkpoint completed_epoch must be a non-negative integer: {resolved}",
-            )
-        return cls(
-            label=label,
-            path=resolved,
-            epoch=epoch,
-            meta=meta,
-            checkpoint_sha256=(
-                sha256_file(resolved / TRAINING_CHECKPOINT_NAME) if digest else None
-            ),
-        )
-
-    def validate_compatibility(
-        self,
-        *,
-        family: str,
-        expected_model_identity: dict[str, Any] | None = None,
-    ) -> None:
-        """Validate the cheap checkpoint sidecar before model construction.
-
-        Schema-v2 metadata carries a provenance-only copy of the immutable
-        model identity. Restore still validates the authoritative
-        ``checkpoint.pt`` payload and requires the sidecar copy to match it.
-        A target without published metadata has nothing to check yet.
-        """
-
-        meta = self.meta
-        if not meta:
-            return
-        schema_version = TrainingCheckpoint._read_schema_version(
-            meta,
-            source="checkpoint metadata",
-        )
-        raw_identity = meta.get("model_identity")
-        if raw_identity is not None and not isinstance(raw_identity, dict):
-            raise TypeError("checkpoint metadata model_identity must be a dict")
-        TrainingCheckpoint._validate_identity(
-            source="checkpoint metadata",
-            schema_version=schema_version,
-            checkpoint_family=meta.get("family"),
-            saved_identity=raw_identity,
-            family=family,
-            expected_model_identity=expected_model_identity,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,47 +72,6 @@ class TrainingCheckpoint:
                 f"expected {_LEGACY_CHECKPOINT_SCHEMA_VERSION} or {CHECKPOINT_SCHEMA_VERSION}",
             )
         return raw_version
-
-    @staticmethod
-    def _validate_identity(
-        *,
-        source: str,
-        schema_version: int,
-        checkpoint_family: Any,
-        saved_identity: dict[str, Any] | None,
-        family: str,
-        expected_model_identity: dict[str, Any] | None,
-    ) -> None:
-        """Apply one family/identity policy to payloads and metadata sidecars."""
-
-        TrainingCheckpoint._validate_family(family, field="runtime family")
-        if schema_version == CHECKPOINT_SCHEMA_VERSION:
-            TrainingCheckpoint._validate_family(
-                checkpoint_family,
-                field=f"schema-v2 {source} family",
-            )
-        if checkpoint_family and checkpoint_family != family:
-            raise ValueError(
-                f"{source} family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
-            )
-        if schema_version == CHECKPOINT_SCHEMA_VERSION:
-            if expected_model_identity is None:
-                raise ValueError(
-                    f"schema-v2 {source} validation requires runtime model identity",
-                )
-            if saved_identity is None:
-                raise ValueError(
-                    f"schema-v2 {source} is missing required model identity",
-                )
-        if (
-            saved_identity is not None
-            and expected_model_identity is not None
-            and saved_identity != expected_model_identity
-        ):
-            raise ValueError(
-                f"{source} model identity mismatch: "
-                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
-            )
 
     @staticmethod
     def _validate_meta_matches_payload(
@@ -572,14 +391,33 @@ class TrainingCheckpoint:
     ) -> None:
         """Validate family and immutable model identity before runtime construction."""
 
-        TrainingCheckpoint._validate_identity(
-            source="checkpoint",
-            schema_version=self.schema_version,
-            checkpoint_family=self.payload.get("family"),
-            saved_identity=self.model_identity,
-            family=family,
-            expected_model_identity=expected_model_identity,
-        )
+        schema_version = self.schema_version
+        checkpoint_family = self.payload.get("family")
+        saved_identity = self.model_identity
+        TrainingCheckpoint._validate_family(family, field="runtime family")
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            TrainingCheckpoint._validate_family(
+                checkpoint_family,
+                field="schema-v2 checkpoint family",
+            )
+        if checkpoint_family and checkpoint_family != family:
+            raise ValueError(
+                f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
+            )
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            if expected_model_identity is None:
+                raise ValueError("schema-v2 checkpoint validation requires runtime model identity")
+            if saved_identity is None:
+                raise ValueError("schema-v2 checkpoint is missing required model identity")
+        if (
+            saved_identity is not None
+            and expected_model_identity is not None
+            and saved_identity != expected_model_identity
+        ):
+            raise ValueError(
+                "checkpoint model identity mismatch: "
+                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
+            )
 
     def _state_for_restore(
         self,
@@ -1444,35 +1282,6 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
     OmegaConf.save(cfg, path / f"resume_config_{stamp}.yaml")
 
 
-def load_resolved_run_config(
-    run_dir: str | Path,
-    *,
-    overrides: list[str] | None = None,
-) -> tuple[DictConfig, RootConfig]:
-    """Load and parse the config a training run persisted via ``save_resolved_config``.
-
-    The one reader for every checkpoint-evaluation entrypoint: the merged tree
-    (for provenance records and re-persisting) plus the parsed root every
-    consumer reads. A retired key in an archived run fails here, by name.
-
-    ``overrides`` is for an entrypoint that must evaluate the run under
-    different runtime settings than it trained with -- disabling compile, or
-    dropping a LoRA path it will load itself -- and is applied before parsing,
-    so what comes back is what the evaluation will actually run.
-    """
-
-    from vrl.config.loading import load_config
-    from vrl.config.schema import parse_config
-
-    # An absolute Path, not a string: load_config resolves a relative string
-    # against the bundled preset tree.
-    path = user_path(run_dir) / RESOLVED_CONFIG_NAME
-    if not path.is_file():
-        raise FileNotFoundError(f"training run has no resolved config: {path}")
-    cfg = load_config(path, overrides=list(overrides or []))
-    return cfg, parse_config(cfg)
-
-
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:
     """Read checkpoint metadata if present."""
 
@@ -1597,7 +1406,6 @@ __all__ = [
     "RESOLVED_CONFIG_NAME",
     "TRAINING_CHECKPOINT_NAME",
     "AdapterExport",
-    "CheckpointTarget",
     "TrainingCheckpoint",
     "build_adapter_exports",
     "capture_rng_state",
@@ -1606,7 +1414,6 @@ __all__ = [
     "is_complete_checkpoint",
     "load_checkpoint_state",
     "load_full_checkpoint_state",
-    "load_resolved_run_config",
     "read_checkpoint_meta",
     "restore_rng_state",
     "save_resolved_config",

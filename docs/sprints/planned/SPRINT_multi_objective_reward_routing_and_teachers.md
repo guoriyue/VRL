@@ -108,7 +108,7 @@
 
 | 项 | 状态 | 依据 |
 |---|---|---|
-| P0 联合指标 | 已完成 | `vrl/scripts/eval/score_report.py` 的 `joint_min` / `--joint-min`，测试在 `tests/scripts/eval/test_score_report.py`。τ 取 base 的中位数，要先打完分才知道，所以不往 `image_checkpoint_eval.py` 加阈值参数，而是对它产出的 `report/scores.jsonl` 再跑一次 `score_report`（命令见下）。 |
+| P0 联合指标 | 已完成 | `vrl/scripts/eval/score_report.py` 的 `joint_min` / `--joint-min`，测试在 `tests/scripts/eval/test_score_report.py`。τ 取 base 的中位数，要先打完分才知道，所以不往 `image_checkpoint_eval.py` 加阈值参数，而是对它产出的 `report/scores.jsonl` 再跑一次 `score_report`（命令见 `docs/CONFIGURATION.md`）。 |
 | P1.1 环境标签 | 已撤掉（用户决定） | 原来在 `vrl/trainers/data/prompts.py` 写 `metadata.source_manifest`。 |
 | P1.2 metadata 过滤 | 已撤掉（用户决定） | 原来在 `MultiReward.from_mapping` / `score_batch`。 |
 | P1.3 对照组 preset | 已撤掉（用户决定） | 原来是 `experiment/sd3_5/online_grpo_pickscore_safety_{weighted,routed}.yaml`。 |

@@ -15,13 +15,11 @@ from vrl.scripts.eval import image_checkpoint_eval as checkpoint_eval
 from vrl.trainers.data.prompts import PromptExample
 
 
-def _checkpoint(path, epoch, *, uses_lora=False):
-    path.mkdir()
+def _checkpoint(path, epoch):
+    path.mkdir(parents=True)
     (path / "checkpoint.pt").write_bytes(b"checkpoint")
     (path / "checkpoint_meta.json").write_text(
-        json.dumps(
-            {"completed_epoch": epoch, "uses_lora": uses_lora, "checkpoint_file_bytes": 10}
-        ),
+        json.dumps({"completed_epoch": epoch, "checkpoint_file_bytes": 10}),
         encoding="utf-8",
     )
     return path
@@ -45,7 +43,7 @@ def evaluation(tmp_path):
             checkpoint_identity=lambda: {"family": "test"},
         ),
         model_identity={"family": "test"},
-        targets=checkpoint_eval.discover_targets(tmp_path, uses_lora=False),
+        targets=checkpoint_eval.discover_targets(tmp_path),
         prompts=(
             checkpoint_eval.EvalPrompt(
                 9,
@@ -60,11 +58,7 @@ def evaluation(tmp_path):
         reward={"components": {"fake": 1.0}, "kwargs": {}, "inference": {}},
         samples_per_prompt=2,
         seed=17,
-        blind_seed=4,
         negative_prompt="",
-        reward_device="cpu",
-        tie_epsilon=0.02,
-        bootstrap_resamples=20,
         config_sha256="c" * 64,
         manifest_sha256="d" * 64,
         training_reward_components=("fake",),
@@ -90,35 +84,48 @@ def test_discovers_arbitrary_complete_epochs_and_hashes(tmp_path):
         _checkpoint(tmp_path / f"checkpoint-{epoch}", epoch)
     _checkpoint(tmp_path / "checkpoint-final", 8)
     (tmp_path / "checkpoint-11").mkdir()
-    targets = checkpoint_eval.discover_targets(tmp_path, uses_lora=False)
+    targets = checkpoint_eval.discover_targets(tmp_path)
     assert [(target.label, target.epoch) for target in targets] == [
         ("base", 0),
         ("checkpoint-3", 3),
         ("checkpoint-final", 8),
     ]
     (tmp_path / "checkpoint-3" / "checkpoint.pt").write_bytes(b"checkpoinu")
-    selected = checkpoint_eval.discover_targets(tmp_path, epochs=(3,), uses_lora=False)
-    assert selected[1].checkpoint_sha256 != targets[1].checkpoint_sha256
-    with pytest.raises(ValueError, match="missing complete checkpoint"):
-        checkpoint_eval.discover_targets(tmp_path, epochs=(11,), uses_lora=False)
+    rediscovered = checkpoint_eval.discover_targets(tmp_path)
+    assert rediscovered[1].checkpoint_sha256 != targets[1].checkpoint_sha256
+    with pytest.raises(ValueError, match="no complete checkpoint"):
+        checkpoint_eval.discover_targets(tmp_path / "checkpoint-11")
 
 
-def test_explicit_lora_export_uses_parent_checkpoint_and_rejects_wrong_mode(tmp_path):
-    path = _checkpoint(tmp_path / "checkpoint-final", 7, uses_lora=True)
-    (path / "lora_weights").mkdir()
+def test_explicit_checkpoints_become_distinct_labelled_arms(tmp_path):
+    run = tmp_path / "run"
+    own_final = _checkpoint(run / "checkpoint-final", 7)
+    (own_final / "lora_weights").mkdir()
+    other_final = _checkpoint(tmp_path / "epoch-3" / "checkpoint-final", 3)
+
+    # The adapter weights mean their checkpoint; a padded label is trimmed. A
+    # checkpoint-final leaf is named after its run unless it is the run evaluated.
     targets = checkpoint_eval.discover_targets(
-        tmp_path,
-        checkpoint_specs=(f"candidate={path / 'lora_weights'}",),
-        uses_lora=True,
+        run,
+        checkpoint_specs=(f" candidate ={own_final / 'lora_weights'}", str(other_final)),
     )
-    assert (targets[1].label, targets[1].epoch, targets[1].path) == ("candidate", 7, path)
-    assert targets[1].checkpoint_sha256 == checkpoint_eval.sha256_file(path / "checkpoint.pt")
-    with pytest.raises(ValueError, match="uses_lora"):
-        checkpoint_eval.discover_targets(tmp_path, checkpoint_specs=(str(path),), uses_lora=False)
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        checkpoint_eval.discover_targets(
-            tmp_path, checkpoint_specs=(str(path),), epochs=(7,), uses_lora=True
-        )
+    assert [(t.label, t.epoch, t.path) for t in targets] == [
+        ("base", 0, None),
+        ("candidate", 7, own_final),
+        ("epoch-3", 3, other_final),
+    ]
+    assert targets[1].checkpoint_sha256 == checkpoint_eval.sha256_file(own_final / "checkpoint.pt")
+    assert checkpoint_eval.discover_targets(run, checkpoint_specs=(str(own_final),))[1].label == (
+        "checkpoint-final"
+    )
+    for specs, message in (
+        ((str(own_final), f"checkpoint-final={other_final}"), "unique"),
+        ((f"base={own_final}",), "not 'base'"),
+        ((f"!!!={own_final}",), "resolved empty"),
+        ((str(tmp_path / "missing"),), "incomplete checkpoint"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            checkpoint_eval.discover_targets(run, checkpoint_specs=specs)
 
 
 def test_seed_grid_is_dense_and_shared_by_every_arm(evaluation):
@@ -131,26 +138,23 @@ def test_seed_grid_is_dense_and_shared_by_every_arm(evaluation):
         assert seeds == list(range(17, 23))
 
 
-def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(evaluation):
+def test_prompt_selection_limits_rows_and_preserves_reward_metadata(evaluation):
     examples = [
         PromptExample(
-            prompt=f"{scene} {index}",
+            prompt=f"scene {index}",
             target_text="OPEN",
-            metadata={"scene": scene, "object_class": "car", "expected_count": 2},
+            metadata={"scene": "street", "object_class": "car", "expected_count": 2},
         )
-        for scene in ("street", "shop")
         for index in range(3)
     ]
-    selected = checkpoint_eval.select_prompts(examples, strata=("scene",), per_stratum=2)
-    assert [row.manifest_index for row in selected] == [0, 1, 3, 4]
+    selected = checkpoint_eval.select_prompts(examples, limit=2)
+    assert [row.manifest_index for row in selected] == [0, 1]
     assert selected[0].example.reward_metadata() == {
         "scene": "street",
         "object_class": "car",
         "expected_count": 2,
         "target_text": "OPEN",
     }
-    with pytest.raises(ValueError, match="fewer rows"):
-        checkpoint_eval.select_prompts(examples, strata=("scene",), per_stratum=4)
     with pytest.raises(ValueError, match="reference_video"):
         checkpoint_eval.select_prompts([PromptExample("scene", reference_video="input.mp4")])
     # Reference-image edits are selected; generation routes them through the family
@@ -167,7 +171,7 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(evaluat
     assert checkpoint_eval.select_prompts([PromptExample("scene", task_type="text_to_image")])
 
 
-def test_independent_policy_does_not_replace_run_sampling(tmp_path, evaluation, monkeypatch):
+def test_overrides_compose_the_evaluation_on_the_run_config(tmp_path, evaluation, monkeypatch):
     manifest = tmp_path / "eval.jsonl"
     manifest.write_text(
         '{"prompt":"A sign.","target_text":"OPEN","metadata":{"scene":"shop"}}\n', encoding="utf-8"
@@ -184,69 +188,64 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, evaluation, 
                     "num_steps": 7,
                     "guidance_scale": 2.0,
                     "max_sequence_length": 8,
+                    "negative_prompt": "blurry",
+                },
+                "data": {
+                    "manifest": str(manifest),
+                    "eval_manifest": str(manifest),
+                    "preprocessing": {},
+                    "sampler": {"type": "sequential_window"},
                 },
                 "reward": {"components": {"ocr": 1.0}},
             }
         ),
         run_config,
     )
-    policy_path = tmp_path / "policy.yaml"
-    OmegaConf.save(
-        OmegaConf.create(
-            {
-                "sampling": {"num_steps": 99},
-                "data": {"eval_manifest": str(manifest)},
-                "reward": {
-                    "components": {"fake": 1.0, "observation": 0.0},
-                    "kwargs": {
-                        "fake": {
-                            "rubric": "lighting",
-                            "ocr": {"debug_dir": "/training/debug"},
-                            "guard": {"scored_rollout_dir": "/training/scored"},
-                        }
-                    },
-                },
-            }
-        ),
-        policy_path,
-    )
     monkeypatch.setattr(
         "vrl.models.families.registry.ModelFamilyEntry.resolve_model_build",
         lambda *_args, **_kwargs: evaluation.model_build,
     )
-    monkeypatch.setattr(
-        "vrl.trainers.checkpointing.CheckpointTarget.validate_compatibility",
-        lambda *_args, **_kwargs: None,
+
+    def resolve(*overrides):
+        args = checkpoint_eval.build_parser().parse_args(["--run-dir", str(tmp_path), *overrides])
+        return checkpoint_eval.CheckpointEvaluation.from_args(args)
+
+    plain = resolve()
+    assert [target.label for target in plain.targets] == ["base", "checkpoint-3", "checkpoint-8"]
+    assert (plain.sampling.num_steps, plain.negative_prompt) == (7, "blurry")
+    assert plain.training_reward_components == ("ocr",)
+    assert next(plain.cells())["reward_metadata"] == {"scene": "shop", "target_text": "OPEN"}
+
+    resolved = resolve(
+        "sampling.width=16",
+        "sampling.num_steps=40",
+        "reward.components.fake=1.0",
+        "reward.kwargs.fake.rubric=lighting",
+        "reward.kwargs.fake.ocr.debug_dir=/training/debug",
+        "reward.kwargs.fake.guard.scored_rollout_dir=/training/scored",
     )
-    parser = checkpoint_eval.build_parser()
-    args = parser.parse_args(
-        ["--run-dir", str(tmp_path), "--eval-policy-config", str(policy_path)]
-    )
-    resolved = checkpoint_eval.CheckpointEvaluation.from_args(args)
-    assert resolved.sampling.num_steps == 7
-    assert resolved.reward["components"] == {"fake": 1.0, "observation": 0.0}
+    assert (resolved.sampling.width, resolved.sampling.num_steps) == (16, 40)
+    assert resolved.sampling.guidance_scale == 2.0
+    assert resolved.reward["components"] == {"ocr": 1.0, "fake": 1.0}
     assert resolved.reward["kwargs"]["fake"] == {"rubric": "lighting", "ocr": {}, "guard": {}}
     assert resolved.training_reward_components == ("ocr",)
-    assert next(resolved.cells())["reward_metadata"] == {"scene": "shop", "target_text": "OPEN"}
-    args.eval_policy_override = ["sampling.num_steps=40"]
-    assert checkpoint_eval.CheckpointEvaluation.from_args(args).record() == resolved.record()
-    args.eval_policy_override = ["reward.kwargs.fake.rubric=color"]
-    assert checkpoint_eval.CheckpointEvaluation.from_args(args).record() != resolved.record()
+    assert resolved.record() != plain.record()
+    assert resolved.config_sha256 != plain.config_sha256
     for key, value in (("images_per_call", 2), ("expected_group_size", 8)):
-        args.eval_policy_override = [f"reward.kwargs.fake.guard.{key}={value}"]
         with pytest.raises(ValueError, match=key):
-            checkpoint_eval.CheckpointEvaluation.from_args(args)
-    assert OmegaConf.load(run_config).reward.components == {"ocr": 1.0}
+            resolve(f"reward.kwargs.fake.guard.{key}={value}")
+    assert OmegaConf.load(run_config).sampling.num_steps == 7
 
-    # CLI geometry/schedule flags override the run; unset ones keep it.
-    args.eval_policy_override = []
-    args.width, args.height, args.num_steps = 16, 24, 40
-    sized = checkpoint_eval.CheckpointEvaluation.from_args(args).sampling
-    assert (sized.width, sized.height, sized.num_steps) == (16, 24, 40)
-    assert (sized.guidance_scale, sized.max_sequence_length) == (2.0, 8)
-    args.width = 0
-    with pytest.raises(ValueError, match="invalid sampling"):
-        checkpoint_eval.CheckpointEvaluation.from_args(args)
+    # A reward preset replaces the run's reward rather than adding to it.
+    judged = resolve("+reward=aesthetic")
+    assert list(judged.reward["components"]) == ["aesthetic"]
+    assert judged.training_reward_components == ("ocr",)
+
+    # --config is the base model alone, with no training reward to overlap.
+    args = checkpoint_eval.build_parser().parse_args(["--config", str(run_config)])
+    base = checkpoint_eval.CheckpointEvaluation.from_args(args)
+    assert [target.label for target in base.targets] == ["base"]
+    assert base.training_reward_components == ()
 
 
 def test_base_disables_adapter_before_checkpoint_restores(tmp_path, evaluation, monkeypatch):
@@ -368,18 +367,16 @@ def test_failed_scoring_reuses_verified_images_without_materialization(generatio
     assert not (archive.directory / "report").exists()
 
 
-@pytest.mark.parametrize("change", ["protocol", "image", "extra", "symlink"])
-def test_generation_archive_rejects_changed_inputs_or_files(generation, tmp_path, change):
+@pytest.mark.parametrize("change", ["protocol", "image", "extra"])
+def test_generation_archive_rejects_changed_inputs_or_files(generation, change):
     archive, rows = generation
     if change == "protocol":
         archive = replace(archive, evaluation=replace(archive.evaluation, config_sha256="f" * 64))
     elif change == "image":
         Image.new("RGB", (8, 8), "white").save(archive.directory / rows[0]["image_path"])
-    elif change == "extra":
-        Image.new("RGB", (8, 8)).save(archive.directory / "images" / "extra.png")
     else:
-        (archive.directory / "outside").symlink_to(tmp_path, target_is_directory=True)
-    with pytest.raises(ValueError, match=r"protocol|integrity|not exact|symlinks"):
+        Image.new("RGB", (8, 8)).save(archive.directory / "images" / "extra.png")
+    with pytest.raises(ValueError, match=r"protocol|integrity|not exact"):
         archive.load_generation()
 
 

@@ -18,7 +18,7 @@
 | 训练奖励曲线看不出学没学到 | OCR 那次同一配方 60 轮从 0.34 涨到 0.69，曲线是能看的 |
 
 **已有基础**：OCR 奖励（PaddleOCR，`vrl/rewards/models/ocr.py`，`target_text` 的归一化编辑相似度）、OCR sprint 的单卡配方（学到了 +0.24）、
-编辑评测（参考图、同噪声哈希、`--base-only`）、DINOv2 分块背景项。
+编辑评测（参考图、同噪声哈希、`--config` 只评 base）、DINOv2 分块背景项。
 
 ## 2. 数据（RL 只需要源图 + 指令 + 元数据）
 

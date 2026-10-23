@@ -1,10 +1,19 @@
 """Compare image checkpoints with independently composed rewards and one curve.
 
+``--run-dir RUN`` evaluates the base model and the run's checkpoints (every
+complete one, or the ``--checkpoint`` arms) under the run's
+``resolved_config.yaml``; ``--config NAME`` evaluates the base model of a
+bundled recipe or YAML (plus any ``--checkpoint`` arms). Positional
+``+group=option`` / ``key=value`` overrides use the vrl-train grammar and
+apply to that config: held-out data (``data.eval_manifest``), rewards, and
+sampling (``sampling.width=2048 sampling.num_steps=40``) alike.
+
 Generation uses the registered full-sequence denoise model and its native step
 scheduler. This is not the frozen SANA official-pipeline benchmark or a video
-benchmark. Generated images are content-bound before scoring, so failed reward calls can be retried without
-loading the generator. Completed reports are immutable.
-Local rewards run in-process after generation; configured HTTP judges stay remote.
+benchmark. Generated images are content-bound before scoring, so failed reward
+calls can be retried without loading the generator. Completed reports are
+immutable. Local rewards run in-process on the generation device after the
+generator is freed; configured HTTP judges stay remote.
 """
 
 from __future__ import annotations
@@ -13,13 +22,14 @@ import argparse
 import asyncio
 import contextlib
 import gc
+import hashlib
 import json
 import logging
 import math
 import os
 import random
+import re
 import tempfile
-from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -38,7 +48,6 @@ if TYPE_CHECKING:
     from vrl.models.families.registry import ModelFamilyEntry
     from vrl.models.interfaces import ModelBuild
     from vrl.models.steps.denoise.base import DenoisePipelineModelBase
-    from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data.prompts import PromptExample
 
 logger = logging.getLogger(__name__)
@@ -185,24 +194,34 @@ class EvalPrompt:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointArm:
+    """One comparison arm: the untouched base model (``path`` None) or a checkpoint."""
+
+    label: str
+    path: Path | None = None
+    # The checkpoint's completed_epoch; the base arm is epoch 0.
+    epoch: int = 0
+    # Digest of checkpoint.pt captured at selection and recorded in the
+    # protocol, so a checkpoint rewritten underneath a retry is detected.
+    checkpoint_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CheckpointEvaluation:
     """Everything one checkpoint evaluation generates and scores with, bound to retries."""
 
     entry: ModelFamilyEntry
     model_build: ModelBuild
     model_identity: dict[str, Any]
-    targets: tuple[CheckpointTarget, ...]
+    targets: tuple[CheckpointArm, ...]
     prompts: tuple[EvalPrompt, ...]
     sampling: ImageSampling
     reward: dict[str, Any]
     samples_per_prompt: int
     seed: int
-    blind_seed: int
     negative_prompt: str
-    reward_device: str
-    tie_epsilon: float
-    bootstrap_resamples: int
-    # Input hashes are behavior-consumed by archive compatibility checks.
+    # Input hashes are behavior-consumed by archive compatibility checks: the
+    # effective config (overrides applied) and the prompt manifest.
     config_sha256: str
     manifest_sha256: str
     training_reward_components: tuple[str, ...]
@@ -227,11 +246,7 @@ class CheckpointEvaluation:
             "generation_precision": asdict(self.model_build.precision),
             "samples_per_prompt": self.samples_per_prompt,
             "seed": self.seed,
-            "blind_seed": self.blind_seed,
             "reward": self.reward,
-            "reward_device": self.reward_device,
-            "tie_epsilon": self.tie_epsilon,
-            "bootstrap_resamples": self.bootstrap_resamples,
             "training_reward_components": list(self.training_reward_components),
         }
 
@@ -303,7 +318,7 @@ class CheckpointEvaluation:
         orders = {}
         for index in range(len(self.prompts)):
             labels = [target.label for target in self.targets]
-            random.Random(f"{self.blind_seed}:{index}").shuffle(labels)
+            random.Random(f"blind:{self.seed}:{index}").shuffle(labels)
             orders[index] = labels
         return orders
 
@@ -365,45 +380,37 @@ class CheckpointEvaluation:
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> CheckpointEvaluation:
-        """Resolve the run, checkpoints, prompts, sampling and reward named on the CLI."""
+        """Resolve the config, arms, prompts, sampling and reward named on the CLI."""
+
+        import torch
 
         from vrl.config.loading import load_config
         from vrl.config.precision import PrecisionPolicy
-        from vrl.config.schema import RewardConfig
+        from vrl.config.schema import RewardConfig, parse_config
         from vrl.models.families.registry import get_model_family_entry
-        from vrl.scripts.eval._device import resolve_eval_device
-        from vrl.trainers.checkpointing import CheckpointTarget
+        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
         from vrl.trainers.data.prompts import load_prompt_dataset_index
 
-        if (
-            any(
-                value is not None and value < 1
-                for value in (args.width, args.height, args.num_steps)
+        run_dir = None if args.run_dir is None else user_path(args.run_dir)
+        training_reward_components: tuple[str, ...] = ()
+        if run_dir is None:
+            cfg = load_config(args.config, overrides=args.overrides)
+            root = parse_config(cfg)
+        else:
+            saved = OmegaConf.load(run_dir / RESOLVED_CONFIG_NAME)
+            training_reward_components = tuple(
+                OmegaConf.select(saved, "reward.components", default=None) or ()
             )
-            or args.samples_per_prompt < 1
-            or args.seed < 0
-            or args.bootstrap_resamples < 1
-            or not math.isfinite(args.tie_epsilon)
-            or args.tie_epsilon < 0
-        ):
-            raise ValueError("invalid sampling/statistics options")
-        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME, load_resolved_run_config
-
-        config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
-        # Only geometry and step count may differ from training; the guidance
-        # scale and prompt length stay the run's own.
-        _, root = load_resolved_run_config(
-            args.run_dir,
-            overrides=[
-                f"sampling.{name}={value}"
-                for name, value in (
-                    ("width", args.width),
-                    ("height", args.height),
-                    ("num_steps", args.num_steps),
-                )
-                if value
-            ],
-        )
+            # A +reward= preset names the evaluation's reward: it replaces the
+            # run's instead of merging into it, so r_total and the loaded
+            # scorers are the evaluation's own.
+            if any(override.startswith("+reward=") for override in args.overrides):
+                saved.pop("reward", None)
+            with tempfile.TemporaryDirectory() as scratch:
+                run_config = Path(scratch) / RESOLVED_CONFIG_NAME
+                OmegaConf.save(saved, run_config)
+                cfg = load_config(run_config, overrides=args.overrides)
+            root = parse_config(cfg)
         if root.model is None:
             raise ValueError("checkpoint evaluation requires a model config")
         entry = get_model_family_entry(root.model.family)
@@ -411,47 +418,26 @@ class CheckpointEvaluation:
             raise ValueError(
                 "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
             )
-        if args.base_only:
-            # A baseline (e.g. checking a reward against a benchmark before any
-            # training): the untrained model is the only arm.
-            if args.checkpoint or args.epochs:
-                raise ValueError("--base-only takes no --checkpoint or --epochs")
-            targets = (CheckpointTarget.base(),)
-        else:
-            targets = discover_targets(
-                config_path.parent,
-                checkpoint_specs=args.checkpoint,
-                epochs=args.epochs or (),
-                uses_lora=bool(root.model.use_lora),
-            )
+        targets = discover_targets(run_dir, checkpoint_specs=args.checkpoint)
+        # CUDA_VISIBLE_DEVICES picks the card; rewards score on the same device
+        # after the generator is freed.
         model_build = entry.resolve_model_build(
             root,
-            resolve_eval_device(args.device),
+            torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
             precision=PrecisionPolicy.from_section(root.precision),
             for_rollout=True,
         )
-        model_identity = model_build.checkpoint_identity()
-        for target in targets[1:]:
-            target.validate_compatibility(
-                family=entry.family,
-                expected_model_identity=model_identity,
-            )
 
-        # Only reward/data are projected from this independent policy. Its model,
-        # trainer and sampling fields never replace the saved generation contract.
-        policy = load_config(
-            args.eval_policy_config or config_path, overrides=args.eval_policy_override
-        )
-        manifest = args.manifest or OmegaConf.select(policy, "data.eval_manifest", default=None)
+        manifest = root.data.eval_manifest if root.data is not None else None
         if not manifest:
-            raise ValueError("supply --manifest or data.eval_manifest in the evaluation policy")
+            raise ValueError("set data.eval_manifest to the held-out prompt manifest")
         manifest_path = user_path(manifest)
-        raw_reward = OmegaConf.select(policy, "reward", default=None)
+        raw_reward = OmegaConf.select(cfg, "reward", default=None)
         reward = (
             OmegaConf.to_container(raw_reward, resolve=True) if raw_reward is not None else None
         )
         if not isinstance(reward, dict) or not reward.get("components"):
-            raise ValueError("evaluation policy must select reward.components")
+            raise ValueError("evaluation config must select reward.components")
         reward = {key: reward.get(key) or {} for key in ("components", "kwargs", "inference")}
         RewardConfig.model_validate(reward)
         if "total" in reward["components"]:
@@ -490,8 +476,6 @@ class CheckpointEvaluation:
                 for example in load_prompt_dataset_index(manifest_path)
             ],
             limit=args.limit,
-            per_stratum=args.per_stratum,
-            strata=args.strata,
         )
         if any(prompt.example.reference_images for prompt in prompts):
             from vrl.generation.bindings.full_sequence import ReferenceConditionedBatches
@@ -502,21 +486,17 @@ class CheckpointEvaluation:
         return cls(
             entry,
             model_build,
-            model_identity,
+            model_build.checkpoint_identity(),
             targets,
             prompts,
             ImageSampling.from_root(root),
             reward,
             args.samples_per_prompt,
             args.seed,
-            args.blind_seed,
-            args.negative_prompt,
-            str(resolve_eval_device(args.reward_device)),
-            args.tie_epsilon,
-            args.bootstrap_resamples,
-            sha256_file(config_path),
+            root.sampling.negative_prompt or "",
+            hashlib.sha256(OmegaConf.to_yaml(cfg, sort_keys=True).encode()).hexdigest(),
             sha256_file(manifest_path),
-            tuple(root.reward.components) if root.reward else (),
+            training_reward_components,
         )
 
 
@@ -527,16 +507,9 @@ class EvaluationArchive:
     directory: Path
     evaluation: CheckpointEvaluation
 
-    def check_tree(self) -> None:
-        if self.directory.is_symlink() or not self.directory.is_dir():
-            raise ValueError(f"evaluation output must be a real directory: {self.directory}")
-        if any(path.is_symlink() for path in self.directory.rglob("*")):
-            raise ValueError("evaluation output tree must not contain symlinks")
-
     def validate_images(self, rows: Any) -> list[dict[str, Any]]:
         from PIL import Image
 
-        self.check_tree()
         expected = list(self.evaluation.cells())
         if not isinstance(rows, list) or len(rows) != len(expected):
             raise ValueError("generated image grid is incomplete")
@@ -578,7 +551,6 @@ class EvaluationArchive:
         )
 
     def load_generation(self) -> list[dict[str, Any]]:
-        self.check_tree()
         path = self.directory / "generation_manifest.json"
         if not path.is_file():
             raise ValueError("output has no committed generation stage; use a fresh --output-dir")
@@ -603,13 +575,7 @@ class EvaluationArchive:
         with tempfile.TemporaryDirectory(prefix=".report-", dir=self.directory) as temporary:
             staging = Path(temporary)
             write_scores(rows, staging)
-            summary = write_curve_report(
-                rows,
-                staging,
-                tie_epsilon=self.evaluation.tie_epsilon,
-                bootstrap_resamples=self.evaluation.bootstrap_resamples,
-                seed=self.evaluation.seed,
-            )
+            summary = write_curve_report(rows, staging, seed=self.evaluation.seed)
             # Blinded contact sheets: one PNG per prompt, arms in a seeded
             # shuffled order, with the key written beside them.
             by_key = {
@@ -669,73 +635,67 @@ class EvaluationArchive:
 
 
 def discover_targets(
-    run_dir: Path,
+    run_dir: Path | None,
     *,
     checkpoint_specs: Sequence[str] = (),
-    epochs: Sequence[int] = (),
-    uses_lora: bool,
-) -> tuple[CheckpointTarget, ...]:
-    from vrl.trainers.checkpointing import CheckpointTarget, is_complete_checkpoint
+) -> tuple[CheckpointArm, ...]:
+    """The base arm, then the ``--checkpoint [LABEL=]PATH`` arms or every run checkpoint.
 
-    if checkpoint_specs and epochs:
-        raise ValueError("--checkpoint and --epochs are mutually exclusive")
-    if any(type(epoch) is not int or epoch < 0 for epoch in epochs) or len(set(epochs)) != len(
-        epochs
-    ):
-        raise ValueError("--epochs must contain unique non-negative integers")
-    if checkpoint_specs:
-        arms = CheckpointTarget.from_cli_values(
-            checkpoint_specs, run_dir=run_dir, reserved_label="base"
-        )
-        targets = [CheckpointTarget.load(arm.path, label=arm.label, digest=True) for arm in arms]
-    else:
-        by_epoch: dict[int, CheckpointTarget] = {}
+    An omitted label is the path's leaf name, sanitized to characters that
+    survive both a filename and a report key. A ``checkpoint-final`` leaf takes
+    its run's directory name instead, unless that run is ``run_dir``, where
+    "checkpoint-final" says more than the run's own name. A path naming the
+    adapter weights means the checkpoint directory that holds it. Discovery
+    keys checkpoints by recorded epoch and prefers ``checkpoint-final``.
+    """
+
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        TRAINING_CHECKPOINT_NAME,
+        is_complete_checkpoint,
+        read_checkpoint_meta,
+    )
+
+    def load(path: Path, label: str) -> CheckpointArm:
+        if not is_complete_checkpoint(path):
+            raise ValueError(f"missing or incomplete checkpoint: {path}")
+        epoch = read_checkpoint_meta(path).get("completed_epoch")
+        if type(epoch) is not int or epoch < 0:
+            raise ValueError(f"checkpoint completed_epoch must be a non-negative integer: {path}")
+        return CheckpointArm(label, path, epoch, sha256_file(path / TRAINING_CHECKPOINT_NAME))
+
+    arms = []
+    for spec in checkpoint_specs:
+        raw_label, separator, raw_path = spec.strip().partition("=")
+        path = user_path(raw_path if separator else spec.strip())
+        if path.name == LORA_WEIGHTS_NAME:
+            path = path.parent
+        if not separator:
+            final_elsewhere = path.name == "checkpoint-final" and path.parent != run_dir
+            raw_label = path.parent.name if final_elsewhere else path.name
+        label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
+        if not label:
+            raise ValueError(f"checkpoint label resolved empty for {spec!r}")
+        arms.append(load(path, label))
+    if run_dir is not None and not checkpoint_specs:
+        by_epoch: dict[int, CheckpointArm] = {}
         for path in sorted(run_dir.glob("checkpoint-*")):
-            if not path.is_dir() or not is_complete_checkpoint(path):
-                continue
-            target = CheckpointTarget.load(path, label=path.name, digest=True)
-            previous = by_epoch.get(target.epoch)
-            if previous is None or target.label == "checkpoint-final":
-                by_epoch[target.epoch] = target
-        if epochs and not set(epochs) <= set(by_epoch):
-            raise ValueError(
-                f"missing complete checkpoint epochs: {sorted(set(epochs) - set(by_epoch))}"
-            )
-        targets = [by_epoch[epoch] for epoch in sorted(epochs or by_epoch)]
-    if not targets or len({target.label for target in targets}) != len(targets):
-        raise ValueError("select at least one checkpoint with unique labels")
-    for target in targets:
-        if target.meta.get("uses_lora") is not uses_lora:
-            raise ValueError(f"checkpoint uses_lora differs from the run model: {target.path}")
-    return (CheckpointTarget.base(), *targets)
+            if is_complete_checkpoint(path):
+                arm = load(path, path.name)
+                if arm.epoch not in by_epoch or arm.label == "checkpoint-final":
+                    by_epoch[arm.epoch] = arm
+        arms = [by_epoch[epoch] for epoch in sorted(by_epoch)]
+        if not arms:
+            raise ValueError(f"no complete checkpoint under {run_dir}; use --config for base only")
+    labels = ["base", *(arm.label for arm in arms)]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"checkpoint labels must be unique and not 'base': {labels}")
+    return (CheckpointArm("base"), *arms)
 
 
-def select_prompts(
-    examples: list[PromptExample],
-    *,
-    limit: int = 0,
-    per_stratum: int = 0,
-    strata: Sequence[str] = (),
-) -> tuple[EvalPrompt, ...]:
-    if limit < 0 or per_stratum < 0 or (per_stratum > 0) != bool(strata):
-        raise ValueError("use non-negative limits and specify --strata with --per-stratum")
-    if limit and per_stratum:
-        raise ValueError("--limit and --per-stratum are mutually exclusive")
-    selected = []
-    groups: dict[tuple[str, ...], int] = defaultdict(int)
-    for index, example in enumerate(examples):
-        if per_stratum:
-            values = tuple(str(example.metadata.get(key, "")).strip() for key in strata)
-            if any(not value for value in values):
-                raise ValueError(f"eval prompt {index} needs metadata for strata {list(strata)}")
-            groups[values] += 1
-            if groups[values] > per_stratum:
-                continue
-        selected.append(EvalPrompt(index, example))
-        if limit and len(selected) >= limit:
-            break
-    if any(count < per_stratum for count in groups.values()):
-        raise ValueError("an evaluation stratum has fewer rows than --per-stratum")
+def select_prompts(examples: list[PromptExample], *, limit: int = 0) -> tuple[EvalPrompt, ...]:
+    selected = tuple(EvalPrompt(index, example) for index, example in enumerate(examples))
+    selected = selected[: limit or None]
     if not selected or any(not row.example.prompt.strip() for row in selected):
         raise ValueError("evaluation requires non-empty prompts")
     # Reference images run through the family executor; video conditioning has
@@ -748,7 +708,7 @@ def select_prompts(
         )
     if any(row.example.task_type not in {"", "text_to_image"} for row in selected):
         raise ValueError("evaluation prompt task_type must be text_to_image or unset")
-    return tuple(selected)
+    return selected
 
 
 async def score_images(
@@ -783,7 +743,7 @@ async def score_images(
     )
     scorer = MultiReward.from_mapping(
         evaluation.reward["components"],
-        device=evaluation.reward_device,
+        device=str(evaluation.model_build.device),
         reward_kwargs=kwargs,
         inference_configs=deployments,
     )
@@ -831,42 +791,31 @@ async def score_images(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--run-dir", type=Path, help="training run with resolved_config.yaml")
+    source.add_argument(
+        "--config", help="bundled config name or absolute YAML path: evaluate its base model"
+    )
+    parser.add_argument(
+        "overrides",
+        nargs="*",
+        help="preset overlays (+reward=pickscore) and dotlist overrides (sampling.num_steps=40)",
+    )
     parser.add_argument("--checkpoint", action="append", default=[], metavar="[LABEL=]PATH")
-    parser.add_argument(
-        "--epochs", type=lambda value: tuple(int(part) for part in value.split(",")), default=()
-    )
-    parser.add_argument(
-        "--base-only", action="store_true", help="evaluate the untrained model only"
-    )
-    parser.add_argument("--eval-policy-config", default=None)
-    parser.add_argument("--eval-policy-override", action="append", default=[])
-    parser.add_argument("--manifest", type=Path)
-    parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--strata", nargs="+", default=[])
-    parser.add_argument("--per-stratum", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=0, help="first N manifest prompts")
     parser.add_argument("--samples-per-prompt", type=int, default=2)
-    # Evaluate at another resolution / schedule than training (e.g. train
-    # Qwen-Image-2.1 at 512px x 10 steps, evaluate at its native 2048px x 40).
-    # Unset flags keep the run's eval/sampling values.
-    parser.add_argument("--width", type=int, default=None)
-    parser.add_argument("--height", type=int, default=None)
-    parser.add_argument("--num-steps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--blind-seed", type=int, default=1)
-    parser.add_argument("--negative-prompt", default="")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--reward-device", default="cpu")
-    parser.add_argument("--tie-epsilon", type=float, default=0.0)
-    parser.add_argument("--bootstrap-resamples", type=int, default=2000)
-    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path, help="default: RUN/checkpoint_evaluation")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.output_dir is None and args.run_dir is None and not args.dry_run:
+        parser.error("--config needs --output-dir")
     evaluation = CheckpointEvaluation.from_args(args)
     if args.dry_run:
         print(json.dumps(evaluation.record(), indent=2, sort_keys=True))

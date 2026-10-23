@@ -20,7 +20,6 @@ from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     TRAINING_CHECKPOINT_NAME,
     AdapterExport,
-    CheckpointTarget,
     TrainingCheckpoint,
     export_checkpoint_state,
     load_checkpoint_state,
@@ -224,62 +223,6 @@ def test_restore_model_checkpoint_rejects_identity_before_loading(tmp_path) -> N
     assert torch.equal(restored.module.weight, before)
 
 
-def test_checkpoint_meta_preflight_accepts_matching_identity() -> None:
-    CheckpointTarget(
-        label="unit",
-        path=None,
-        meta={
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "sana",
-            "model_identity": UNIT_IDENTITY,
-        },
-    ).validate_compatibility(
-        family="sana",
-        expected_model_identity=UNIT_IDENTITY,
-    )
-
-
-def test_checkpoint_meta_preflight_rejects_identity_mismatch() -> None:
-    with pytest.raises(ValueError, match="metadata model identity mismatch"):
-        CheckpointTarget(
-            label="unit",
-            path=None,
-            meta={
-                "schema_version": CHECKPOINT_SCHEMA_VERSION,
-                "family": "sana",
-                "model_identity": UNIT_IDENTITY,
-            },
-        ).validate_compatibility(
-            family="sana",
-            expected_model_identity={"schema": "wrong/v1"},
-        )
-
-
-@pytest.mark.parametrize(
-    ("meta", "message"),
-    [
-        (
-            {"family": "sana", "model_identity": UNIT_IDENTITY},
-            "metadata is missing schema_version",
-        ),
-        (
-            {
-                "schema_version": CHECKPOINT_SCHEMA_VERSION,
-                "family": "",
-                "model_identity": UNIT_IDENTITY,
-            },
-            "metadata family must be a non-empty trimmed string",
-        ),
-    ],
-)
-def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta, message) -> None:
-    with pytest.raises(ValueError, match=message):
-        CheckpointTarget(label="unit", path=None, meta=meta).validate_compatibility(
-            family="sana",
-            expected_model_identity=UNIT_IDENTITY,
-        )
-
-
 @pytest.mark.parametrize(
     ("family", "identity", "message"),
     [
@@ -292,6 +235,11 @@ def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta, message
             "sana",
             {"schema": "vrl.model-identity/v1", "sources": {"base": {}}, "build": {}},
             "model identity mismatch",
+        ),
+        (
+            " sana",
+            {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}},
+            "runtime family must be a non-empty trimmed string",
         ),
     ],
 )

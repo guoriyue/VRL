@@ -71,7 +71,7 @@ discovers goes back into this list.
 ## 4. Spread under the training sampler
 
 Generate n samples per prompt with the *training* sampler (e.g. `image_checkpoint_eval
---samples-per-prompt 16` at the training resolution/steps/noise), score, then:
+--run-dir RUN --samples-per-prompt 16`, which keeps the run's resolution/steps), score, then:
 ```bash
 python -m reward spread --evaluation outputs/.../insampler --axis <axis> --threshold <operating point from gate 2> --band 0.2 0.6 --output reports/<reward>/spread.json
 ```
