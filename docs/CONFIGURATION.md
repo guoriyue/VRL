@@ -144,8 +144,8 @@ python -m vrl.scripts.rewards.preflight --config experiment/wan_2_1/online_grpo_
 ```
 
 It builds every configured component, scores synthetic media of the configured
-geometry for the first rows of `data.manifest` (`--eval` for the eval
-manifest), prints per-component scores, and exits non-zero on the first
+geometry for the first rows of `data.manifest` (override
+`'data.manifest=${data.eval_manifest}'` for the eval manifest), prints per-component scores, and exits non-zero on the first
 component that raises. The scores themselves mean nothing; the pipeline does.
 
 ## Composing rewards

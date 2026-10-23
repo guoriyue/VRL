@@ -20,6 +20,9 @@ Usage::
         --config experiment/wan_2_1/online_grpo_kling_video_reward \\
         --prompts 4 --device auto
 
+The rows come from ``data.manifest``; to probe the evaluation rows instead,
+override it like any other key: ``'data.manifest=${data.eval_manifest}'``.
+
 Exit code 0 means every configured reward scored every sampled row; a
 non-zero exit prints the failing component's exception.
 """
@@ -70,10 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--config", required=True, help="experiment config logical name")
     parser.add_argument("overrides", nargs="*", help="OmegaConf overrides, as for vrl-train")
-    parser.add_argument("--prompts", type=int, default=4, help="rows to score from data.manifest")
-    parser.add_argument("--eval", action="store_true", help="score data.eval_manifest instead")
+    parser.add_argument(
+        "--prompts",
+        type=int,
+        default=4,
+        help="rows to score from data.manifest "
+        "(override data.manifest=${data.eval_manifest} for the evaluation rows)",
+    )
     parser.add_argument("--device", default="auto", help="reward device: auto | cpu | cuda:N")
-    parser.add_argument("--seed", type=int, default=0, help="seed for the synthetic media")
     return parser
 
 
@@ -81,9 +88,7 @@ def preflight_rewards(
     cfg: Any,
     *,
     prompts: int,
-    use_eval_manifest: bool = False,
     device: torch.device,
-    seed: int = 0,
 ) -> PreflightReport:
     """Score the first ``prompts`` rows of the configured manifest with the configured reward."""
 
@@ -114,10 +119,6 @@ def preflight_rewards(
         raise ValueError("reward preflight needs a data section")
     entry = built.family
     data = built.root.data
-    if use_eval_manifest:
-        if not data.eval_manifest:
-            raise ValueError("config missing required field: data.eval_manifest")
-        data = data.model_copy(update={"manifest": str(data.eval_manifest)})
     examples = load_prompt_examples_from_config(data)[: max(1, int(prompts))]
     if not examples:
         raise ValueError(f"{data.manifest} holds no prompt rows")
@@ -139,7 +140,7 @@ def preflight_rewards(
         samples.append(
             RewardSample(
                 prompt=generation_input.prompt,
-                output=_synthetic_media(built.root.sampling, entry.task, seed + index),
+                output=_synthetic_media(built.root.sampling, entry.task, index),
                 sample_id=f"preflight-{index}",
                 metadata=dict(collector_request.metadata),
             ),
@@ -228,8 +229,8 @@ def preflight_rewards(
     return PreflightReport(prompts=tuple(sample.prompt for sample in samples), output=output)
 
 
-def _synthetic_media(sampling: Any, task: str, seed: int) -> torch.Tensor:
-    """Random ``[0, 1]`` pixels in the collector's per-sample layout.
+def _synthetic_media(sampling: Any, task: str, index: int) -> torch.Tensor:
+    """Random ``[0, 1]`` pixels in the collector's per-sample layout, seeded by row index.
 
     Video tasks hand rewards ``[C, T, H, W]``, image tasks ``[C, H, W]``, the
     geometry the sampling section declares (a small default when it is unset,
@@ -238,7 +239,7 @@ def _synthetic_media(sampling: Any, task: str, seed: int) -> torch.Tensor:
 
     height = int(getattr(sampling, "height", None) or 64)
     width = int(getattr(sampling, "width", None) or 64)
-    generator = torch.Generator().manual_seed(seed)
+    generator = torch.Generator().manual_seed(index)
     if task_modality(task) == "video":
         frames = int(getattr(sampling, "num_frames", None) or 9)
         return torch.rand(3, frames, height, width, generator=generator)
@@ -256,13 +257,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = preflight_rewards(
             cfg,
             prompts=args.prompts,
-            use_eval_manifest=bool(args.eval),
             device=torch.device(
                 ("cuda:0" if torch.cuda.is_available() else "cpu")
                 if args.device == "auto"
                 else args.device
             ),
-            seed=int(args.seed),
         )
     except Exception:
         logger.exception("reward preflight failed")

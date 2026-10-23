@@ -36,7 +36,7 @@ def test_preflight_scores_every_row_with_every_component(tmp_path) -> None:
     import ray
 
     initialized_before = ray.is_initialized()
-    report = preflight_rewards(_config(tmp_path), prompts=2, device=torch.device("cpu"), seed=3)
+    report = preflight_rewards(_config(tmp_path), prompts=2, device=torch.device("cpu"))
 
     assert len(report.prompts) == 2
     assert set(report.output.components) == {"image_sharpness", "image_sharpness/image_sharpness"}
@@ -62,9 +62,11 @@ def test_preflight_closes_its_ray_session_when_scoring_fails(tmp_path) -> None:
     assert ray.is_initialized() == initialized_before
 
 
-def test_preflight_can_score_the_eval_manifest(tmp_path) -> None:
+def test_preflight_scores_the_eval_manifest_through_an_override(tmp_path) -> None:
     report = preflight_rewards(
-        _config(tmp_path), prompts=1, use_eval_manifest=True, device=torch.device("cpu")
+        _config(tmp_path, "data.manifest=${data.eval_manifest}"),
+        prompts=1,
+        device=torch.device("cpu"),
     )
 
     # The first row of manifests/drawbench/eval_64.txt, not of train_192.txt.
@@ -100,8 +102,8 @@ def test_main_reports_a_missing_manifest_as_a_failure(tmp_path, capsys) -> None:
 def test_synthetic_media_follows_the_collector_layout(task: str, expected_shape) -> None:
     sampling = SimpleNamespace(height=32, width=48, num_frames=5)
 
-    media = _synthetic_media(sampling, task, seed=0)
+    media = _synthetic_media(sampling, task, 0)
 
     assert tuple(media.shape) == expected_shape
     assert float(media.min()) >= 0.0 and float(media.max()) <= 1.0
-    assert torch.equal(media, _synthetic_media(sampling, task, seed=0))
+    assert torch.equal(media, _synthetic_media(sampling, task, 0))
