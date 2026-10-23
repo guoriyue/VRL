@@ -24,13 +24,10 @@
 #     trainer.output_dir=outputs/wan_robotics_physics_4x_l4/smoke
 #
 # Then supervise the long run. The supervisor resumes only complete checkpoints
-# and stops after a repeated deterministic failure or three consecutive updates
-# with collapsed rewards, zero gradients, or excessive rollout/replay drift:
+# and stops after two consecutive failures with the same cause; the trainer
+# itself fails on replay-parity drift and non-finite gradients:
 #   CUDA_VISIBLE_DEVICES=0,1,2 .venv/bin/python -m vrl.scripts.supervise \
-#     --config experiment/wan_2_1/online_grpo_robotics_physics_4x_l4 \
-#     --health-metrics --health-failure-limit 3 \
-#     --health-max-pre-update-logprob-diff 0.01 \
-#     --health-min-reward-std 0.05 --health-min-grad-norm 0.000001
+#     --config experiment/wan_2_1/online_grpo_robotics_physics_4x_l4
 defaults:
   - /recipe/online/wan_2_1_grpo
   - /model/wan_2_1/1_3b

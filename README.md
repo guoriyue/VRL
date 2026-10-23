@@ -179,7 +179,7 @@ bazel test --config=gpu //tests:gpu_tests //tests:gpu_vllm_tests   # real GPU (m
 HF_HOME=~/.cache/huggingface WM_REAL_MODEL_RL_CASES=sd3_5 \
   bazel test --config=gpu --config=real_weights //tests:e2e_real_checkpoint_tests
 bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr
-bazel run //:vrl_supervise -- --config experiment/sd3_5/online_grpo_ocr   # torchrun DDP/FSDP on one host
+bazel run //:vrl_supervise -- --config experiment/sd3_5/online_grpo_ocr   # restart + resume a single-process run
 bazel run //:vrl_reward_service -- --config vrl/config/reward_service/<service>.yaml
 bazel build --build_python_zip //:vrl_train              # self-contained bazel-bin/vrl_train.zip for other nodes
 bazel build --build_python_zip //tools/delivery:node_probe   # copy to a node: python3 node_probe.zip

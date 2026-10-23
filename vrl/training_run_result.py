@@ -76,8 +76,7 @@ class TrainingRunResultWriter:
         the result names the error class so restart policy ("same class twice ->
         stop") is decided on facts. A missing result file (SIGKILL, OOM-killed
         interpreter) is itself informative: the run died without unwinding. Every
-        multi-rank worker owns a separate file; the supervisor publishes the aggregate
-        only after torchrun has joined all workers.
+        multi-rank worker owns a separate file.
         """
 
         if self.output_dir is None:

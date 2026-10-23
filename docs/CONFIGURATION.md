@@ -306,8 +306,8 @@ to the archived versions, not current launch entrypoints.
 - `vrl.scripts.data.video_world` builds Video2World dataset rows.
 - `TrainingRunResultWriter` writes `training_run_result.json`, or
   `training_run_result.rank-N.json` under torchrun. The outcome field is
-  `status` (`success`, `failed`, or `terminated`); aggregated worker records
-  use `rank_results`. The supervisor reads the new names only. Historical
+  `status` (`success`, `failed`, or `terminated`). The supervisor runs one
+  process and reads only `training_run_result.json`. Historical
   `run_verdict.json` files are not rewritten automatically.
 
 
