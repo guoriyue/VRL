@@ -6,7 +6,7 @@
 | Path | Ownership | Lifecycle |
 | --- | --- | --- |
 | `train.py`, `supervise.py`, `common/` | Training composition and run supervision | Production |
-| `families/` | Family-specific commands that cannot be expressed by the generic entrypoint | Production or reusable evaluation |
+| `families/` | Family-specific offline trainers that `vrl-train` dispatches to through `trainer.entrypoint` | Production |
 | `data/` | Dataset import and canonical manifest construction | Long-term asset generation |
 | `denoise/` | Offline target-latent preparation | Long-term asset generation |
 | `eval/` | Checkpoint evaluation, reward gates, and temporary proof probes | Mixed; see rules below |
