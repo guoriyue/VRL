@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from vrl.utils.artifacts import ArtifactManifestError
 from vrl.utils.paths import PathOutsideRootsError, RootedPaths
 
 
@@ -66,3 +67,11 @@ def test_data_root_allow_absolute_accepts_paths_outside_it(tmp_path):
     outside = tmp_path / "outside.png"
 
     assert RootedPaths.data_root(root, allow_absolute=True).resolve(outside) == outside
+
+
+def test_absolute_artifact_paths_are_rejected_by_default(tmp_path: Path) -> None:
+    path = tmp_path / "ref.ppm"
+    path.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+
+    with pytest.raises(ArtifactManifestError, match="absolute artifact paths"):
+        RootedPaths.data_root().resolve(path)

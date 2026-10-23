@@ -61,12 +61,8 @@ def _source_row(*, target_video: str, source_episode: str) -> dict[str, object]:
     }
 
 
-def test_cli_derives_and_validates_text_video_manifests(tmp_path: Path) -> None:
+def test_cli_derives_text_video_manifests(tmp_path: Path) -> None:
     data_root = tmp_path / "data" / "external"
-    targets = data_root / "video_world" / "targets"
-    targets.mkdir(parents=True)
-    (targets / "train.mp4").write_bytes(b"train-video")
-    (targets / "eval.mp4").write_bytes(b"eval-video")
 
     sources = tmp_path / "sources"
     sources.mkdir()
@@ -115,4 +111,3 @@ def test_cli_derives_and_validates_text_video_manifests(tmp_path: Path) -> None:
     assert json.loads(train_output.read_text())["task_type"] == "text_to_video"
     assert json.loads(eval_output.read_text())["task_type"] == "text_to_video"
     assert report["train_rows"] == report["eval_rows"] == 1
-    assert report["validation_summary"]["artifact_count"] == 1

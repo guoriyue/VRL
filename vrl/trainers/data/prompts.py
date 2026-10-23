@@ -26,14 +26,14 @@ class PromptExample:
 
     prompt: str
     target_text: str = ""
-    reference_video: str | None = field(default=None, metadata={"artifact": True})
-    reference_images: list[str] = field(default_factory=list, metadata={"artifact": True})
+    reference_video: str | None = None
+    reference_images: list[str] = field(default_factory=list)
     # CONTRACT: clean targets stay manifest-relative for the whole run. Exactly
     # one target_image/target_video is the identity key into sft-latents shards;
     # target-similarity rewards resolve the same artifact per process. Load-time
     # reference resolution must never rewrite either target identity.
-    target_image: str | None = field(default=None, metadata={"artifact": True})
-    target_video: str | None = field(default=None, metadata={"artifact": True})
+    target_image: str | None = None
+    target_video: str | None = None
     # Empty delegates the modality to the selected model-family registry entry.
     # A video default silently mislabeled image-family JSONL rows.
     task_type: str = ""

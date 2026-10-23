@@ -17,10 +17,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.manifest_artifacts import (
-    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    DatasetFileReport,
-)
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 from vrl.utils.paths import user_path
@@ -85,14 +81,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     write_jsonl(train_output, train_rows)
     write_jsonl(eval_output, eval_rows)
 
-    validation = DatasetFileReport.from_manifest(
-        train_output,
-        eval_manifest=eval_output,
-        data_root=data_root,
-        artifact_fields=("target_video",),
-        required_artifact_fields=("target_video",),
-        required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    )
     train_prompts = {row["prompt"] for row in train_rows}
     eval_prompts = {row["prompt"] for row in eval_rows}
     report = {
@@ -109,7 +97,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         "prompt_overlap": sorted(train_prompts & eval_prompts),
         "train_sha256": sha256_file(train_output),
         "eval_sha256": sha256_file(eval_output),
-        "validation_summary": validation.to_dict(),
     }
     report_path = output_dir / f"{args.name}_report.json"
     write_json(report_path, report)

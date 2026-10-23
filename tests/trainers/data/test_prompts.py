@@ -8,7 +8,9 @@ from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
     PromptExample,
     load_prompt_dataset_index,
+    prompt_example_from_row,
 )
+from vrl.utils.paths import RootedPaths
 
 
 def _load(tmp_path, payload: bytes) -> list[PromptExample]:
@@ -98,3 +100,38 @@ def test_jsonl_preserves_unicode_separators_in_prompt(tmp_path, separator, newli
     prompt = f"first{separator}second"
     payload = (json.dumps({"prompt": prompt}, ensure_ascii=False) + newline).encode("utf-8")
     assert _load(tmp_path, payload)[0].prompt == prompt
+
+
+def test_reference_resolution_preserves_target_identity_fields(tmp_path) -> None:
+    """Reference consumers get absolute paths without changing target lookup keys."""
+
+    example = PromptExample(
+        prompt="open the drawer",
+        reference_images=["references/frame.ppm"],
+        reference_video="references/context.mp4",
+        target_image="targets/result.ppm",
+        target_video="targets/result.mp4",
+    )
+
+    resolved = example.with_resolved_references(RootedPaths.data_root(tmp_path))
+
+    assert resolved.reference_images == [str((tmp_path / "references/frame.ppm").resolve())]
+    assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())
+    assert resolved.target_image == "targets/result.ppm"
+    assert resolved.target_video == "targets/result.mp4"
+    assert example.reference_images == ["references/frame.ppm"]
+
+
+def test_single_reference_image_row_key_loads_as_a_one_element_list() -> None:
+    """``reference_image: str`` is manifest spelling for a one-element ``reference_images``."""
+    single = prompt_example_from_row({"prompt": "p", "reference_image": "ref.png"}, context="r")
+    blank = prompt_example_from_row({"prompt": "q", "reference_image": "  "}, context="r")
+
+    assert single.reference_images == ["ref.png"]
+    assert "reference_image" not in single.metadata
+    assert blank.reference_images == []
+    with pytest.raises(ValueError, match="not both"):
+        prompt_example_from_row(
+            {"prompt": "p", "reference_image": "a.png", "reference_images": ["b.png"]},
+            context="r",
+        )

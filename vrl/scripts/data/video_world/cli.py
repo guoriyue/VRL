@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.manifest_artifacts import DatasetFileReport
 from vrl.scripts.data.video_world.dataset_index import (
     build_target_video_world_rows,
     build_video_world_rows,
@@ -87,7 +86,6 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         args,
         rows,
         data_root=data_root,
-        require_target_video=False,
         report={
             "dataset": "video_world_bridge",
             "decode_method": "pyav_http_first_frame",
@@ -133,7 +131,6 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
         args,
         rows,
         data_root=data_root,
-        require_target_video=True,
         report={
             "dataset": "video_world_targets",
             "decode_method": "pyav_http_target_clip",
@@ -152,10 +149,9 @@ def _write_manifests_and_report(
     rows: list[dict[str, Any]],
     *,
     data_root: Path,
-    require_target_video: bool,
     report: dict[str, Any],
 ) -> None:
-    """Split ``rows`` into train/eval manifests, validate them, and write the run report."""
+    """Split ``rows`` into train/eval manifests and write the run report."""
 
     video_root = data_root / "video_world"
     manifest_dir = args.manifest_dir or (video_root / "manifests")
@@ -167,15 +163,8 @@ def _write_manifests_and_report(
     train_manifest = manifest_dir / f"{args.name}_train.jsonl"
     eval_manifest = manifest_dir / f"{args.name}_eval.jsonl"
     write_jsonl(train_manifest, train_rows)
-    validation_summary: dict[str, Any] = {}
     if eval_rows:
         write_jsonl(eval_manifest, eval_rows)
-        validation_summary = DatasetFileReport.from_video_world_manifest(
-            train_manifest,
-            eval_manifest=eval_manifest,
-            data_root=data_root,
-            require_target_video=require_target_video,
-        ).to_dict()
 
     report = {
         **report,
@@ -190,7 +179,6 @@ def _write_manifests_and_report(
         "train_manifest": train_manifest.as_posix(),
         "eval_manifest": eval_manifest.as_posix() if eval_rows else "",
         "reference_dir": (video_root / "references").as_posix(),
-        "validation_summary": validation_summary,
     }
     write_json(video_root / f"{args.name}_report.json", report)
     print(json.dumps(report, indent=2, sort_keys=True))
