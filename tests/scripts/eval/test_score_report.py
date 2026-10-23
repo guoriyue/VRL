@@ -96,24 +96,13 @@ def test_report_cli_scores_existing_rows_without_models(tmp_path: Path, capsys) 
             str(output),
             "--score-key",
             "quality",
-            "--bootstrap-resamples",
-            "50",
-            "--seed",
-            "7",
         ],
     )
 
     summary = json.loads(capsys.readouterr().out)
-    assert summary["bootstrap"] == {"resamples": 50, "seed": 7}
+    assert summary["bootstrap"] == {"resamples": 2000, "seed": 0}
     assert set(summary["arms"]["base"]["scores"]) == {"quality"}
-    repeated = write_curve_report(
-        _rows(),
-        output,
-        score_keys=["quality"],
-        bootstrap_resamples=50,
-        seed=7,
-    )
-    assert summary == repeated
+    assert summary == write_curve_report(_rows(), output, score_keys=["quality"])
 
 
 def test_joint_score_is_the_fraction_passing_every_threshold(tmp_path: Path, capsys) -> None:
@@ -139,8 +128,6 @@ def test_joint_score_is_the_fraction_passing_every_threshold(tmp_path: Path, cap
             "quality=1",
             "--joint-min",
             "alignment=0.9",
-            "--bootstrap-resamples",
-            "50",
         ],
     )
 

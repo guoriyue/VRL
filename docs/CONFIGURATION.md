@@ -250,7 +250,7 @@ mean is the passing fraction with a bootstrap CI, and its paired delta compares
 checkpoints on it. Thresholds are a reporting choice, so they live on the
 command line and are echoed in `summary.json` under `joint_min`.
 Human review is still needed, particularly when evaluation reuses a training
-reward. Historical video reports retain their original per-cell statistics.
+reward.
 
 ## Reproducibility and historical presets
 

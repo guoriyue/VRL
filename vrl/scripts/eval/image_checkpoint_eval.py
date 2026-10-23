@@ -566,7 +566,8 @@ class EvaluationArchive:
     def publish_report(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         from PIL import Image, ImageDraw, ImageOps
 
-        from vrl.scripts.eval.score_report import write_curve_report, write_scores
+        from vrl.scripts.eval.score_report import write_curve_report
+        from vrl.utils.json_files import write_csv, write_jsonl
 
         self.load_generation()
         self.reject_completed()
@@ -574,7 +575,8 @@ class EvaluationArchive:
         # and a failed reward call leaves the earlier generation stage reusable.
         with tempfile.TemporaryDirectory(prefix=".report-", dir=self.directory) as temporary:
             staging = Path(temporary)
-            write_scores(rows, staging)
+            write_jsonl(staging / "scores.jsonl", rows)
+            write_csv(staging / "scores.csv", rows)
             summary = write_curve_report(rows, staging, seed=self.evaluation.seed)
             # Blinded contact sheets: one PNG per prompt, arms in a seeded
             # shuffled order, with the key written beside them.

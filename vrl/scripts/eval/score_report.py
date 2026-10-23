@@ -1,26 +1,24 @@
-"""Model-independent score summaries and fixed-prompt checkpoint curves.
+"""Model-independent fixed-prompt checkpoint curves.
 
 Every checkpoint eval answers the same statistical question — did this
 checkpoint score better than the base arm on the SAME prompt/seed grid — so
-the distribution, the paired-delta bootstrap, and the scores.jsonl/csv writer
-belong in one place rather than being re-derived per family. ``score_keys`` and
-``base_label`` name report fields rather than the caller, so these stay free
-functions (AGENTS.md placement Rule 1).
+the distribution and the paired-delta bootstrap belong in one place rather
+than being re-derived per family.
 
 The bootstrap RNG is seeded from the report schema plus the label and score
 key, so a rerun over the same rows reproduces the interval exactly.
 
 ``write_curve_report`` averages repeated samples within each prompt before
 bootstrapping: prompts, not correlated seeds of one prompt, are independent
-units. The older ``summarize_paired_scores`` API deliberately retains its
-per-cell video-report semantics. Neither entrypoint loads a generation or
-reward model. Run ``python -m vrl.scripts.eval.score_report --help`` to report
-existing JSONL scores with checkpoint_label, epoch, prompt_index, sample_index,
-seed, prompt, and r_<component> columns. These are generic numeric measurements:
-a clear increase is not a claim of improved quality or that higher is better.
-Repeated ``--joint-min COMPONENT=MIN`` adds a ``joint`` score: the fraction of
-samples on which every listed component reaches its minimum at once (all
-constraints pass and quality >= tau), reported with the same CIs.
+units. It loads no generation or reward model. Run
+``python -m vrl.scripts.eval.score_report --help`` to report existing JSONL
+scores with checkpoint_label, epoch, prompt_index, sample_index, seed, prompt,
+and r_<component> columns; the comparison arm is labelled ``base``. These are
+generic numeric measurements: a clear increase is not a claim of improved
+quality or that higher is better. Repeated ``--joint-min COMPONENT=MIN`` adds a
+``joint`` score: the fraction of samples on which every listed component
+reaches its minimum at once (all constraints pass and quality >= tau),
+reported with the same CIs.
 """
 
 from __future__ import annotations
@@ -34,129 +32,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.utils.json_files import read_jsonl, write_csv, write_json, write_jsonl
+from vrl.utils.json_files import read_jsonl, write_json
 from vrl.utils.score_statistics import bootstrap_mean_interval, distribution
 
-
-def summarize_paired_scores(
-    rows: Sequence[dict[str, Any]],
-    *,
-    score_keys: Sequence[str],
-    schema: str,
-    base_label: str = "base",
-    cell_keys: Sequence[str] = ("prompt_index", "sample_index"),
-    unpaired_labels: Sequence[str] = (),
-) -> dict[str, Any]:
-    """Absolute distributions plus per-cell deltas against the base arm.
-
-    The paired statistic is the point of a fixed-prompt eval: comparing
-    independent means across arms would drown the effect in prompt difficulty,
-    which is exactly the variance a shared prompt/seed grid removes. Every arm
-    must therefore cover the identical cell set, and a mismatch is an error
-    rather than a silently smaller comparison.
-
-    ``unpaired_labels`` names arms that are calibration anchors rather than
-    checkpoints (a ground-truth clip set, for instance): they still get an
-    absolute distribution, but they do not share the generated grid and so
-    cannot be differenced against it.
-    """
-
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        grouped.setdefault(str(row["checkpoint_label"]), []).append(row)
-    if base_label not in grouped:
-        raise ValueError(f"paired score summary requires {base_label!r} rows")
-
-    absolute = {
-        label: {key: distribution([float(row[f"r_{key}"]) for row in group]) for key in score_keys}
-        for label, group in grouped.items()
-    }
-
-    def cell_of(row: dict[str, Any]) -> tuple[Any, ...]:
-        return tuple(int(row[name]) for name in cell_keys)
-
-    base = {cell_of(row): row for row in grouped[base_label]}
-    skip = {base_label, *unpaired_labels}
-    paired: dict[str, Any] = {}
-    for label, group in grouped.items():
-        if label in skip:
-            continue
-        cells = {cell_of(row): row for row in group}
-        if set(cells) != set(base):
-            raise ValueError(f"paired score grid differs for {label}")
-        paired[label] = {}
-        for key in score_keys:
-            deltas = [
-                float(cells[cell][f"r_{key}"]) - float(base[cell][f"r_{key}"])
-                for cell in sorted(base)
-            ]
-            lower, upper = bootstrap_mean_interval(
-                deltas,
-                schema=schema,
-                label=label,
-                score_key=key,
-            )
-            paired[label][key] = {
-                **distribution(deltas),
-                "win_rate": sum(delta > 0 for delta in deltas) / len(deltas),
-                "tie_rate": sum(delta == 0 for delta in deltas) / len(deltas),
-                "bootstrap_95ci": [lower, upper],
-                "clear_improvement": lower > 0.0,
-                "clear_regression": upper < 0.0,
-            }
-    return {"absolute": absolute, "paired_delta_from_base": paired}
-
-
-def write_scores(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
-    """Publish scores.jsonl and scores.csv side by side."""
-
-    write_jsonl(output_dir / "scores.jsonl", rows)
-    write_csv(output_dir / "scores.csv", rows)
-
-
-def summarize_prompt_level(
-    rows: Sequence[dict[str, Any]],
-    *,
-    score_keys: Sequence[str],
-    base_label: str,
-) -> dict[str, Any]:
-    """Paired deltas with the PROMPT as the unit: seeds of one prompt are correlated.
-
-    Per arm and key: average the samples of each prompt, difference against the
-    base arm's same-prompt average, then report mean / stderr / win rate over
-    prompts. This is the statistic a learning claim rests on.
-    """
-
-    by_arm: dict[str, dict[int, dict[str, list[float]]]] = {}
-    for row in rows:
-        arm = by_arm.setdefault(str(row["checkpoint_label"]), {})
-        prompt = arm.setdefault(int(row["prompt_index"]), {key: [] for key in score_keys})
-        for key in score_keys:
-            prompt[key].append(float(row[f"r_{key}"]))
-    base = by_arm[base_label]
-    prompt_level: dict[str, Any] = {}
-    for label, prompts in by_arm.items():
-        if label == base_label:
-            continue
-        if set(prompts) != set(base):
-            raise ValueError(f"arm {label!r} covers different prompts than the base arm")
-        per_key: dict[str, Any] = {}
-        for key in score_keys:
-            deltas = [
-                statistics.fmean(prompts[p][key]) - statistics.fmean(base[p][key])
-                for p in sorted(base)
-            ]
-            n = len(deltas)
-            per_key[key] = {
-                "prompts": n,
-                "base_mean": statistics.fmean(statistics.fmean(base[p][key]) for p in base),
-                "arm_mean": statistics.fmean(statistics.fmean(prompts[p][key]) for p in base),
-                "delta_mean": statistics.fmean(deltas),
-                "delta_stderr": statistics.stdev(deltas) / n**0.5 if n > 1 else float("nan"),
-                "win_rate": sum(d > 0 for d in deltas) / n,
-            }
-        prompt_level[label] = per_key
-    return prompt_level
+BASE_LABEL = "base"
 
 
 def write_curve_report(
@@ -164,15 +43,13 @@ def write_curve_report(
     output_dir: Path,
     *,
     score_keys: Sequence[str] | None = None,
-    base_label: str = "base",
-    tie_epsilon: float = 0.0,
     bootstrap_resamples: int = 2000,
     seed: int = 0,
     joint_min: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Validate a paired grid and publish summary.json, curve.csv, and curve.png.
 
-    Each arm must contain the same unique prompt/sample cells with matching
+    The ``base`` arm is the paired comparison point. Each arm must contain the same unique prompt/sample cells with matching
     prompts and seeds. Epochs belong to arms and cannot change within an arm.
     Both absolute means and paired differences give every prompt equal weight,
     even if prompts have different numbers of sampled images or videos.
@@ -188,12 +65,6 @@ def write_curve_report(
 
     if not rows:
         raise ValueError("curve report requires score rows")
-    if not math.isfinite(tie_epsilon) or tie_epsilon < 0:
-        raise ValueError("tie_epsilon must be finite and non-negative")
-    if type(bootstrap_resamples) is not int or bootstrap_resamples < 1:
-        raise ValueError("bootstrap_resamples must be a positive integer")
-    if type(seed) is not int:
-        raise ValueError("bootstrap seed must be an integer")
     keys = (
         tuple(score_keys)
         if score_keys is not None
@@ -254,9 +125,9 @@ def write_curve_report(
             if not math.isfinite(value):
                 raise ValueError(f"non-finite r_{key} for {label}: {cell}")
         cells[cell] = row
-    if base_label not in grouped:
-        raise ValueError(f"paired curve report requires {base_label!r} rows")
-    base = grouped[base_label]
+    if BASE_LABEL not in grouped:
+        raise ValueError(f"paired curve report requires {BASE_LABEL!r} rows")
+    base = grouped[BASE_LABEL]
     for label, cells in grouped.items():
         if cells.keys() != base.keys():
             raise ValueError(f"paired score grid differs for {label}")
@@ -280,12 +151,12 @@ def write_curve_report(
     schema = "vrl.score_curve/v1"
     arms: dict[str, Any] = {}
     curve_rows: list[dict[str, Any]] = []
-    for label in sorted(grouped, key=lambda name: (epochs[name], name != base_label, name)):
+    for label in sorted(grouped, key=lambda name: (epochs[name], name != BASE_LABEL, name)):
         scores = {}
         for key in keys:
             values = list(prompt_means[label][key].values())
             deltas = [
-                value - prompt_means[base_label][key][index]
+                value - prompt_means[BASE_LABEL][key][index]
                 for index, value in prompt_means[label][key].items()
             ]
             absolute = distribution(values)
@@ -310,10 +181,10 @@ def write_curve_report(
             paired = {
                 **distribution(deltas),
                 "bootstrap_95ci": [lower, upper],
-                "win_rate": sum(value > tie_epsilon for value in deltas) / len(deltas),
-                "tie_rate": sum(abs(value) <= tie_epsilon for value in deltas) / len(deltas),
-                "clear_increase": lower > tie_epsilon,
-                "clear_decrease": upper < -tie_epsilon,
+                "win_rate": sum(value > 0 for value in deltas) / len(deltas),
+                "tie_rate": sum(value == 0 for value in deltas) / len(deltas),
+                "clear_increase": lower > 0,
+                "clear_decrease": upper < 0,
             }
             scores[key] = {"absolute": absolute, "paired_delta_from_base": paired}
             curve_rows.append(
@@ -341,9 +212,8 @@ def write_curve_report(
         }
     summary = {
         "schema": schema,
-        "base_label": base_label,
+        "base_label": BASE_LABEL,
         "statistical_unit": "prompt",
-        "tie_epsilon": tie_epsilon,
         "bootstrap": {"resamples": bootstrap_resamples, "seed": seed},
         "arms": arms,
     }
@@ -432,10 +302,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--scores", type=Path, required=True, help="Existing score rows in JSONL.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--score-key", action="append", dest="score_keys")
-    parser.add_argument("--base-label", default="base")
-    parser.add_argument("--tie-epsilon", type=float, default=0.0)
-    parser.add_argument("--bootstrap-resamples", type=int, default=2000)
-    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--joint-min",
         action="append",
@@ -461,22 +327,12 @@ def main(argv: list[str] | None = None) -> None:
         read_jsonl(args.scores),
         args.output_dir,
         score_keys=args.score_keys,
-        base_label=args.base_label,
-        tie_epsilon=args.tie_epsilon,
-        bootstrap_resamples=args.bootstrap_resamples,
-        seed=args.seed,
         joint_min=joint_min,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
-__all__ = [
-    "bootstrap_mean_interval",
-    "distribution",
-    "summarize_paired_scores",
-    "write_curve_report",
-    "write_scores",
-]
+__all__ = ["write_curve_report"]
 
 
 if __name__ == "__main__":
