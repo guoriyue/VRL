@@ -7,8 +7,8 @@ setup:
 	bazel build //:vrl_train //:vrl_reward_service
 	@echo "setup complete: bazel run //:vrl_train -- --config <experiment>"
 
-# The local gate is the CI gate: lint, config contracts, dead-flag audit,
-# every CPU pytest lane, the local Ray lane and the torchrun launch check.
+# The local gate is the CI gate: lint, config contracts, every CPU pytest
+# lane, the local Ray lane and the torchrun launch check.
 # GPU and real-weight lanes are manual: bazel test --config=gpu //tests:gpu_tests
 verify:
 	uv lock --check

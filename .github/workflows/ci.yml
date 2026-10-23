@@ -63,10 +63,10 @@ jobs:
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'uv.lock', 'third_party/countgd/requirements.txt') }}
           restore-keys: bazel-${{ runner.os }}-
 
-      # Everything the default test suite covers: ruff, config lint, dead-flag
-      # audit, per-package pytest lanes (`not e2e and not slow_test`), the local
-      # Ray cluster lane and the torchrun launch check. GPU and real-weight lanes
-      # are `manual`; they run on a GPU host with --config=gpu.
+      # Everything the default test suite covers: ruff, config lint, per-package
+      # pytest lanes (`not e2e and not slow_test`), the local Ray cluster lane
+      # and the torchrun launch check. GPU and real-weight lanes are `manual`;
+      # they run on a GPU host with --config=gpu.
       - name: bazel test //...
         run: bazel test //... --test_output=errors
 

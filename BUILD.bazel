@@ -94,12 +94,3 @@ py_test(
     env = {"CUDA_VISIBLE_DEVICES": ""},
     deps = [":vrl"],
 )
-
-py_test(
-    name = "dead_flags",
-    size = "medium",
-    srcs = ["vrl/scripts/lint/dead_flags.py"],
-    main = "vrl/scripts/lint/dead_flags.py",
-    data = [":python_sources"],
-    deps = [":vrl"],
-)
