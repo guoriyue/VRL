@@ -91,7 +91,7 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
     root = built.root
     resources = ResourcePlan.from_root(root)
     device = torch.device(resources.trainer_torch_device)
-    trainer_section = _required(root.trainer, "trainer")
+    trainer_section = root.trainer
     data_cfg = _required(root.data, "data")
     sampler = _required(data_cfg.sampler, "data.sampler")
     if data_cfg.loader != "layered_scenes":
@@ -103,10 +103,9 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
         raise TypeError(
             f"layered SFT expects algorithm.kind=diffusion_sft, got {type(sft_config).__name__}",
         )
-    actor = _required(root.actor, "actor")
     seed = int(_required(trainer_section.seed, "trainer.seed"))
     trainer_cfg = OfflineTrainerConfig.from_root(root)
-    train_batch_size = int(actor.train_batch_size)
+    train_batch_size = int(root.actor.train_batch_size)
     resume_checkpoint = (
         TrainingCheckpoint.load(built.resume_from) if built.resume_from is not None else None
     )
@@ -186,11 +185,10 @@ def train_qwen_image_layered_sft(cfg: DictConfig) -> None:
         resume_at=("step", start_step) if resume_checkpoint is not None else None,
     )
 
-    max_train_steps = int(_required(trainer_section.max_train_steps, "trainer.max_train_steps"))
-    checkpointing_steps = int(
-        _required(trainer_section.checkpointing_steps, "trainer.checkpointing_steps"),
-    )
-    log_interval = int(_required(trainer_section.log_interval, "trainer.log_interval"))
+    # The recipe declares these '???', so load_config already rejected a missing one.
+    max_train_steps = int(trainer_section.max_train_steps)
+    checkpointing_steps = int(trainer_section.checkpointing_steps)
+    log_interval = int(trainer_section.log_interval)
     adapter_exports = build_adapter_exports(bundle, use_lora=bool(root.model.use_lora))
     logger.info(
         "Starting layered SFT — %d steps, lr=%g, timestep range %s, token weights %s, "

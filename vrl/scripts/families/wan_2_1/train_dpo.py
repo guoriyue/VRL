@@ -157,8 +157,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.trainers.offline import OfflineDPOTrainer
 
     trainer_section = built.root.trainer
-    if trainer_section is None:
-        raise ValueError("config missing required field: trainer")
     sampling = _required(built.root.sampling, "sampling")
     data_cfg = _required(built.root.data, "data")
     preprocessing = _required(data_cfg.preprocessing, "data.preprocessing")
@@ -292,11 +290,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
 
     # 6. Training loop
-    max_train_steps = int(_required(trainer_section.max_train_steps, "trainer.max_train_steps"))
-    checkpointing_steps = int(
-        _required(trainer_section.checkpointing_steps, "trainer.checkpointing_steps"),
-    )
-    log_interval = int(_required(trainer_section.log_interval, "trainer.log_interval"))
+    # The recipe declares these '???', so load_config already rejected a missing one.
+    max_train_steps = int(trainer_section.max_train_steps)
+    checkpointing_steps = int(trainer_section.checkpointing_steps)
+    log_interval = int(trainer_section.log_interval)
 
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",
@@ -312,6 +309,22 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         bundle,
         use_lora=bool(built.root.model.use_lora),
     )
+
+    def save(path: Path, *, completed_step: int) -> None:
+        save_training_checkpoint(
+            path,
+            trainer=trainer,
+            bundle=bundle,
+            family="wan_2_1",
+            progress={
+                "completed_step": completed_step,
+                "next_step": completed_step,
+                "global_step": trainer.global_step,
+            },
+            rng_state=capture_rng_state(),
+            adapter_exports=adapter_exports,
+            model_identity=model_identity,
+        )
 
     step = resume_checkpoint.next_step if resume_checkpoint is not None else 0
     if step > max_train_steps:
@@ -347,38 +360,12 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
         if checkpointing_steps > 0 and (step + 1) % checkpointing_steps == 0:
             ckpt = out_dir / f"checkpoint-{step + 1}"
-            save_training_checkpoint(
-                ckpt,
-                trainer=trainer,
-                bundle=bundle,
-                family="wan_2_1",
-                progress={
-                    "completed_step": step + 1,
-                    "next_step": step + 1,
-                    "global_step": trainer.global_step,
-                },
-                rng_state=capture_rng_state(),
-                adapter_exports=adapter_exports,
-                model_identity=model_identity,
-            )
+            save(ckpt, completed_step=step + 1)
             logger.info("Saved checkpoint -> %s", ckpt)
 
         step += 1
 
     final_path = out_dir / "checkpoint-final"
-    save_training_checkpoint(
-        final_path,
-        trainer=trainer,
-        bundle=bundle,
-        family="wan_2_1",
-        progress={
-            "completed_step": max_train_steps,
-            "next_step": max_train_steps,
-            "global_step": trainer.global_step,
-        },
-        rng_state=capture_rng_state(),
-        adapter_exports=adapter_exports,
-        model_identity=model_identity,
-    )
+    save(final_path, completed_step=max_train_steps)
     logger.info("Final checkpoint -> %s", final_path)
     logger.info("DPO training complete.")
