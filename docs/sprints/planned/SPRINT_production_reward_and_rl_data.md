@@ -142,7 +142,7 @@
 - **ViPO**（[ICLR 2026](https://proceedings.iclr.cc/paper_files/paper/2026/file/33bb58be3f0e903c75afa73d75b5c67e-Paper-Conference.pdf)）：
   30 万视频偏好对，三类均衡。
 - **本仓对照**：`manifests/*/report.json` 已记录来源 URL、commit、`prompt_overlap`
-  （`vrl/scripts/data/derive_text_video_targets.py:147`）；`vrl/trainers/data/provenance.py`
+  （`vrl/scripts/data/video_world.py` 的 `droid_full_targets_t2v` 视图）；`vrl/trainers/data/provenance.py`
   在启动门检查 manifest 与 source report 一致。缺：**分类法标注字段**（类别、运动类型、
   难度档）、**语义级去重**（只差顺序/同义改写）、**离线难度剖面**、按类别的 reward 权重。
 
@@ -234,7 +234,7 @@ knob 规则照旧：G1 的失败策略只在出现第一个需要非默认策略
   - geneval 的 83 条词袋重合，以及 drawbench 的 4 条，都是交换了空间关系或颜色绑定（例如 `a backpack right of a sandwich` 对 `a sandwich right of a backpack`，`A black apple and a green backpack` 对 `A green apple and a black backpack`），是不同的任务；Flow-GRPO 的"只差物体顺序"去重在完全相同和规范化两级都成立。
   - local_edit 的 16 条相同指令对应的源图不同。
   - 9-gram 在模板化数据集上主要命中模板片段（ocr 有 502/1018 条），对视觉 prompt 不能当判据。
-- **代码侧不改**：仓库里唯一写 `prompt_overlap` 的是 `vrl/scripts/data/derive_text_video_targets.py:138`（完全相同），它处理的 videophy 在规范化和词袋两级都是 0。pickscore、geneval、ocr、anime_craft 的构建脚本不在仓库里（前三个是上游文件，anime_craft 是一次性脚本）。
+- **代码侧不改**：仓库里唯一写 `prompt_overlap` 的是 `vrl/scripts/data/video_world.py` 的 `droid_full_targets_t2v` 视图（完全相同），它处理的 videophy 在规范化和词袋两级都是 0。pickscore、geneval、ocr、anime_craft 的构建脚本不在仓库里（前三个是上游文件，anime_craft 是一次性脚本）。
 - **需要用户决定**：要不要从 pickscore_sfw 和 anime_craft 的 train manifest 里删掉这些近重复行（eval 不动，按行号定 seed 的留出评测不受影响）。删 pickscore_sfw 的行会偏离上游 Flow-GRPO 的划分，也会改变已有 run 的训练分布和 manifest 哈希。
 - 扫描脚本是一次性的，放在本会话 scratch：`overlap_scan.py`、`overlap_examples.py`。
 

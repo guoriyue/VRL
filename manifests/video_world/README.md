@@ -1,31 +1,34 @@
 # Video World Artifact Manifests
 
 Production manifests must come from a source-backed importer and should contain
-prompt metadata plus relative reference paths only. Reference frames live outside
-git under `VRL_DATA_ROOT` or the default local data root:
+prompt metadata plus relative reference paths only. Reference frames and target
+clips live outside git under `VRL_DATA_ROOT` or the default local data root:
 
 ```text
 data/external/video_world/references/
+data/external/video_world/targets/
 data/external/video_world/manifests/
 ```
 
-Import real first frames from a LeRobot v2.1 robotics dataset (DROID / BridgeData
-V2 on the HF Hub). Captions come from `meta/tasks.parquet`, per-episode first
-frames from `data/*.parquet`, and pixels are decoded from the per-camera mp4:
+`vrl/scripts/data/video_world.py` imports them from public LeRobot v3.0 DROID
+datasets on the HF Hub. Each manifest set is one name; its source repo, camera,
+episode count and eval split are constants in that module:
 
 ```bash
-# DROID-100 (small, default, verified)
-python -m vrl.scripts.data.video_world.cli video-world-bridge --repo-id lerobot/droid_100 --limit 50
-
-# BridgeData V2 mirror
-python -m vrl.scripts.data.video_world.cli video-world-bridge \
-  --repo-id IPEC-COMMUNITY/bridge_orig_lerobot --source bridge --name bridge --limit 200
+python -m vrl.scripts.data.video_world robot               # first frames, lerobot/droid_100
+python -m vrl.scripts.data.video_world droid_targets       # + 33-frame target clips, lerobot/droid_100
+python -m vrl.scripts.data.video_world droid_full_targets  # + target clips, lerobot/droid_1.0.1
 ```
 
-Pick a specific camera with `--camera observation.images.<name>` (default: first
-camera in `meta/info.json`).
+`--limit N` takes fewer episodes for a smoke build; `--data-root DIR` (or
+`VRL_DATA_ROOT`) moves the output. For first frames, captions come from
+`meta/tasks.parquet`, per-episode first frames from `data/*.parquet`, and pixels
+are decoded from the per-camera mp4; only the first data/video file is read, so
+`--limit` caps episodes to that file. Target clips are located through
+`meta/episodes/*.parquet`. `droid_full_targets` also writes the text-only
+`droid_full_targets_t2v_{train,eval}.jsonl` view for Wan T2V.
 
-Default output:
+Output of `robot`:
 
 ```text
 data/external/video_world/manifests/robot_train.jsonl
@@ -34,19 +37,11 @@ data/external/video_world/references/droid_<episode>_first.png
 data/external/video_world/robot_report.json
 ```
 
-If you use a custom data root:
-
-```bash
-export VRL_DATA_ROOT=/path/to/external/data
-python -m vrl.scripts.data.video_world.cli video-world-bridge --repo-id lerobot/droid_100
-```
-
 Example produced row:
 
 ```json
 {"prompt":"Put the marker in the pot","reference_image":"video_world/references/droid_000000_first.png","task_type":"video2world","metadata":{"source":"droid","source_repo":"lerobot/droid_100","source_split":"main","source_episode":"000000","source_video":"videos/observation.images.exterior_image_1_left/chunk-000/file-000.mp4","source_frame_index":0,"decode_method":"pyav_http_first_frame","conditioning":"first_frame"}}
 ```
 
-Needs `pyarrow`, `av`, `huggingface_hub`, `pillow` (no `lerobot` dependency). v1
-reads the first data/video file; `--limit` caps episodes to that file. Do not
-commit production images or videos here.
+Needs `pyarrow`, `av`, `huggingface_hub`, `pillow` (and `imageio` for target
+clips); no `lerobot` dependency. Do not commit production images or videos here.

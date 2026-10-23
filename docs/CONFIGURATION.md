@@ -303,7 +303,7 @@ to the archived versions, not current launch entrypoints.
 
 - `load_prompt_dataset_index` reads the existing prompt dataset index format.
   Existing dataset paths and YAML keys retain their spelling.
-- `vrl.scripts.data.video_world.dataset_index` builds Video2World dataset rows.
+- `vrl.scripts.data.video_world` builds Video2World dataset rows.
 - `TrainingRunResultWriter` writes `training_run_result.json`, or
   `training_run_result.rank-N.json` under torchrun. The outcome field is
   `status` (`success`, `failed`, or `terminated`); aggregated worker records

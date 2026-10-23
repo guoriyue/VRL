@@ -1,4 +1,5 @@
-"""Video2World row builders: written media, row shape and the Cosmos consumer's view."""
+"""Video2World row builders: written media, row shape, the text-only view and the
+Cosmos consumer's view."""
 
 from __future__ import annotations
 
@@ -191,3 +192,74 @@ def test_video_world_skips_null_identity_and_preserves_zero_id(
     assert rows[0]["metadata"]["source_episode"] == "0"
     assert len(list(tmp_path.rglob("*.png"))) == 1
     assert not list(tmp_path.rglob("*None*"))
+
+
+def test_derive_text_video_rows_removes_unconsumed_first_frame() -> None:
+    rows = video_world.derive_text_video_rows(
+        [
+            {
+                "prompt": "Put the blue block in the bowl",
+                "reference_image": "video_world/references/episode.png",
+                "target_video": "video_world/targets/episode.mp4",
+                "task_type": "video2world",
+                "metadata": {
+                    "source": "droid",
+                    "source_episode": "000001",
+                    "conditioning": "first_frame",
+                },
+            },
+        ],
+    )
+
+    assert rows == [
+        {
+            "prompt": "Put the blue block in the bowl",
+            "target_video": "video_world/targets/episode.mp4",
+            "task_type": "text_to_video",
+            "metadata": {
+                "source": "droid",
+                "source_episode": "000001",
+                "source_conditioning": "first_frame",
+                "conditioning": "text_only",
+                "derived_from_task_type": "video2world",
+            },
+        },
+    ]
+
+
+def test_full_targets_build_writes_the_text_only_view_its_preset_reads(
+    tmp_path, monkeypatch
+) -> None:
+    """``droid_full_targets`` splits the target rows and writes the ``_t2v`` view beside them,
+    at the paths ``dataset/droid_full_target_t2v`` reads (relative to the data root).
+    """
+    from vrl.config.loading import load_config
+
+    frames = [Image.new("RGB", (4, 4), (10, 20, 30))] * 2
+
+    def clips(repo_id, *, camera, limit):
+        for index in range(limit):
+            yield {
+                "frames": frames,
+                "prompt": f"move object {index}",
+                "episode_id": f"{index:06d}",
+                "metadata": {"source_repo": repo_id, "source_camera": camera, "source_fps": 15.0},
+            }
+
+    monkeypatch.setattr(video_world, "iter_lerobot_target_clips", clips)
+    data_root = tmp_path / "data" / "external"
+    video_world.main(["droid_full_targets", "--data-root", str(data_root), "--limit", "3"])
+
+    data = load_config("dataset/droid_full_target_t2v").data
+    under_root = {
+        role: data_root / str(data[role]).removeprefix("data/external/")
+        for role in ("manifest", "eval_manifest", "source_report")
+    }
+    train = load_prompt_dataset_index(under_root["manifest"])
+    evals = load_prompt_dataset_index(under_root["eval_manifest"])
+    assert under_root["source_report"].exists()
+    assert [len(train), len(evals)] == [1, 2]
+    assert train[0].reference_images == []
+    assert train[0].task_type == "text_to_video"
+    assert train[0].metadata["conditioning"] == "text_only"
+    assert (data_root / train[0].target_video).exists()
