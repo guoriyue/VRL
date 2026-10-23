@@ -638,12 +638,6 @@ async def score_images(
     from vrl.config.schema import RewardConfig
     from vrl.rewards.functions.registry import MultiReward
     from vrl.rewards.types import RewardSample
-    from vrl.scripts.eval.image_statistics import (
-        brightness,
-        edge_energy,
-        sample_diversity,
-        saturation,
-    )
 
     kwargs = {
         name: dict(evaluation.reward["kwargs"].get(name) or {})
@@ -676,7 +670,7 @@ async def score_images(
     try:
         for prompt_index, prompt in enumerate(evaluation.prompts):
             for sample_index in range(evaluation.samples_per_prompt):
-                batch_rows, samples, diagnostics = [], [], []
+                batch_rows, samples = [], []
                 for cell, label in enumerate(orders[prompt_index]):
                     row = by_key[label, prompt_index, sample_index]
                     with Image.open(output_dir / row["image_path"]) as image:
@@ -696,13 +690,6 @@ async def score_images(
                             "image_path": str((output_dir / row["image_path"]).resolve()),
                         }
                     )
-                    diagnostics.append(
-                        {
-                            "r_saturation": saturation(array),
-                            "r_brightness": brightness(array),
-                            "r_edge_energy": edge_energy(array),
-                        }
-                    )
                 scores = await scorer.score_batch(samples)
                 if len(scores.scores) != len(batch_rows):
                     raise ValueError("reward returned a different number of scores than images")
@@ -711,27 +698,9 @@ async def score_images(
                     row.update(
                         {f"r_{name}": values[index] for name, values in scores.components.items()}
                     )
-                    if set(row) & set(diagnostics[index]):
-                        raise ValueError("reward component names collide with image diagnostics")
-                    row.update(diagnostics[index])
                     scored.append(row)
     finally:
         await scorer.shutdown()
-    if evaluation.samples_per_prompt > 1:
-        groups = defaultdict(list)
-        for row in scored:
-            groups[row["checkpoint_label"], row["prompt_index"]].append(row)
-        for group in groups.values():
-            diagnostics = {
-                f"r_{name}": value
-                for name, value in sample_diversity(
-                    [Path(row["image_path"]) for row in group]
-                ).items()
-            }
-            for row in group:
-                if set(row) & set(diagnostics):
-                    raise ValueError("reward component names collide with diversity diagnostics")
-                row.update(diagnostics)
     return scored
 
 

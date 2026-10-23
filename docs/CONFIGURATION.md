@@ -235,8 +235,6 @@ sample whose every listed component reaches its minimum, else 0. Its absolute
 mean is the passing fraction with a bootstrap CI, and its paired delta compares
 checkpoints on it. Thresholds are a reporting choice, so they live on the
 command line and are echoed in `summary.json` under `joint_min`.
-Image statistics and seed-diversity curves are diagnostics, not quality rewards;
-higher saturation, brightness, or pixel distance is not automatically better.
 Human review is still needed, particularly when evaluation reuses a training
 reward. Historical video reports retain their original per-cell statistics.
 
