@@ -20,10 +20,13 @@ The anatomy prompt build uses `metadata/posts.tar.gz` from
 Image files are only needed for later positive-image manifests, crops,
 hard-negative mining, or reward calibration.
 
-Rebuild committed prompt manifests with:
+The committed safety manifests are frozen and their builder has been removed
+from the tree. To regenerate them, check out `archive/main-20261022` and run the
+builder there (it reads `manifests/danbooru/config.yaml`):
 
 ```bash
+git switch --detach archive/main-20261022
 python -m vrl.scripts.data.setup anime-safety-prompts
 ```
 
-The builder lives in one module, `vrl/scripts/data/danbooru.py`.
+The builder is `archive/main-20261022:vrl/scripts/data/danbooru.py`.

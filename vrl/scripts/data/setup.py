@@ -1,14 +1,13 @@
 """Dataset setup CLI — the single entrypoint for preparing training datasets.
 
-Each dataset has its own concrete implementation (``danbooru.py``, ``video_world/``,
-``bootstrap.py``, ``videophy_i2v.py``, and
+Each dataset has its own concrete implementation (``video_world/``, ``bootstrap.py``, ``videophy_i2v.py``, and
 ``derive_text_video_targets.py``); this module wires their subcommands together
 and adds ``init-dirs`` for creating the empty artifact directories a dataset
 downloads into. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.setup <command>
 
-Commands: anime-safety-prompts, videophy-i2v, video-world-bridge, video-world-targets,
+Commands: videophy-i2v, video-world-bridge, video-world-targets,
 derive-text-video-targets, for-experiment, init-dirs.
 """
 
@@ -19,7 +18,6 @@ from pathlib import Path
 
 from vrl.scripts.data import (
     bootstrap,
-    danbooru,
     derive_text_video_targets,
     video_world,
     videophy_i2v,
@@ -54,7 +52,6 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    danbooru.register(subparsers)
     videophy_i2v.register(subparsers)
     video_world.register(subparsers)
     derive_text_video_targets.register(subparsers)

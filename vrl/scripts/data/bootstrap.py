@@ -64,7 +64,6 @@ class ExperimentDataFiles:
 
         from vrl.config.data import manifest_sources
         from vrl.scripts.data import (
-            danbooru,
             derive_text_video_targets,
             video_world,
             videophy_i2v,
@@ -72,7 +71,6 @@ class ExperimentDataFiles:
 
         # Which populate command produces a manifest under each path prefix.
         setup_hints = (
-            *danbooru.manifest_setup_hints(),
             *videophy_i2v.manifest_setup_hints(),
             *derive_text_video_targets.manifest_setup_hints(),
             *video_world.manifest_setup_hints(),

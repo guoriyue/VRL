@@ -274,22 +274,6 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
     assert experiment.files[0].fetch_command == ""
 
 
-def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path) -> None:
-    """A missing Danbooru manifest leaves the experiment not ready and names the ``anime-safety-prompts``
-    command that produces it.
-    """
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {
-            "loader": "prompt_manifest",
-            "manifest": "manifests/danbooru/safety/train.jsonl",
-        },
-        repo_root=tmp_path,
-    )
-
-    assert experiment.ready is False
-    assert "anime-safety-prompts" in experiment.files[0].fetch_command
-
-
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     """``for-experiment`` on the real Wan Kling experiment reports the config's loader and
     manifest and finds every file present and complete.

@@ -22,8 +22,11 @@ Files:
 Rows use the native `PromptExample` JSONL format. The `metadata.category` field
 is used only for reporting.
 
-Rebuild the Danbooru-derived manifests with:
+These manifests are frozen and their builder has been removed
+from the tree. To regenerate them, check out `archive/main-20261022` and run the
+builder there (it reads `manifests/danbooru/config.yaml`):
 
 ```bash
+git switch --detach archive/main-20261022
 python -m vrl.scripts.data.setup anime-safety-prompts
 ```

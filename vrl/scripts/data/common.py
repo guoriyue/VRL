@@ -1,7 +1,7 @@
 """Shared helpers for the per-dataset population scripts.
 
 Concrete, dependency-free utilities only. Each dataset lives in its own module
-(danbooru.py, video_world/, bootstrap.py); this module just holds
+(video_world/, bootstrap.py); this module just holds
 the path helpers they all need. File writers live in :mod:`vrl.utils.json_files`.
 """
 

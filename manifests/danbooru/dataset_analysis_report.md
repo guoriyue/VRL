@@ -165,6 +165,9 @@ eval unique source ids:    1000 / 1000
 
 ## Build Command
 
+The builder was removed after the safety manifests were frozen; it is
+`archive/main-20261022:vrl/scripts/data/danbooru.py`, run on that ref as:
+
 ```bash
 python -m vrl.scripts.data.setup anime-safety-prompts
 ```
