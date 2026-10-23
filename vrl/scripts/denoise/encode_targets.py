@@ -6,12 +6,12 @@ fine-tuning latents, but the trainer's replay model deliberately loads no
 VAE — so the encode happens here, once, offline, with the same full bundle
 the rollout workers build. The shard must be encoded with the SAME model and
 sampling geometry as the training run, which is why this script takes the
-experiment config rather than free-form arguments:
+training config rather than free-form arguments. The shard is written to the
+config's ``data.sft_latents``, and the first target's VAE round trip is
+written beside it as ``<shard stem>_roundtrip.png`` (image) or ``.mp4`` (video):
 
     python -m vrl.scripts.denoise.encode_targets \\
-        --experiment diffusion/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f \\
-        --out data/external/video_world/sft_latents/cosmos_predict25_240p_33f.pt \\
-        --preview-out outputs/cosmos_predict25_sft_target_roundtrip.mp4
+        --config experiment/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f
 
 Requires the family model to expose ``encode_video_to_latents`` and every
 manifest row to carry exactly one ``target_image`` or ``target_video`` artifact.
@@ -31,28 +31,7 @@ logger = logging.getLogger(__name__)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--experiment",
-        required=True,
-        help="experiment config name, e.g. diffusion/cosmos_predict2/online_grpo_...",
-    )
-    parser.add_argument("--out", required=True, help="shard output path (.pt)")
-    parser.add_argument(
-        "--device",
-        default=None,
-        help="cuda/cpu (default: cuda if available; cpu works, slowly)",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="encode only the first N manifest rows (smoke runs)",
-    )
-    parser.add_argument(
-        "--preview-out",
-        default=None,
-        help="decode the first target and write a PNG (image) or MP4 (video) preview",
-    )
+    parser.add_argument("--config", required=True, help="Bundled config name or YAML path.")
     parser.add_argument(
         "--storage-dtype",
         choices=("preserve", "bf16", "fp16", "fp32"),
@@ -160,20 +139,19 @@ def main(argv: list[str] | None = None) -> None:
     )
     from vrl.trainers.data.prompts import load_prompt_examples_from_config
     from vrl.trainers.data.sft_latents import save_sft_latents
+    from vrl.utils.paths import user_path
 
-    cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)
-    root = parse_config(cfg)
+    root = parse_config(load_config(args.config, overrides=args.overrides))
     precision = PrecisionPolicy.from_section(root.precision)
     if root.model is None:
         raise ValueError("target encoding requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
     family = entry.family
 
-    device = torch.device(
-        args.device
-        if args.device is not None
-        else ("cuda" if torch.cuda.is_available() else "cpu"),
-    )
+    if root.data is None or not root.data.sft_latents:
+        raise ValueError("target encoding writes data.sft_latents; set it in the config")
+    out = user_path(str(root.data.sft_latents))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sampling = root.sampling
     if sampling is None:
         raise ValueError("target encoding requires sampling configuration")
@@ -183,13 +161,10 @@ def main(argv: list[str] | None = None) -> None:
     fps = float(getattr(sampling, "fps", None) or 16)
 
     examples = load_prompt_examples_from_config(root.data)
-    if args.limit is not None:
-        examples = examples[: int(args.limit)]
     if not examples:
         raise ValueError("the training manifest resolved to zero examples")
 
-    data_root = root.data.artifact_data_root if root.data is not None else None
-    targets = _resolve_clean_targets(examples, data_root=data_root)
+    targets = _resolve_clean_targets(examples, data_root=root.data.artifact_data_root)
 
     # Use the same resolved family entry and build path as rollout workers.
     # CUDA follows the experiment's rollout precision. CPU explicitly promotes
@@ -231,20 +206,17 @@ def main(argv: list[str] | None = None) -> None:
         if storage_dtype is not None:
             stored = stored.to(dtype=storage_dtype)
         latents_by_target[target_key] = stored.cpu()
-        if args.preview_out and index == 0:
+        if index == 0:
             from vrl.utils.media import write_mp4, write_png
 
             decoded = model.decode_latents(latents)
-            preview_path = Path(args.preview_out)
             if media_type == "target_image":
-                if preview_path.suffix.lower() != ".png":
-                    raise ValueError("an image target round-trip preview must end in .png")
+                preview_path = out.with_name(f"{out.stem}_roundtrip.png")
                 write_png(decoded[0], preview_path)
             else:
-                if preview_path.suffix.lower() != ".mp4":
-                    raise ValueError("a video target round-trip preview must end in .mp4")
+                preview_path = out.with_name(f"{out.stem}_roundtrip.mp4")
                 write_mp4(decoded, preview_path, fps=fps)
-            logger.info("wrote first-target round-trip preview to %s", args.preview_out)
+            logger.info("wrote first-target round-trip preview to %s", preview_path)
         logger.info(
             "[%d/%d] encoded %s -> %s",
             index + 1,
@@ -254,17 +226,16 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     save_sft_latents(
-        args.out,
+        out,
         family=family,
         model_path=str(root.model.path or ""),
         model_revision=str(root.model.revision or ""),
         latents_by_target=latents_by_target,
     )
     logger.info(
-        "wrote %d target latents to %s (set data.sft_latents to this path and "
-        "algorithm.sft_weight > 0 to enable the regularizer)",
+        "wrote %d target latents to %s (algorithm.sft_weight > 0 enables the regularizer)",
         len(latents_by_target),
-        args.out,
+        out,
     )
 
 

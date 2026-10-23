@@ -6,11 +6,10 @@
 # loss movement can be checked without pretending that 240p/33f reproduces the
 # paper's 512p/93f rollout budget.
 #
-# Build the shard and inspect the first VAE round trip before training:
+# Build the data.sft_latents shard and inspect the first VAE round trip (written
+# beside it as cosmos_predict25_240p_33f_roundtrip.mp4) before training:
 #   python -m vrl.scripts.denoise.encode_targets \
-#     --experiment cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f \
-#     --out data/external/video_world/sft_latents/cosmos_predict25_240p_33f.pt \
-#     --preview-out outputs/cosmos_predict25_sft_target_roundtrip.mp4
+#     --config experiment/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f
 defaults:
   - /recipe/online/cosmos_predict25_grpo
   - /model/cosmos/predict2_5_2b
