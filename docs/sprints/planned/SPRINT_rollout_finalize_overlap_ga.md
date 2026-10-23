@@ -33,7 +33,7 @@ weight-sync 栅栏等本 sprint 够不着的项，则只做「转默认」部分
 ## 变更清单
 
 1. **残差归因**（P0 输出物）：pipelined on 状态下按
-   `stage_durations` + nvtx 把剩余空转拆成：①下一 chunk 的 encode/prepare
+   `stage_durations`（现在是 rollout stats 里的 `generation.*_s`）+ nvtx 把剩余空转拆成：①下一 chunk 的 encode/prepare
    （已在 produce 内，应已重叠——验证）②trajectory/context 的 host 侧 dict
    构建 ③gather_chunks 的串行 cat ④Ray executor 的 chunk 派发间隙。
 2. **补覆盖**（按 P0 结论裁剪）：

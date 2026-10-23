@@ -36,6 +36,7 @@ from vrl.ray.actor_pool import (
 )
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.trajectory.types import TrajectoryBatch
+from vrl.utils.stats import recorded
 
 # Far apart, so the fast worker's completions all land inside one slow call.
 _FAST_S = 0.01
@@ -90,6 +91,7 @@ class _Worker:
         self._received.append(payload)
         await asyncio.Event().wait()
 
+    @recorded
     async def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         batch = envelope.batch
         self._received.append(batch.batch_key)

@@ -39,7 +39,6 @@ class RewardOutput:
 
     scores: tuple[float, ...]
     components: dict[str, tuple[float, ...]] = field(default_factory=dict)
-    timing_ms: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         scores = tuple(float(score) for score in self.scores)
@@ -47,7 +46,6 @@ class RewardOutput:
             str(name): tuple(float(value) for value in values)
             for name, values in self.components.items()
         }
-        timing_ms = {str(name): float(value) for name, value in self.timing_ms.items()}
         if not all(math.isfinite(score) for score in scores):
             raise ValueError("RewardOutput.scores must contain only finite values")
         for name, values in components.items():
@@ -60,14 +58,8 @@ class RewardOutput:
                 raise ValueError(
                     f"RewardOutput component {name!r} must contain only finite values",
                 )
-        for name, value in timing_ms.items():
-            if not math.isfinite(value) or value < 0:
-                raise ValueError(
-                    f"RewardOutput timing {name!r} must be finite and non-negative",
-                )
         object.__setattr__(self, "scores", scores)
         object.__setattr__(self, "components", components)
-        object.__setattr__(self, "timing_ms", timing_ms)
 
 
 __all__ = [

@@ -21,6 +21,7 @@ from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationRequest
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
+from vrl.utils.stats import recorded
 
 
 class RayGenerationWorker:
@@ -67,6 +68,9 @@ class RayGenerationWorker:
             "gpu_ids": gpu_ids,
         }
 
+    # The batch methods return ``Recorded(result, stats)``: what this rank
+    # recorded travels back with its result, and the driver ``unwrap``s it.
+    @recorded
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         result = self.core.execute_batch(envelope)
         if result.output is not None and not result.error:
@@ -78,6 +82,7 @@ class RayGenerationWorker:
         config = self.core.process_group_config
         return config is None or config.group_rank == 0
 
+    @recorded
     def execute_request_batches(
         self,
         request: GenerationRequest,

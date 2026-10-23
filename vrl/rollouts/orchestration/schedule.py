@@ -7,11 +7,14 @@ from typing import Any, Protocol
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
 )
-from vrl.rollouts.stats import RolloutStats
 
 
 class RolloutSchedule(Protocol):
-    """Interface consumed by ``OnlineTrainer``."""
+    """Interface consumed by ``OnlineTrainer``.
+
+    Phase timings, counters and gauges are written to the caller's bound
+    stats (``vrl.utils.stats``), never returned.
+    """
 
     async def next_iteration(
         self,
@@ -22,7 +25,7 @@ class RolloutSchedule(Protocol):
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration: ...
 
-    async def after_train_step(self) -> RolloutStats: ...
+    async def after_train_step(self) -> None: ...
 
     def reset(self) -> None: ...
 

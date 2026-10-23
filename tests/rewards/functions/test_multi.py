@@ -39,20 +39,6 @@ class _QueuedBatchReward(RewardFunction):
         return RewardOutput(scores=tuple(scores))
 
 
-class _TimedBatchReward(RewardFunction):
-    def __init__(self, scores: list[float], timing_ms: dict[str, float]) -> None:
-        super().__init__()
-        self.scores = list(scores)
-        self.timing_ms = dict(timing_ms)
-
-    async def score_batch(self, samples: list[RewardSample]) -> RewardOutput:
-        assert len(samples) == len(self.scores)
-        return RewardOutput(
-            scores=tuple(self.scores),
-            timing_ms=dict(self.timing_ms),
-        )
-
-
 def test_multi_reward_rejects_duplicate_component_names() -> None:
     with pytest.raises(ValueError, match="unique"):
         MultiReward(
@@ -166,50 +152,6 @@ async def test_observation_cannot_overwrite_another_component() -> None:
     )
     with pytest.raises(ValueError, match="namespace collision"):
         await reward.score_batch([_make_sample("a")])
-
-
-@pytest.mark.asyncio
-async def test_multi_reward_aggregates_inference_observations() -> None:
-    """Checks multi reward exposes child reward inference timings."""
-    reward = MultiReward(
-        [
-            (
-                "first",
-                1.0,
-                _TimedBatchReward(
-                    [0.1, 0.2],
-                    {
-                        "latency_ms": 5.0,
-                        "queue_wait_ms": 1.0,
-                        "inference_ms": 4.0,
-                    },
-                ),
-            ),
-            (
-                "second",
-                2.0,
-                _TimedBatchReward(
-                    [1.0, 2.0],
-                    {
-                        "latency_ms": 7.0,
-                        "queue_wait_ms": 3.0,
-                        "inference_ms": 6.0,
-                    },
-                ),
-            ),
-        ],
-    )
-
-    report = await reward.score_batch([_make_sample("a"), _make_sample("b")])
-
-    assert report.scores == pytest.approx([2.1, 4.2])
-    assert report.timing_ms == pytest.approx(
-        {
-            "latency_ms": 12.0,
-            "queue_wait_ms": 4.0,
-            "inference_ms": 10.0,
-        },
-    )
 
 
 @pytest.mark.asyncio

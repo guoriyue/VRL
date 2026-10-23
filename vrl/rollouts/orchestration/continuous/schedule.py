@@ -17,7 +17,6 @@ from vrl.rollouts.orchestration.continuous.thread import (
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
-from vrl.rollouts.stats import RolloutStats
 
 if TYPE_CHECKING:
     from vrl.trainers.core.types import ContinuousRolloutConfig
@@ -93,9 +92,9 @@ class ContinuousRolloutSchedule:
             next_prompts=next_prompts,
         )
 
-    async def after_train_step(self) -> RolloutStats:
+    async def after_train_step(self) -> None:
         prepared_weights = self.lifecycle.prepare_weight_sync_state()
-        return await self._rollout_thread.commit_weights(prepared_weights)
+        await self._rollout_thread.commit_weights(prepared_weights)
 
     def reset(self) -> None:
         """Reset producer and batch state on the owner loop before a resumed rollout."""

@@ -5,7 +5,6 @@ collect -> evaluate -> advantage -> loss -> backward -> step.
 
 from __future__ import annotations
 
-import contextlib
 import itertools
 import json
 import logging
@@ -38,7 +37,6 @@ from vrl.rollouts.orchestration import (
     StrictOnPolicyRolloutSchedule,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
@@ -50,6 +48,7 @@ from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, TrainableStateGetter
 from vrl.utils.memory import HostMemoryMonitor
+from vrl.utils.stats import Stats, count, recording, timed
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -140,16 +139,13 @@ class TrainingBatch:
     """The data half of one step: filtered rollouts + advantages + diagnostics.
 
     ``collect_training_batch`` produces it and ``train_on_collections`` consumes
-    it; everything the train half reads — the filtered batches/advantages, the
-    pre-filter reward/advantage diagnostics, and the iteration plus the stats
-    accumulator both halves time their phases into — travels in here. The split is the seam
+    it; everything the train half reads — the filtered batches/advantages and the
+    pre-filter reward/advantage diagnostics — travels in here. The split is the seam
     a future rank split would collect/train across. ``sample_count`` is the
     collected (pre-filter) sample count, the weight of this collection's
     diagnostics in an update that spans several.
     """
 
-    iteration: Any
-    stats: RolloutStats
     batches: list[RolloutBatch]
     advantages: list[torch.Tensor]
     group_size: float
@@ -294,7 +290,6 @@ class _ReplayMetrics:
         adv_zero_rate: float,
         group_size: float,
         trained_prompt_num: int,
-        phase_times: dict[str, float],
         initial_replay: InitialReplayStats,
     ) -> TrainStepMetrics:
         """Build the public step result while preserving each reduction rule."""
@@ -334,7 +329,6 @@ class _ReplayMetrics:
             adv_zero_rate=adv_zero_rate,
             group_size=group_size,
             trained_prompt_num=trained_prompt_num,
-            phase_times=dict(phase_times),
         )
 
 
@@ -851,26 +845,45 @@ class OnlineTrainer:
         A streaming batch config (``prompts_per_collection`` > 0) collects, trains
         and releases one collection batch at a time so host RAM never holds the
         whole target batch; otherwise the whole batch is collected, then trained.
+
+        The step owns one stats scope (``vrl.utils.stats``): collection, reward,
+        advantage, replay, the optimizer step and the post-update weight sync
+        all record into it, and it becomes the step's ``phase_times`` and one
+        rollout_stats.jsonl row per rank. Without ``trainer.profile`` the
+        trainer phases read host wall clock only: no CUDA sync, so queued
+        kernels land in whichever phase next blocks on the card, and the
+        phases still cover the step between its sync points.
+        ``trainer.profile`` synchronizes both ends of each trainer phase so it
+        owns its kernels, and records the intervals for phase_events.jsonl.
         """
-        if self.config.batch_config.streaming:
-            if self.algorithm.config.global_std:
-                return await self._global_std_streaming_update(
+        metric_step = self.state.step
+        with recording() as stats:
+            if not self.config.batch_config.streaming:
+                from vrl.utils.profiling import capture_torch_trace
+
+                # Every rank captures the step; a directory per rank keeps the
+                # ranks of one node from overwriting each other's summary and
+                # manifest.
+                with capture_torch_trace(
+                    self.config.torch_profiler,
+                    step=self.state.step,
+                    device=self.device,
+                    worker_name="online_trainer",
+                    trace_subdir=f"trainer/rank{self._strategy.context.rank}",
+                ):
+                    batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
+                    metrics = await self.train_on_collections(_one_collection(batch))
+            elif self.algorithm.config.global_std:
+                metrics = await self._global_std_streaming_update(
                     prompts, next_example_batch=next_prompts
                 )
-            return await self._streaming_update(prompts, next_example_batch=next_prompts)
-        from vrl.utils.profiling import capture_torch_trace
-
-        # Every rank captures the step; a directory per rank keeps the ranks of
-        # one node from overwriting each other's summary and manifest.
-        with capture_torch_trace(
-            self.config.torch_profiler,
-            step=self.state.step,
-            device=self.device,
-            worker_name="online_trainer",
-            trace_subdir=f"trainer/rank{self._strategy.context.rank}",
-        ):
-            batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
-            return await self.train_on_collections(_one_collection(batch))
+            else:
+                metrics = await self._streaming_update(prompts, next_example_batch=next_prompts)
+        metrics.phase_times = stats.as_metrics_dict()
+        self._log_phase_times(metric_step, stats, metrics.phase_times)
+        if self.config.profile:
+            self._write_phase_events(stats.take_phase_events(), step=metric_step)
+        return metrics
 
     @staticmethod
     def merge_reward_scores(
@@ -909,9 +922,7 @@ class OnlineTrainer:
         """Collect rollouts and compute + filter advantages — the data half.
 
         Returns everything ``train_on_rollout_batch`` needs; in single-process
-        ``step()`` the two run back-to-back. The batch's ``stats`` accumulator is
-        created here and carried through the batch so both halves' phase timings
-        land in one place.
+        ``step()`` the two run back-to-back inside the step's stats scope.
 
         ``next_prompts`` is the recipe loop's next-batch prefetch input: only that loop knows both
         the gradient-accumulation split and the next epoch's draw (previewed off
@@ -942,7 +953,6 @@ class OnlineTrainer:
         streaming update computed over every collection batch before replay.
         """
         cfg = self.config
-        stats = RolloutStats()
         all_batches: list[RolloutBatch] = iteration.batches
         reward_components = self.merge_reward_scores(all_batches)
 
@@ -950,7 +960,7 @@ class OnlineTrainer:
         # Rewards are concatenated across all collected batches, normalized
         # per prompt-group by the algorithm (the single source of truth for
         # advantage math), then split back per-batch for the training loop.
-        with self._phase(stats, "advantage"):
+        with timed("advantage", profile=cfg.profile):
             all_rewards = torch.cat([b.rewards for b in all_batches])
             all_group_ids = torch.cat([b.group_ids for b in all_batches])
             if advantages is not None:
@@ -1015,8 +1025,6 @@ class OnlineTrainer:
             raise RuntimeError("rollout admission or audit failed on another training rank")
 
         return TrainingBatch(
-            iteration=iteration,
-            stats=stats,
             batches=filtered_batches,
             advantages=filtered_advs,
             group_size=group_size,
@@ -1312,7 +1320,6 @@ class OnlineTrainer:
         output = Path(self.config.output_dir)
         output.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".advantage-spool-", dir=output) as spool:
-            spool_stats = RolloutStats()
             metadata = []
             sizes = []
             batch_counts = []
@@ -1344,28 +1351,28 @@ class OnlineTrainer:
                 unique, inverse = torch.unique(groups, return_inverse=True)
                 offset = 0
                 for batch in iteration.batches:
-                    count = batch.rewards.numel()
+                    samples = batch.rewards.numel()
                     metadata.append(
                         RolloutBatch(
                             rewards=batch.rewards.detach().cpu().clone(),
-                            group_ids=inverse[offset : offset + count] + group_offset,
+                            group_ids=inverse[offset : offset + samples] + group_offset,
                             extras={
                                 "reward_components": batch.extras.get("reward_components", {})
                             },
                         )
                     )
-                    offset += count
+                    offset += samples
                 sizes.append(offset)
                 batch_counts.append(len(iteration.batches))
                 group_offset += unique.numel()
                 path = Path(spool) / f"{index}.pt"
-                with spool_stats.phase("advantage.spool_write"):
+                with timed("advantage.spool_write"):
                     torch.save(iteration, path)
-                spool_stats.add_counter("advantage.spool_bytes", path.stat().st_size)
+                count("advantage.spool_bytes", path.stat().st_size)
                 paths.append(path)
                 del batch, iteration
 
-            with spool_stats.phase("advantage.global_normalization"):
+            with timed("advantage.global_normalization"):
                 advantages = _compute_rollout_advantages(self.algorithm, metadata)
                 reward_stats = _global_reward_stats(
                     torch.cat([batch.rewards for batch in metadata])
@@ -1386,9 +1393,9 @@ class OnlineTrainer:
                 # before the legacy unanimous-skip path can discard a peer's data.
                 counts = []
                 offset = 0
-                for count in batch_counts:
-                    counts.append(sum(surviving[offset : offset + count]))
-                    offset += count
+                for slice_batches in batch_counts:
+                    counts.append(sum(surviving[offset : offset + slice_batches]))
+                    offset += slice_batches
                 device = self.device if dist.get_backend() == "nccl" else "cpu"
                 lower = torch.tensor(counts, dtype=torch.long, device=device)
                 upper = lower.clone()
@@ -1402,15 +1409,11 @@ class OnlineTrainer:
             del metadata
 
             def prepared():
-                for index, (path, values) in enumerate(zip(paths, slices, strict=True)):
+                for path, values in zip(paths, slices, strict=True):
                     # Only deserialize files created in this private temporary
                     # directory by this process, never an external checkpoint.
-                    read_stats = RolloutStats()
-                    with read_stats.phase("advantage.spool_read"):
+                    with timed("advantage.spool_read"):
                         iteration = torch.load(path, map_location="cpu", weights_only=False)
-                    iteration.stats.merge(read_stats)
-                    if index == 0:
-                        iteration.stats.merge(spool_stats)
                     yield iteration, values, reward_stats
                     del iteration
                     path.unlink()
@@ -1431,7 +1434,6 @@ class OnlineTrainer:
         train_indices: list[int],
         agg: _ReplayMetrics,
         capture_initial_replay: bool,
-        stats: RolloutStats,
     ) -> None:
         """One replay/backward sweep over the update's sample batches.
 
@@ -1439,7 +1441,7 @@ class OnlineTrainer:
         full-batch PPO-epoch path — the two hand-copies drifted once
         (the all-filtered initial_replay crash), so the sweep lives here and
         the callers keep only their own orchestration. Replay and backward are
-        timed into the collection's ``stats``.
+        timed into the step's stats.
 
         ``ema_per_microbatch`` reproduces the reference loop's shadow stepping:
         the shadow steps after every microbatch but the last, at the current
@@ -1481,7 +1483,7 @@ class OnlineTrainer:
                 agg=agg,
             )
             for j in self._sample_batch_train_indices(sample_batch, train_indices):
-                with self._phase(stats, "evaluate"):
+                with timed("evaluate", profile=cfg.profile):
                     loss, metrics = self._compute_replay_loss(
                         group_batch,
                         batch_adv,
@@ -1490,7 +1492,7 @@ class OnlineTrainer:
                     # Average across the complete optimizer target batch;
                     # step evaluators retain the per-denoise-step surrogate.
                     loss = loss * sample_batch.loss_weight / loss_scale
-                with self._phase(stats, "backward"):
+                with timed("backward", profile=cfg.profile):
                     self._backward(loss)
                 if not sample_batch.is_dummy:
                     agg.add(
@@ -1592,14 +1594,13 @@ class OnlineTrainer:
         step_per_pass = cfg.ppo_epochs > 1 or cfg.batch_config.optimizer_steps_per_batch > 1
         agg = _ReplayMetrics()
         diagnostics = _UpdateDiagnostics()
-        stats = RolloutStats()
         initial_replay: InitialReplayStats | None = None
         policy_updated = False
         had_work = False
 
-        def clip_and_step(target: RolloutStats) -> None:
+        def clip_and_step() -> None:
             nonlocal initial_replay, policy_updated
-            with self._phase(target, "optim_step"):
+            with timed("optim_step", profile=cfg.profile):
                 if initial_replay is None:
                     local_initial, local_weight = agg.initial_replay_snapshot()
                     initial_replay = self._validate_first_update_parity(
@@ -1639,11 +1640,6 @@ class OnlineTrainer:
                     "rank; skipping its backward",
                     self.state.step,
                 )
-            # collect.* phase timings arrive inside iteration.stats: each collect
-            # call owns its timings, and the schedule/consumer aggregates them per
-            # iteration. The trainer phases (batch.stats) merge on top into one
-            # typed accumulator, emitted per step.
-            stats.merge(self._step_stats(batch.iteration, batch.stats))
             # Release this collection's rollout/replay tensors before the next is
             # collected.
             del batch
@@ -1659,17 +1655,12 @@ class OnlineTrainer:
                 self.state.step,
             )
         elif not step_per_pass:
-            clip_and_step(stats)
+            clip_and_step()
         assert initial_replay is not None
 
-        metric_step = self.state.step
         self.state.step += 1
         if policy_updated:
-            stats.merge(await self.rollout_schedule.after_train_step())
-        phase_times = stats.as_metrics_dict()
-        self._log_phase_times(metric_step, stats, phase_times)
-        if cfg.profile:
-            self._write_phase_events(stats.take_phase_events(), step=metric_step)
+            await self.rollout_schedule.after_train_step()
         return agg.build(
             reward_mean=diagnostics.mean(diagnostics.reward_mean),
             reward_std=diagnostics.mean(diagnostics.reward_std),
@@ -1679,7 +1670,6 @@ class OnlineTrainer:
             adv_zero_rate=diagnostics.mean(diagnostics.adv_zero_rate),
             group_size=diagnostics.group_size,
             trained_prompt_num=diagnostics.trained_prompt_num,
-            phase_times=phase_times,
             initial_replay=initial_replay,
         )
 
@@ -1716,10 +1706,9 @@ class OnlineTrainer:
                     train_indices=train_indices,
                     agg=agg,
                     capture_initial_replay=initial_replay_pending(),
-                    stats=batch.stats,
                 )
                 if step_per_pass:
-                    clip_and_step(batch.stats)
+                    clip_and_step()
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on one collected batch: ``train_on_collections`` over that one collection."""
@@ -1727,7 +1716,7 @@ class OnlineTrainer:
         return await self.train_on_collections(_one_collection(batch))
 
     def _log_phase_times(
-        self, metric_step: int, stats: RolloutStats, phase_times: dict[str, float]
+        self, metric_step: int, stats: Stats, phase_times: dict[str, float]
     ) -> None:
         """Log the update's phase split and append it to rollout_stats.jsonl.
 
@@ -1737,11 +1726,12 @@ class OnlineTrainer:
 
         if not phase_times:
             return
-        # Trainer phases only: collection and reward-call timings overlap them.
+        # Trainer phases only: collection, generation and reward-call timings
+        # nest inside rollout.collect_s.
         percentage_phases = {
             name: seconds
             for name, seconds in stats.phase_seconds.items()
-            if not name.startswith(("collect.", "reward."))
+            if not name.startswith(("collect.", "generation.", "reward."))
         }
         total = sum(percentage_phases.values())
         if total <= 0:
@@ -1770,26 +1760,6 @@ class OnlineTrainer:
                 )
                 + "\n"
             )
-
-    def _phase(self, stats: RolloutStats, name: str) -> contextlib.AbstractContextManager[None]:
-        """Time a trainer phase into ``stats`` on every step.
-
-        Without ``trainer.profile`` the reading is host wall clock only: no CUDA
-        sync, so queued kernels land in whichever phase next blocks on the card,
-        and the phases still cover the step between its sync points.
-        ``trainer.profile`` synchronizes both ends so each phase owns its
-        kernels, and records the interval for phase_events.jsonl.
-        """
-
-        return stats.phase(name, profile=self.config.profile)
-
-    def _step_stats(self, iteration: Any, stats: RolloutStats) -> RolloutStats:
-        """Typed per-step stats: the iteration's accumulator + the trainer phases."""
-
-        merged = RolloutStats()
-        merged.merge(iteration.stats)
-        merged.merge(stats)
-        return merged
 
     def _write_phase_events(self, events: list[tuple[str, float, float]], *, step: int) -> None:
         """Append the per-phase start/end events to phase_events.jsonl."""

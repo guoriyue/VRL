@@ -128,7 +128,8 @@ def _fault_worker(
 
         def execute_batch(self, envelope: Any) -> Any:
             self.batch_calls.append(envelope.batch.batch_key)
-            result = super().execute_batch(envelope)
+            recorded = super().execute_batch(envelope)
+            result = recorded.value
             if "request_id" in corrupt:
                 result = replace(result, request_id="wrong-request")
             if "media" in corrupt and result.output is not None:
@@ -136,21 +137,22 @@ def _fault_worker(
                 result.output.video = [MediaReference("batch-ref", i) for i in range(2)]
             if memory_reading is not None:
                 result = replace(result, memory=memory_reading)
-            return result
+            return replace(recorded, value=result)
 
         def execute_request_batches(self, request: Any, sample_batches: Any) -> Any:
             self.request_calls.append(request.request_id)
             self.request_batches.append([batch.batch_key for batch in sample_batches])
             self._in_request = True
             try:
-                result = super().execute_request_batches(request, sample_batches)
+                recorded = super().execute_request_batches(request, sample_batches)
             finally:
                 self._in_request = False
+            result = recorded.value
             if "pipeline_request_id" in corrupt:
                 result = replace(result, request_id="wrong-request")
             if "pipeline_worker_id" in corrupt:
                 result = replace(result, worker_id="wrong-worker")
-            return result
+            return replace(recorded, value=result)
 
         def history(self) -> dict[str, list[Any]]:
             return {

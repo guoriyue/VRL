@@ -27,7 +27,7 @@
   - 每个 sample batch 都重新编码 prompt 和 negative prompt。negative prompt 是常量，也每批重编。
   - batch 不跨 prompt（`sample_batches.py:321-349`），所以每个 prompt 要编码 ceil(G / `samples_per_generation_batch`) 次。
   - 没有 text-encoder 缓存。
-  - `stage_durations` 只在 `runtime_debug` 时输出，而且不做 CUDA sync。
+  - `stage_durations` 只在 `runtime_debug` 时输出，而且不做 CUDA sync。（2026-10-21 起改为每步都记进 rollout stats：`generation.encode_s` / `prepare_latent_s` / `denoise_s` / `decode_s`，仍不做 sync。）
 - **NVFP4**：`vrl/nn/quantization/fp4.py:93-138` 和 `fp4_kernels.py:61-65`，是两级纯 max scaling：block scale = `block_amax/6/tensor_scale`。只量化 MLP（`targeting.py`）。
 - **CUDA graph**：全仓没有用。TeaCache 每步一次 `.item()`（`teacache.py:54`），但默认关闭，也没有 preset 开启它。
 - **Qwen3-VL judge**：每个 criterion 单独一行，每行都带上全部图像，一次前向（`vrl/rewards/models/qwen3vl_preference.py:588-608`）。所以视觉 token 每个问题都要重算一遍。`judge_max_side=1024`。没有 vLLM 服务，也没有前缀缓存。
@@ -40,7 +40,7 @@
 ### T1. 缓存 negative prompt 的编码（收益确定、改动小）
 
 - 做法：同一个 rollout request 内，常量 negative prompt 只编码一次，按 batch 复用。正向 prompt 在 `samples_per_generation_batch` 小于组大小时，也按 prompt 复用一次编码。
-- 先测：在 `runtime_debug` 下读 `stage_durations["encode"]` 的占比，测之前加 CUDA sync。
+- 先测：在 `runtime_debug` 下读 `stage_durations["encode"]` 的占比，测之前加 CUDA sync。（现在每步的 rollout stats 里就有 `generation.encode_s`。）
 - 验收：rollout 的轨迹和 logprob 逐位不变（编码是确定性的）；encode 阶段耗时下降。
 
 ### T2. Qwen3-VL judge 的图像只编码一次（中等收益、改动中等）
@@ -113,10 +113,10 @@ GPU 待测（命令已准备，2026-10-21 未运行：本机唯一的 GPU 被其
     trainer.total_epochs=4 trainer.save_freq=9999 trainer.output_dir=outputs/bench_t1_<arm>
   ```
 
-  读数：两边 `rollout_stats.jsonl` 中 step ≥ 1 的 `rollout.collect_s` 均值之差，减掉 `reward.latency_s` 之后就是生成的差。step 0 runtime_debug 里的 `stage_durations_s.encode`（preset 打开了 `debug.first_step`，不做 sync，含预热）只作参考：
+  读数：两边 `rollout_stats.jsonl` 中 step ≥ 1 的 `rollout.collect_s` 均值之差，减掉 `reward.latency_s` 之后就是生成的差。HEAD 每步还有 `generation.encode_s`（各 batch 编码的 host 墙钟之和，不做 sync）只作参考；旧版没有这一项，只有 step 0 runtime_debug 里的 `stage_durations_s.encode`（preset 打开了 `debug.first_step`，含预热）：
 
   ```
-  python -c "import json,sys,statistics as st; rows=[r for r in map(json.loads, open(sys.argv[1])) if r['step']>=1]; print({k: st.mean(r.get(k,0.0) for r in rows) for k in ('rollout.collect_s','reward.latency_s')})" outputs/bench_t1_<arm>/rollout_stats.jsonl
+  python -c "import json,sys,statistics as st; rows=[r for r in map(json.loads, open(sys.argv[1])) if r['step']>=1]; print({k: st.mean(r.get(k,0.0) for r in rows) for k in ('rollout.collect_s','reward.latency_s','generation.encode_s')})" outputs/bench_t1_<arm>/rollout_stats.jsonl
   ```
 
   验收：HEAD 的生成时间低于旧版（估计约 11%）。逐位一致已由 CPU 测试覆盖，编码是确定性的。

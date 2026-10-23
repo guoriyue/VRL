@@ -11,7 +11,6 @@ The driver-side half lives in ``gather.py`` (model-free reassembly), with
 from __future__ import annotations
 
 import random
-import time
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -44,6 +43,7 @@ from vrl.utils.cuda_memory import (
     reset_cuda_peak,
 )
 from vrl.utils.media import to_uint8
+from vrl.utils.stats import timed
 from vrl.utils.tensors import expand_tensor_to_batch
 from vrl.utils.validation import require_int
 
@@ -64,8 +64,6 @@ class DenoiseBatchResult(DenoisePath):
     # Binding-local memory reading consumed and cleared at the worker boundary.
     # None off-CUDA.
     memory: dict[str, int] | None = None
-    # Display/provenance-only: emitted through per-batch runtime debug metrics.
-    stage_durations: dict[str, float] = field(default_factory=dict)
     # Display/provenance-only: emitted through per-batch runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
@@ -281,78 +279,72 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
     ) -> DenoiseBatchResult:
         from vrl.utils.profiling import profile_range
 
-        stage_durations: dict[str, float] = {}
         params = self.parse_sampling_params(request)
 
-        started = time.perf_counter()
-        key = (
-            str(request.request_id),
-            batch.prompt_index,
-            repr(request.inputs[batch.prompt_index]),
-            repr(request.sampling),
-            repr(request.denoise),
-        )
-        if self._encoded_prompt is None or self._encoded_prompt[0] != key:
-            with profile_range("generation.prompt_encode"):
-                self._encoded_prompt = (
-                    key,
-                    self.encode_prompt_for_batch(
-                        generation_request=request,
-                        params=params,
-                        batch=batch,
-                    ),
-                )
-        # A shallow copy: downstream hooks may add keys, never rewrite tensors.
-        encoded = dict(self._encoded_prompt[1])
-        stage_durations["encode"] = time.perf_counter() - started
+        # Host wall clock of each stage (no CUDA sync), summed over the batches.
+        with timed("generation.encode_s"):
+            key = (
+                str(request.request_id),
+                batch.prompt_index,
+                repr(request.inputs[batch.prompt_index]),
+                repr(request.sampling),
+                repr(request.denoise),
+            )
+            if self._encoded_prompt is None or self._encoded_prompt[0] != key:
+                with profile_range("generation.prompt_encode"):
+                    self._encoded_prompt = (
+                        key,
+                        self.encode_prompt_for_batch(
+                            generation_request=request,
+                            params=params,
+                            batch=batch,
+                        ),
+                    )
+            # A shallow copy: downstream hooks may add keys, never rewrite tensors.
+            encoded = dict(self._encoded_prompt[1])
 
-        started = time.perf_counter()
-        batch_encoded = self.expand_conditioning_to_batch(
-            encoded=encoded,
-            generation_request=request,
-            batch=batch,
-        )
-        prepare_kwargs = self.build_prepare_kwargs(
-            encoded=encoded,
-            generation_request=request,
-            batch=batch,
-        )
-        config = DenoiseLoopConfig(
-            sample_start=batch.sample_start,
-            sample_count=batch.sample_count,
-            seed=params.model_request.seed,
-            sde=params.sde,
-            # Use the parsed window without drawing again inside the loop.
-            # _forward_batch parses each batch; request-owned randomness keeps
-            # the selected window identical across those re-parses.
-            sde_window=params.sde_window,
-            denoise_mode=params.denoise_mode,
-            teacache=params.teacache,
-        )
-        state = self.prepare_denoise_state(
-            request=params.model_request,
-            encoded=batch_encoded,
-            config=config,
-            prepare_kwargs=prepare_kwargs,
-        )
-        stage_durations["prepare_latent"] = time.perf_counter() - started
+        with timed("generation.prepare_latent_s"):
+            batch_encoded = self.expand_conditioning_to_batch(
+                encoded=encoded,
+                generation_request=request,
+                batch=batch,
+            )
+            prepare_kwargs = self.build_prepare_kwargs(
+                encoded=encoded,
+                generation_request=request,
+                batch=batch,
+            )
+            config = DenoiseLoopConfig(
+                sample_start=batch.sample_start,
+                sample_count=batch.sample_count,
+                seed=params.model_request.seed,
+                sde=params.sde,
+                # Use the parsed window without drawing again inside the loop.
+                # _forward_batch parses each batch; request-owned randomness keeps
+                # the selected window identical across those re-parses.
+                sde_window=params.sde_window,
+                denoise_mode=params.denoise_mode,
+                teacache=params.teacache,
+            )
+            state = self.prepare_denoise_state(
+                request=params.model_request,
+                encoded=batch_encoded,
+                config=config,
+                prepare_kwargs=prepare_kwargs,
+            )
 
-        started = time.perf_counter()
-        denoise_result = self.run_denoise_steps(
-            state=state,
-            config=config,
-        )
-        stage_durations["denoise"] = time.perf_counter() - started
+        with timed("generation.denoise_s"):
+            denoise_result = self.run_denoise_steps(
+                state=state,
+                config=config,
+            )
 
-        started = time.perf_counter()
-        batch_result = self.decode_denoise_result(
-            batch=batch,
-            config=config,
-            denoise_result=denoise_result,
-        )
-        stage_durations["decode"] = time.perf_counter() - started
-        batch_result.stage_durations = stage_durations
-        return batch_result
+        with timed("generation.decode_s"):
+            return self.decode_denoise_result(
+                batch=batch,
+                config=config,
+                denoise_result=denoise_result,
+            )
 
     def apply_wire_storage_policy(
         self,

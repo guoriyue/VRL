@@ -394,12 +394,6 @@ class GenerationWorkerCore:
 
         metrics: dict[str, Any] = {}
 
-        stage_durations = getattr(batch_output, "stage_durations", None)
-        if isinstance(stage_durations, Mapping):
-            metrics["stage_durations_s"] = {
-                str(key): float(value) for key, value in stage_durations.items()
-            }
-
         engine_counters = getattr(batch_output, "engine_counters", None)
         if isinstance(engine_counters, Mapping):
             metrics["engine_counters"] = counter_value(engine_counters)

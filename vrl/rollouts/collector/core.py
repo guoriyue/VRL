@@ -16,10 +16,9 @@ Trajectory packing details live in ``batch_builder``; request construction in
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch
@@ -41,8 +40,8 @@ from vrl.rollouts.collector.requests import (
     CollectorRequest,
     GenerationRequestBuilder,
 )
-from vrl.rollouts.stats import RolloutStats
 from vrl.utils.profiling import TimeIntervals, profile_range
+from vrl.utils.stats import count, elapsed, timed
 
 
 @dataclass(slots=True)
@@ -51,9 +50,6 @@ class UnscoredRollout:
 
     output: GenerationOutput
     collector_request: CollectorRequest
-    profile: bool = False
-    phases: dict[str, float] = field(default_factory=dict)
-    reward_timing_ms: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -108,6 +104,7 @@ class OwnedCollection(Protocol):
     ``request_builder`` / ``generate_rollout`` / ``evaluate_rollout`` and must
     finish with ``finish_scored_prompt_groups``. The framework does not know
     what the plan is; multi-step edit chains (the sibling ``agentic`` repo) are one.
+    Its phases and counters go to the caller's bound stats (``vrl.utils.stats``).
     """
 
     async def collect(
@@ -117,7 +114,6 @@ class OwnedCollection(Protocol):
         group_size: int,
         runtime_debug: bool,
         policy_version: int | None,
-        stats: RolloutStats,
     ) -> list[RolloutBatch]: ...
 
 
@@ -215,18 +211,11 @@ class RolloutCollector:
     async def generate_rollout(self, collector_request: CollectorRequest) -> UnscoredRollout:
         """Execute one prepared generation request without acquiring rewards."""
 
-        profile = os.environ.get("VRL_PROFILE") == "1"
-        phase_t = time.perf_counter() if profile else None
-
-        output = await self._require_generation_runtime().generate(collector_request.request)
-        unscored = UnscoredRollout(
-            output=output,
-            collector_request=collector_request,
-            profile=profile,
-        )
-        if profile and phase_t is not None:
-            unscored.phases["collect.engine_generate"] = time.perf_counter() - phase_t
-        return unscored
+        # Starts at submission: a prefetched group's time overlaps the running
+        # one's, so the sum over groups may exceed the call's wall time.
+        with timed("collect.engine_generate"):
+            output = await self._require_generation_runtime().generate(collector_request.request)
+        return UnscoredRollout(output=output, collector_request=collector_request)
 
     async def evaluate_rollout(self, unscored: list[UnscoredRollout]) -> RolloutEvaluation | None:
         """Evaluate generated samples through one reward call, without assembling batches."""
@@ -260,36 +249,30 @@ class RolloutCollector:
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
 
-        profile = any(rollout.profile for rollout in unscored)
-        phase_t = time.perf_counter() if profile else None
         reward_samples = [builder.reward_samples() for builder in builders]
         samples = tuple(sample for group_samples in reward_samples for sample in group_samples)
         score_error: BaseException | None = None
-        try:
-            with profile_range("collector.reward_score"):
-                score_result = await self.reward_runtime.score(samples)
-        except BaseException as error:
-            score_error = error
-        if self.reward_yields_gpu:
-            # The reward shares a GPU: it yields it as soon as scoring is over,
-            # whether or not scoring succeeded, exactly as rollout yields
-            # before scoring.
+        with timed("collect.reward_score"):
             try:
-                await self.reward_runtime.park_memory()
-            except BaseException as park_error:
-                if score_error is None:
-                    raise
-                raise RewardCleanupError(
-                    "reward scoring and memory parking both failed",
-                    [score_error, park_error],
-                ) from score_error
+                with profile_range("collector.reward_score"):
+                    score_result = await self.reward_runtime.score(samples)
+            except BaseException as error:
+                score_error = error
+            if self.reward_yields_gpu:
+                # The reward shares a GPU: it yields it as soon as scoring is over,
+                # whether or not scoring succeeded, exactly as rollout yields
+                # before scoring.
+                try:
+                    await self.reward_runtime.park_memory()
+                except BaseException as park_error:
+                    if score_error is None:
+                        raise
+                    raise RewardCleanupError(
+                        "reward scoring and memory parking both failed",
+                        [score_error, park_error],
+                    ) from score_error
         if score_error is not None:
             raise score_error
-        unscored[0].reward_timing_ms.update(score_result.timing_ms)
-        reward_score_s = time.perf_counter() - phase_t if phase_t is not None else None
-
-        if reward_score_s is not None:
-            unscored[0].phases["collect.reward_score"] = reward_score_s
         return RolloutEvaluation(
             rollouts=unscored,
             builders=builders,
@@ -304,47 +287,38 @@ class RolloutCollector:
 
         if evaluation is None:
             return []
-        unscored = evaluation.rollouts
         score_result = evaluation.rewards
-        profile = any(rollout.profile for rollout in unscored)
-        build_t = time.perf_counter() if profile else None
         batches: list[RolloutBatch] = []
-        sample_offset = 0
-        for builder, sample_count in zip(
-            evaluation.builders,
-            evaluation.sample_counts,
-            strict=True,
-        ):
-            sample_stop = sample_offset + sample_count
-            group_rewards = torch.tensor(
-                score_result.scores[sample_offset:sample_stop],
-                dtype=torch.float32,
-                # Collector output is host-owned; the trainer moves the batch
-                # to its device later, so reward tensors never race backward.
-                device="cpu",
-            )
-            batch = builder.build(group_rewards)
-            if score_result.components:
-                # Raw component values travel with their exact rollout rows.
-                # A continuous producer may already be scoring a future group
-                # when this batch is consumed, so trainer metrics must never
-                # read a mutable last-result cache from the shared reward model.
-                batch.extras["reward_components"] = {
-                    name: torch.tensor(
-                        values[sample_offset:sample_stop],
-                        dtype=torch.float32,
-                    )
-                    for name, values in score_result.components.items()
-                }
-            sample_offset = sample_stop
-            batches.append(batch)
-        if build_t is not None:
-            # One score call and one build pass cover every group, so the
-            # call-level timings live on the first group only: a caller summing
-            # phases over groups must not multiply the same wall time. The
-            # phases stay on the rollouts (caller-owned) so concurrent collects
-            # never share mutable collector state.
-            unscored[0].phases["collect.batch_build"] = time.perf_counter() - build_t
+        with timed("collect.batch_build"):
+            sample_offset = 0
+            for builder, sample_count in zip(
+                evaluation.builders,
+                evaluation.sample_counts,
+                strict=True,
+            ):
+                sample_stop = sample_offset + sample_count
+                group_rewards = torch.tensor(
+                    score_result.scores[sample_offset:sample_stop],
+                    dtype=torch.float32,
+                    # Collector output is host-owned; the trainer moves the batch
+                    # to its device later, so reward tensors never race backward.
+                    device="cpu",
+                )
+                batch = builder.build(group_rewards)
+                if score_result.components:
+                    # Raw component values travel with their exact rollout rows.
+                    # A continuous producer may already be scoring a future group
+                    # when this batch is consumed, so trainer metrics must never
+                    # read a mutable last-result cache from the shared reward model.
+                    batch.extras["reward_components"] = {
+                        name: torch.tensor(
+                            values[sample_offset:sample_stop],
+                            dtype=torch.float32,
+                        )
+                        for name, values in score_result.components.items()
+                    }
+                sample_offset = sample_stop
+                batches.append(batch)
         return batches
 
     @property
@@ -435,7 +409,6 @@ class RolloutCollector:
         group_size: int,
         runtime_debug: bool,
         policy_version: int | None,
-        stats: RolloutStats,
     ) -> list[RolloutBatch]:
         """Collect every trainer prompt's sample group and return per-group batches.
 
@@ -447,10 +420,12 @@ class RolloutCollector:
         generation request is submitted before the current one is awaited, so
         the engine never idles between two groups.
 
-        ``stats`` accumulates this call's collect phase timings
-        (``collect.engine_generate`` / ``collect.reward_score`` /
-        ``collect.batch_build``) plus any reward-inference timings. The accumulator
-        is owned by this call, so concurrent collects never overwrite each other.
+        The call's collect phase timings (``collect.engine_generate`` /
+        ``collect.reward_score`` / ``collect.batch_build`` / ``collect.wall``
+        ...) and counters land in the caller's bound stats
+        (``vrl.utils.stats``), as does what the generation and reward work for
+        this call records, in this process or returned from an actor. A caller
+        running several collects concurrently binds one scope per call.
         """
 
         if not prompts:
@@ -469,7 +444,6 @@ class RolloutCollector:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                     policy_version=policy_version,
-                    stats=stats,
                 ):
                     batch.group_ids = batch.group_ids + offset
                     batches.append(batch)
@@ -611,41 +585,25 @@ class RolloutCollector:
                 ) from root_cause
             raise
 
-        all_batches = self.finish_scored_prompt_groups(generated_groups, batches, stats)
+        all_batches = self.finish_scored_prompt_groups(generated_groups, batches)
         generation_timing = TimeIntervals(
             (group.started_at, group.completed_at) for group in generated_groups
         )
         reward_timing = TimeIntervals(reward_intervals)
-        stats.add_phases(
-            {
-                "collect.wall": time.perf_counter() - collection_started,
-                "collect.generation_wall": generation_timing.duration,
-                "collect.reward_wall": reward_timing.duration,
-                "collect.generation_reward_overlap": generation_timing.overlap(reward_timing),
-            },
-        )
-        stats.add_counter("collect.group_count", len(all_batches))
-        stats.add_counter(
-            "collect.sample_count",
-            sum(int(batch.rewards.shape[0]) for batch in all_batches),
-        )
+        elapsed("collect.wall", time.perf_counter() - collection_started)
+        elapsed("collect.generation_wall", generation_timing.duration)
+        elapsed("collect.reward_wall", reward_timing.duration)
+        elapsed("collect.generation_reward_overlap", generation_timing.overlap(reward_timing))
+        count("collect.group_count", len(all_batches))
+        count("collect.sample_count", sum(int(batch.rewards.shape[0]) for batch in all_batches))
         return all_batches
 
     def finish_scored_prompt_groups(
         self,
         generated_groups: list[RolloutGenerationResult],
         batches: list[RolloutBatch],
-        stats: RolloutStats,
     ) -> list[RolloutBatch]:
-        """Account collector timings and restore prompt identities after scoring."""
-
-        # Per-call phases live on the unscored groups (collector writes the
-        # call-level score/build timings and reward inference timings on the
-        # first group only).
-        for group in generated_groups:
-            unscored = group.unscored
-            stats.add_phases(unscored.phases)
-            stats.fold_reward_timing(unscored.reward_timing_ms)
+        """Restore prompt identities after scoring and split per group."""
 
         all_batches: list[RolloutBatch] = []
         for batch, group in zip(batches, generated_groups, strict=True):

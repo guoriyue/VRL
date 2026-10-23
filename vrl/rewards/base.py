@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import math
-import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
@@ -34,6 +33,7 @@ from vrl.rewards.protocols import (
 )
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.logging import init_logger
+from vrl.utils.stats import absorb, recording, timed
 
 if TYPE_CHECKING:
     from vrl.rewards.ray import RayRewardPlacement
@@ -378,78 +378,69 @@ class ModelRewardFunction(RewardFunction):
             return RewardOutput(scores=())
 
         scorer = self.scorer
-        total_started = time.perf_counter()
-        materialize_started = time.perf_counter()
-        # Media rides the request in memory (tensors or boxed references);
-        # the driver writes no files.
-        artifacts = [
-            RewardInferenceArtifact(
-                artifact_id=f"{sample.sample_id}:in-memory",
-                sample_id=sample.sample_id,
-                path="",
-                media=sample.output,
-                prompt=str(sample.prompt),
-                metadata=dict(sample.metadata or {}),
+        # This call's timings, folded into the caller's accumulator once below.
+        with recording() as call, timed("reward.latency_s"):
+            with timed("reward.artifact_materialization_s"):
+                # Media rides the request in memory (tensors or boxed
+                # references); the driver writes no files.
+                artifacts = [
+                    RewardInferenceArtifact(
+                        artifact_id=f"{sample.sample_id}:in-memory",
+                        sample_id=sample.sample_id,
+                        path="",
+                        media=sample.output,
+                        prompt=str(sample.prompt),
+                        metadata=dict(sample.metadata or {}),
+                    )
+                    for sample in samples
+                ]
+            request_id = f"{self._name}-{uuid.uuid4().hex}"
+            request = RewardInferenceRequest(
+                request_id=request_id,
+                artifacts=tuple(artifacts),
             )
-            for sample in samples
-        ]
-        materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
-        request_id = f"{self._name}-{uuid.uuid4().hex}"
-        request = RewardInferenceRequest(
-            request_id=request_id,
-            artifacts=tuple(artifacts),
-        )
-        inference_started = time.perf_counter()
-        # Contract enforcement lives at this seam, not inside each runtime,
-        # so every runtime (including injected fakes) gets the same result
-        # identity guard and request-order re-sort.
-        self._parked = False
-        raw_results = await scorer.score_batch(request)
-        results = request.validate_and_order_results(raw_results)
-        inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
-        total_latency_ms = (time.perf_counter() - total_started) * 1000.0
-        self._write_debug(
-            request,
-            results,
-            artifact_materialization_ms=materialization_ms,
-            inference_total_ms=inference_total_ms,
-            total_reward_latency_ms=total_latency_ms,
-        )
+            with timed("reward.inference_wall_s"):
+                # Contract enforcement lives at this seam, not inside each
+                # runtime, so every runtime (including injected fakes) gets the
+                # same result identity guard and request-order re-sort.
+                self._parked = False
+                raw_results = await scorer.score_batch(request)
+                results = request.validate_and_order_results(raw_results)
+        self._write_debug(request, results, call.phase_seconds)
         score_keys = set(results[0].scores)
         if any(set(result.scores) != score_keys for result in results):
             raise ValueError("reward model returned inconsistent score axes within a batch")
 
-        # Per-result transport timings fold into one reward-call summary:
-        # stage-parallel phases report their slowest member (max over
-        # results); per-artifact inference cost is additive (sum), falling
-        # back to this call's measured inference wall time when a
-        # transport reports no per-result values.
-        def stage_max(key: str) -> float:
-            return max(
-                (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
-                default=0.0,
-            )
-
-        inference_values = [
+        # Each result's own timings (the record a transport stamps) fold into
+        # this call: per-artifact inference cost is additive, falling back to
+        # the measured scorer wall time when a transport reports none, and
+        # stage-parallel phases report their slowest member.
+        inference_ms = [
             float(result.timing_ms["inference_ms"])
             for result in results
             if "inference_ms" in result.timing_ms
         ]
+        call.add_phase(
+            "reward.inference_s",
+            sum(inference_ms) / 1000.0
+            if inference_ms
+            else call.phase_seconds["reward.inference_wall_s"],
+        )
+        for key, phase in (
+            ("service_artifact_validation_ms", "reward.artifact_validation_s"),
+            ("service_inference_wall_ms", "reward.service_inference_wall_s"),
+            ("http_roundtrip_ms", "reward.transport_roundtrip_s"),
+        ):
+            values = [
+                float(result.timing_ms[key]) for result in results if key in result.timing_ms
+            ]
+            if values:
+                call.add_phase(phase, max(values) / 1000.0)
+        absorb(call)
         return RewardOutput(
             scores=tuple(self._select_score(result.scores) for result in results),
             components={
                 key: tuple(result.scores[key] for result in results) for key in results[0].scores
-            },
-            timing_ms={
-                "latency_ms": total_latency_ms,
-                "queue_wait_ms": stage_max("queue_wait_ms"),
-                "inference_ms": (
-                    sum(inference_values) if inference_values else float(inference_total_ms)
-                ),
-                "artifact_materialization_ms": materialization_ms,
-                "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
-                "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
-                "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
             },
         )
 
@@ -475,10 +466,7 @@ class ModelRewardFunction(RewardFunction):
         self,
         request: RewardInferenceRequest,
         results: list[RewardInferenceResult],
-        *,
-        artifact_materialization_ms: float,
-        inference_total_ms: float,
-        total_reward_latency_ms: float,
+        phase_seconds: Mapping[str, float],
     ) -> None:
         if not self.debug_dir:
             return
@@ -489,9 +477,10 @@ class ModelRewardFunction(RewardFunction):
             "artifact_ids": [artifact.artifact_id for artifact in request.artifacts],
             "reward_name": self.reward_name,
             "score_key": self.score_key,
-            "artifact_materialization_ms": artifact_materialization_ms,
-            "inference_total_ms": inference_total_ms,
-            "total_reward_latency_ms": total_reward_latency_ms,
+            "artifact_materialization_ms": phase_seconds["reward.artifact_materialization_s"]
+            * 1000.0,
+            "inference_total_ms": phase_seconds["reward.inference_wall_s"] * 1000.0,
+            "total_reward_latency_ms": phase_seconds["reward.latency_s"] * 1000.0,
         }
         requests_file = debug_path / f"{self._name}_requests.jsonl"
         results_file = debug_path / f"{self._name}_results.jsonl"

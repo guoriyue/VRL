@@ -3,7 +3,8 @@
 The consumer owns same-policy batch selection: it waits until one homogeneous
 policy version has a full iteration worth of distinct groups, reassigns
 contiguous ``group_ids`` so per-prompt advantage normalization stays correct,
-and hands a standard ``RolloutIteration`` back to the schedule.
+and hands a standard ``RolloutIteration`` back to the schedule. The items'
+stats and the iteration's gauges go to the caller's bound stats.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
-from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
+from vrl.utils.stats import absorb, elapsed, gauge
 
 
 class ContinuousRolloutConsumer:
@@ -199,26 +200,21 @@ class ContinuousRolloutConsumer:
         version = prompt_batch.policy_version
         staleness = current_policy_version - version
         item_age_s = max(item.age_s for item in items)
-        stats = RolloutStats()
-        stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))
-        # Merge the per-item collect stats (each collect call attached its
+        elapsed("continuous.queue_wait_s", float(queue_wait_s))
+        # Fold in the per-item collect stats (each collect call attached its
         # timings to exactly one item) so the iteration reports cumulative
         # generation/reward/build time, matching the strict schedule's
         # one-call-per-iteration accounting.
         for item in items:
-            stats.merge(item.stats)
-        stats.observe_gauges(
-            {
-                "continuous.consume_policy_version": float(current_policy_version),
-                "continuous.rollout_policy_version": float(version),
-                "continuous.stale_policy_versions": float(staleness),
-                "continuous.item_age_s": float(item_age_s),
-                "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
-                # Report the same batch identity used to select this iteration.
-                "continuous.batch_id": float(prompt_batch.batch_id),
-            },
-        )
-        return RolloutIteration(batches=batches, stats=stats)
+            absorb(item.stats)
+        gauge("continuous.consume_policy_version", float(current_policy_version))
+        gauge("continuous.rollout_policy_version", float(version))
+        gauge("continuous.stale_policy_versions", float(staleness))
+        gauge("continuous.item_age_s", float(item_age_s))
+        gauge("continuous.ready_groups_at_demand", float(ready_groups_at_demand))
+        # Report the same batch identity used to select this iteration.
+        gauge("continuous.batch_id", float(prompt_batch.batch_id))
+        return RolloutIteration(batches=batches)
 
 
 __all__ = ["ContinuousRolloutConsumer"]

@@ -5,6 +5,10 @@ work without starving rollout admission and completion harvesting.  This module
 owns the continuous producer, consumer, and every asynchronous controller
 operation on one dedicated thread/event loop.  The trainer side communicates
 only through ``concurrent.futures.Future`` command boundaries.
+
+The stats binding does not cross that boundary: each controller command is
+``recorded`` (it records into a scope of its own on the owner loop) and the
+trainer-side facade folds that into the caller's scope with ``unwrap``.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProd
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
-from vrl.rollouts.stats import RolloutStats
+from vrl.utils.stats import gauge, recorded, timed, unwrap
 from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
@@ -53,6 +57,7 @@ class _ContinuousRolloutController:
         self._shutting_down = False
         self._runtime_closed = False
 
+    @recorded
     async def next_iteration(
         self,
         prompts: list[Any],
@@ -68,10 +73,6 @@ class _ContinuousRolloutController:
                 raise ValueError("continuous rollout requires at least one prompt")
             if next_prompts is not None and not next_prompts:
                 raise ValueError("continuous prefetch prompts must be non-empty")
-            # Load-bearing local: pipeline startup pushes the initial weights
-            # before the consumer drains an iteration, so the object that will
-            # own these timings does not exist yet. Merged in below.
-            startup_stats = RolloutStats()
 
             if self.producer is None:
                 await self._start_pipeline(
@@ -79,7 +80,6 @@ class _ContinuousRolloutController:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                     initial_weights=initial_weights,
-                    stats=startup_stats,
                 )
             elif self.producer.prompt_batch is None or self.producer.prompt_batch.consumed:
                 self._set_prompt_batch(
@@ -119,13 +119,16 @@ class _ContinuousRolloutController:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-            iteration.stats.merge(startup_stats)
             # Preserve the persisted metrics schema used by existing training logs.
-            iteration.stats.observe_gauge(
-                "continuous.lookahead_requested",
-                float(next_prompts is not None),
-            )
-            self._attach_producer_metrics(iteration)
+            gauge("continuous.lookahead_requested", float(next_prompts is not None))
+            state = self.producer.state
+            gauge("continuous.producer_inflight", float(self.producer.inflight_count))
+            gauge("continuous.producer_tick_count", float(state.tick_count))
+            gauge("continuous.producer_last_tick_gap_s", float(state.last_tick_gap_s))
+            gauge("continuous.producer_max_tick_gap_s", float(state.max_tick_gap_s))
+            gauge("continuous.producer_submitted", float(state.submitted_count))
+            gauge("continuous.producer_completed", float(state.completed_count))
+            gauge("continuous.producer_errors", float(state.error_count))
             return iteration
 
         return await self._run_command(operation)
@@ -147,18 +150,18 @@ class _ContinuousRolloutController:
         )
         self.producer.admit_now()
 
-    async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
+    @recorded
+    async def commit_weights(self, prepared_weights: Any) -> None:
         """Commit one main-thread snapshot and reopen admission only on success."""
 
-        async def operation() -> RolloutStats:
-            stats = RolloutStats()
+        async def operation() -> None:
             producer = self.producer
             if producer is None:
-                await self.lifecycle.push_prepared_weights(prepared_weights, stats)
-                return stats
+                await self.lifecycle.push_prepared_weights(prepared_weights)
+                return
 
             non_draining = self.settings.versioned_weight_sync
-            with stats.phase("continuous.weight_sync_pause_s"):
+            with timed("continuous.weight_sync_pause_s"):
                 producer.pause_admission()
                 # There is deliberately no finally-resume here.  A partial worker
                 # update leaves the fleet's installed version unknown, so failure
@@ -167,7 +170,7 @@ class _ContinuousRolloutController:
                     await producer.drain_prompt_batch(
                         wait_timeout_s=self.settings.wait_timeout_s,
                     )
-                await self.lifecycle.push_prepared_weights(prepared_weights, stats)
+                await self.lifecycle.push_prepared_weights(prepared_weights)
                 assert self.consumer is not None
                 assert producer.prompt_batch is not None
                 self.consumer.validate_ready_versions(
@@ -175,13 +178,9 @@ class _ContinuousRolloutController:
                     current_policy_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
-            stats.observe_gauge(
-                "continuous.weight_sync_barrier_mode",
-                float(non_draining),
-            )
-            return stats
+            gauge("continuous.weight_sync_barrier_mode", float(non_draining))
 
-        return await self._run_command(operation)
+        await self._run_command(operation)
 
     async def reset(self) -> None:
         """Clear continuous batch/producer state without touching the controller."""
@@ -288,14 +287,13 @@ class _ContinuousRolloutController:
         group_size: int,
         runtime_debug: bool,
         initial_weights: Any,
-        stats: RolloutStats,
     ) -> None:
         # The trainer exported this immutable CPU snapshot before crossing the
         # owner boundary. Worker ACK validation happens inside the weight-sync
         # stack before push_prepared_weights publishes the committed version.
         # None means the persistent controller already owns initialized weights.
         if initial_weights is not None:
-            await self.lifecycle.push_prepared_weights(initial_weights, stats)
+            await self.lifecycle.push_prepared_weights(initial_weights)
 
         self.consumer = ContinuousRolloutConsumer(
             settings=self.settings,
@@ -320,22 +318,6 @@ class _ContinuousRolloutController:
         # Retain owners until cleanup succeeds so shutdown can retry a failure.
         self.producer = None
         self.consumer = None
-
-    def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
-        if self.producer is None:
-            return
-        state = self.producer.state
-        iteration.stats.observe_gauges(
-            {
-                "continuous.producer_inflight": float(self.producer.inflight_count),
-                "continuous.producer_tick_count": float(state.tick_count),
-                "continuous.producer_last_tick_gap_s": float(state.last_tick_gap_s),
-                "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
-                "continuous.producer_submitted": float(state.submitted_count),
-                "continuous.producer_completed": float(state.completed_count),
-                "continuous.producer_errors": float(state.error_count),
-            },
-        )
 
 
 class ContinuousRolloutThread:
@@ -379,15 +361,15 @@ class ContinuousRolloutThread:
             ),
             loop,
         )
-        return await self._await_command(future)
+        return unwrap(await self._await_command(future))
 
-    async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
+    async def commit_weights(self, prepared_weights: Any) -> None:
         controller, loop = self._ensure_thread()
         future = asyncio.run_coroutine_threadsafe(
             controller.commit_weights(prepared_weights),
             loop,
         )
-        return await self._await_command(future)
+        unwrap(await self._await_command(future))
 
     def reset(self) -> None:
         with self._state_lock:

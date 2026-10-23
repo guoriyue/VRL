@@ -214,7 +214,6 @@ class TestAdvantageAndMetrics:
             adv_zero_rate=0.0,
             group_size=10.0,
             trained_prompt_num=1,
-            phase_times={},
             initial_replay=initial_replay,
         )
 

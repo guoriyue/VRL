@@ -23,7 +23,6 @@ from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutPhaseCleanupError,
 )
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.weight_sync import flatten_trainable_module_state
 
 # Either the rollout or the reward sits on the trainer GPU; both shapes park
@@ -235,7 +234,7 @@ async def test_prepared_weight_push_never_reenters_live_getter(monkeypatch, tmp_
     ]
     with torch.no_grad():
         live.fill_(9.0)
-    await coordinator.push_prepared_weights(prepared, RolloutStats())
+    await coordinator.push_prepared_weights(prepared)
 
     assert exports.events == ["trainer.export"]
     assert coordinator.weights_initialized is True
@@ -264,7 +263,7 @@ async def test_snapshot_export_and_push_are_separate_profile_ranges(monkeypatch,
     with torch.profiler.profile(activities=activities) as prepare_profile:
         prepared = coordinator.prepare_initial_weight_sync_state()
     with torch.profiler.profile(activities=activities) as push_profile:
-        await coordinator.push_prepared_weights(prepared, RolloutStats())
+        await coordinator.push_prepared_weights(prepared)
 
     prepare_ranges = {event.key for event in prepare_profile.key_averages()}
     push_ranges = {event.key for event in push_profile.key_averages()}
@@ -285,7 +284,7 @@ async def test_failed_prepared_weight_push_does_not_publish_initialized_state(
     prepared = coordinator.prepare_initial_weight_sync_state()
 
     with pytest.raises(RuntimeError, match="push failed"):
-        await coordinator.push_prepared_weights(prepared, RolloutStats())
+        await coordinator.push_prepared_weights(prepared)
 
     assert coordinator.weights_initialized is False
     assert bench.runtime.current_policy_version == 0

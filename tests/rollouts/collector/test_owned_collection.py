@@ -7,7 +7,6 @@ import torch
 
 from tests.rollouts.collector._helpers import real_collector
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.stats import RolloutStats
 
 
 class _Owned:
@@ -17,7 +16,7 @@ class _Owned:
         self.groups = groups
         self.seen: list[dict] = []
 
-    async def collect(self, collector, *, group_size, runtime_debug, policy_version, stats):
+    async def collect(self, collector, *, group_size, runtime_debug, policy_version):
         self.seen.append({"collector": collector, "group_size": group_size})
         return [
             RolloutBatch(
@@ -43,7 +42,6 @@ async def test_owned_items_collect_themselves_and_get_disjoint_group_ids(
         group_size=3,
         runtime_debug=False,
         policy_version=7,
-        stats=RolloutStats(),
     )
 
     assert first.seen[0]["collector"] is bench.collector
@@ -63,7 +61,6 @@ async def test_owned_items_do_not_mix_with_plain_prompts(monkeypatch, tmp_path) 
             group_size=1,
             runtime_debug=False,
             policy_version=None,
-            stats=RolloutStats(),
         )
     with pytest.raises(ValueError, match="prepare_training_batches"):
         list(

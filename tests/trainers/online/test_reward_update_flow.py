@@ -21,6 +21,7 @@ import torch
 from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.data.prompts import PromptExample
+from vrl.utils.stats import Stats, absorb, recording
 
 # One replay epoch and per-group std keep the streaming and full-batch paths
 # comparable: streaming refuses multi-epoch updates, and a global std would
@@ -158,9 +159,16 @@ def test_streaming_accumulation_runs_one_optimizer_step(monkeypatch, tmp_path) -
 
     bench = real_trainer(monkeypatch, tmp_path, overrides=(*_ONE_EPOCH, *_STREAM_FOUR))
     steps = _record_optimizer_steps(monkeypatch, bench)
-    bench.collector.trace.watch(
-        bench.trainer.rollout_schedule, "after_train_step", "after_train_step"
-    )
+    synced: list[Stats] = []
+    real_after_train_step = bench.trainer.rollout_schedule.after_train_step
+
+    async def after_train_step() -> None:
+        with recording() as sync:
+            await real_after_train_step()
+        synced.append(sync)
+        absorb(sync)
+
+    monkeypatch.setattr(bench.trainer.rollout_schedule, "after_train_step", after_train_step)
 
     metrics = _stream(bench, ["prompt-a", "prompt-b", "prompt-c", "prompt-d"])
 
@@ -172,9 +180,9 @@ def test_streaming_accumulation_runs_one_optimizer_step(monkeypatch, tmp_path) -
     assert bench.trainer.state.global_step == 1
     assert [version for _, version in _pushes(bench)] == [1, 2]
     # The post-train sync's own phases reach the update's metrics.
-    (sync_stats,) = bench.collector.trace.results["after_train_step"]
-    assert sync_stats.phase_seconds
-    assert set(sync_stats.phase_seconds) <= set(metrics.phase_times)
+    (sync,) = synced
+    assert sync.phase_seconds
+    assert set(sync.phase_seconds) <= set(metrics.phase_times)
 
 
 def test_streaming_releases_microbatch_before_next_collect(monkeypatch, tmp_path) -> None:
@@ -209,7 +217,6 @@ def test_streaming_releases_microbatch_before_next_collect(monkeypatch, tmp_path
 def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) -> None:
     """Microbatch stats retain summed durations and the peak continuous state."""
 
-    monkeypatch.setenv("VRL_PROFILE", "1")
     bench = real_trainer(
         monkeypatch,
         tmp_path,
@@ -220,15 +227,18 @@ def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) 
             "/base/rollout/orchestration=continuous",
         ),
     )
-    microbatch_stats: list[Any] = []
-    real = bench.trainer._step_stats
+    microbatch_stats: list[Stats] = []
+    real_next_iteration = bench.trainer.rollout_schedule.next_iteration
 
-    def step_stats(iteration, timer):
-        stats = real(iteration, timer)
+    async def next_iteration(*args: Any, **kwargs: Any) -> Any:
+        # What each microbatch's collection recorded, before the step folds it in.
+        with recording() as stats:
+            iteration = await real_next_iteration(*args, **kwargs)
         microbatch_stats.append(stats)
-        return stats
+        absorb(stats)
+        return iteration
 
-    monkeypatch.setattr(bench.trainer, "_step_stats", step_stats)
+    monkeypatch.setattr(bench.trainer.rollout_schedule, "next_iteration", next_iteration)
 
     async def run_two_updates():
         try:

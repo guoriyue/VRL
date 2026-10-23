@@ -184,7 +184,7 @@ discarded_or_retried_groups
 artifact_live_count / bytes
 ```
 
-这是量的清单，不是 `RolloutStats` key 名；具体 key 与归约语义以 Sprint 0 §6 的表为准
+这是量的清单，不是 `Stats` key 名；具体 key 与归约语义以 Sprint 0 §6 的表为准
 （其中 `trainer_wait_for_ready_s` 等量复用现有 `continuous.*` 指标，不新增别名）。
 
 GPU duty 是诊断指标，不是单独的通过条件。允许短暂 kernel launch、weight sync、checkpoint 和

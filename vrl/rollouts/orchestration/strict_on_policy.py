@@ -8,7 +8,7 @@ from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
 )
-from vrl.rollouts.stats import RolloutStats
+from vrl.utils.stats import timed
 
 
 class StrictOnPolicyRolloutSchedule:
@@ -30,37 +30,30 @@ class StrictOnPolicyRolloutSchedule:
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         del next_prompts
-        # One accumulator for the whole iteration: schedule-level phases (weight
-        # init / driver offload / activate / collect / sync) and the per-request
-        # collect stats land in the same typed object.
-        # Whether the strategy can park at all was checked before launch, and
-        # its park re-checks; the schedule does not ask again each iteration.
-        stats = RolloutStats()
-        await self.lifecycle.ensure_initial_weights(stats)
+        # Schedule-level phases (weight init / driver offload / activate /
+        # collect) and the collect call's own timings land in the caller's
+        # bound stats. Whether the strategy can park at all was checked before
+        # launch, and its park re-checks; the schedule does not ask again each
+        # iteration.
+        await self.lifecycle.ensure_initial_weights()
         policy_version = self.lifecycle.current_policy_version()
 
         # The schedule only announces the phase; who parks, activates,
         # releases, and restores (and in which order, under which failures)
         # is owned by the coordinator's phase manager.
-        async with self.lifecycle.rollout_phase(stats):
-            with stats.phase("rollout.collect_s"):
+        async with self.lifecycle.rollout_phase():
+            with timed("rollout.collect_s"):
                 batches = await self.lifecycle.collector.prepare_training_batches(
                     prompts=list(prompts),
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                     policy_version=policy_version,
-                    stats=stats,
                 )
 
-        return RolloutIteration(
-            batches=batches,
-            stats=stats,
-        )
+        return RolloutIteration(batches=batches)
 
-    async def after_train_step(self) -> RolloutStats:
-        stats = RolloutStats()
-        await self.lifecycle.sync_weights_after_train(stats)
-        return stats
+    async def after_train_step(self) -> None:
+        await self.lifecycle.sync_weights_after_train()
 
     def reset(self) -> None:
         """No-op reset; the schedule holds no resume-sensitive state."""

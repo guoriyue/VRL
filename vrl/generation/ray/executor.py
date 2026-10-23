@@ -30,6 +30,7 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.deadline import require_timeout
+from vrl.utils.stats import Recorded, unwrap
 
 logger = logging.getLogger(__name__)
 
@@ -82,27 +83,35 @@ class RayGenerationExecutor:
 
     @staticmethod
     def _select_request_rank_result(
-        results: list[Any],
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
-        """Return a stale discard, then an OOM, reported by any rank; else the primary's refs."""
+        rank_results: list[Any],
+    ) -> Recorded[StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard]:
+        """Return a stale discard, then an OOM, reported by any rank; else the primary's refs.
+
+        Each rank's result arrives with what it recorded; the chosen rank's
+        recording stays with it, so a successful engine reports the primary's.
+        """
 
         if not all(
-            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory, StaleSlotDiscard))
-            for result in results
+            isinstance(recorded, Recorded)
+            and isinstance(
+                recorded.value, (StagedBatchRefs, RequestBatchOutOfMemory, StaleSlotDiscard)
+            )
+            for recorded in rank_results
         ):
             raise TypeError(
                 "pipelined engine ranks must return StagedBatchRefs, "
                 "RequestBatchOutOfMemory, or StaleSlotDiscard"
             )
-        for result in results:
+        results = [recorded.value for recorded in rank_results]
+        for recorded, result in zip(rank_results, results, strict=True):
             if isinstance(result, StaleSlotDiscard):
-                return result
+                return recorded
         if any(result.request_id != results[0].request_id for result in results[1:]):
             raise RuntimeError("pipelined engine ranks returned different request identities")
-        for result in results:
+        for recorded, result in zip(rank_results, results, strict=True):
             if isinstance(result, RequestBatchOutOfMemory):
-                return result
-        return results[0]
+                return recorded
+        return rank_results[0]
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         """Execute one request.
@@ -145,7 +154,7 @@ class RayGenerationExecutor:
             )
         runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
-        result_pairs: list[tuple[int, GenerationBatchResult]] = []
+        result_pairs: list[tuple[int, Recorded[GenerationBatchResult]]] = []
         schedule_rows: list[dict[str, Any]] = []
         envelope_by_batch_key: dict[str, GenerationBatchEnvelope] = {}
 
@@ -172,19 +181,19 @@ class RayGenerationExecutor:
                 ),
             )
 
-        results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
+        recorded_results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
-        if len(results) != len(sample_batches):
+        if len(recorded_results) != len(sample_batches):
             raise RuntimeError(
                 "distributed rollout returned wrong number of batches: "
-                f"{len(results)} != {len(sample_batches)}",
+                f"{len(recorded_results)} != {len(sample_batches)}",
             )
 
-        for result in results:
-            self._validate_result_identity(result, envelope_by_batch_key)
+        for recorded in recorded_results:
+            self._validate_result_identity(recorded.value, envelope_by_batch_key)
 
         results, oom_splits = await self._degrade_oom_chunks(
-            results,
+            recorded_results,
             envelope_by_batch_key=envelope_by_batch_key,
         )
 
@@ -327,7 +336,8 @@ class RayGenerationExecutor:
             call_timeout_s=self.generation_stall_timeout_s
             * max(len(batches) for _, batches in engine_batches),
         )
-        engine_results = [result for _, result in pairs]
+        recorded_results = [result for _, result in pairs]
+        engine_results = [recorded.value for recorded in recorded_results]
         for result in engine_results:
             if isinstance(result, StaleSlotDiscard):
                 raise result
@@ -357,6 +367,9 @@ class RayGenerationExecutor:
                     f"{result.batch_keys}, expected {expected_keys}",
                 )
             refs_by_key.update(zip(result.batch_keys, result.batch_refs, strict=True))
+        # Only a request every engine staged reports what its ranks recorded.
+        for recorded in recorded_results:
+            unwrap(recorded)
         ordered_refs = [refs_by_key[batch.batch_key] for batch in sample_batches]
         return await self._finalize_request(request, ordered_refs)
 
@@ -421,7 +434,7 @@ class RayGenerationExecutor:
 
     async def _degrade_oom_chunks(
         self,
-        results: list[GenerationBatchResult],
+        results: list[Recorded[GenerationBatchResult]],
         *,
         envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
     ) -> tuple[list[GenerationBatchResult], list[dict[str, Any]]]:
@@ -433,6 +446,9 @@ class RayGenerationExecutor:
         the engine that OOMed: the fleet-owned dispatcher exposes one real
         slot per engine, so the two halves run sequentially instead
         of landing concurrently on the GPUs that just proved too full.
+
+        A result reports what its rank recorded when it is accepted; a failed
+        attempt's recording is dropped with it.
         """
 
         final: list[GenerationBatchResult] = []
@@ -442,7 +458,7 @@ class RayGenerationExecutor:
             # A slot can be evicted before initial execution or between OOM
             # retries. In either case discard the whole request before treating
             # errors as retryable OOMs or accepting partial successful output.
-            stale = [result for result in pending if result.stale_slot]
+            stale = [recorded.value for recorded in pending if recorded.value.stale_slot]
             if stale:
                 evicted = stale[0]
                 raise StaleSlotDiscard(
@@ -452,10 +468,11 @@ class RayGenerationExecutor:
                     f"batches={len(stale)}/{len(pending)}): {evicted.error}",
                 )
             retry_jobs: list[RayActorJob] = []
-            for result in pending:
+            for recorded in pending:
+                result = recorded.value
                 parent_envelope = envelope_by_batch_key[result.batch.batch_key]
                 if not result.error:
-                    final.append(result)
+                    final.append(unwrap(recorded))
                     continue
                 batch = result.batch
                 if not is_cuda_out_of_memory(result.error) or batch.sample_count <= 1:
@@ -505,8 +522,8 @@ class RayGenerationExecutor:
                     call_timeout_s=self.generation_stall_timeout_s,
                 )
                 pending.extend(result for _, result in pairs)
-            for result in pending:
-                self._validate_result_identity(result, envelope_by_batch_key)
+            for recorded in pending:
+                self._validate_result_identity(recorded.value, envelope_by_batch_key)
         return final, splits
 
     @staticmethod

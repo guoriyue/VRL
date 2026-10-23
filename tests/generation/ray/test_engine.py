@@ -34,6 +34,7 @@ from vrl.generation.ray.engine import EngineCallRef, RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
+from vrl.utils.stats import Recorded, Stats
 
 pytestmark = pytest.mark.slow_test
 
@@ -169,7 +170,7 @@ async def test_single_rank_returns_the_raw_rank_ref(
         # No aggregate wrapper for the degenerate case: the rank's own ObjectRef,
         # so completion and cancellation timing are the rank's.
         assert isinstance(ref, local_ray.ObjectRef)
-        result = await ref
+        result = (await ref).value
         assert result.error is None
         assert result.worker_id == "rollout-0"
 
@@ -269,7 +270,7 @@ async def test_generation_combiner_retains_nonprimary_error_payload(
             await handles[1].actor.update_weights.remote(run.trainable_state(), 2)
         envelope = _envelope(run, policy_version=1 if failure == "stale" else None)
 
-        result = await RayGenerationEngine("engine-0", handles).execute_batch()(envelope)
+        result = (await RayGenerationEngine("engine-0", handles).execute_batch()(envelope)).value
 
         assert result.worker_id == "rollout-1"
         assert result.output is None
@@ -283,9 +284,15 @@ async def test_generation_combiner_retains_nonprimary_error_payload(
 
 def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard():
     batch = GenerationSampleBatch(0, 0, 2)
-    oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
-    stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
-    terminal = GenerationBatchResult("r", "r2", batch, None, error="decode failed")
+    oom = Recorded(
+        GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory"), Stats()
+    )
+    stale = Recorded(
+        GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True), Stats()
+    )
+    terminal = Recorded(
+        GenerationBatchResult("r", "r2", batch, None, error="decode failed"), Stats()
+    )
     ranks = ["r0", "r1", "r2"]
     assert (
         GenerationBatchResult.from_rank_results([oom, stale, terminal], expected_worker_ids=ranks)
@@ -309,10 +316,12 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload(
         request = replace(run.request(["p"], group_size=4), policy_version=0)
         sample_batches = (GenerationSampleBatch(0, 0, 2), GenerationSampleBatch(0, 2, 2))
 
-        result = await engine.remote(
-            "execute_request_batches",
-            combine=RayGenerationExecutor._select_request_rank_result,
-        )(request, sample_batches)
+        result = (
+            await engine.remote(
+                "execute_request_batches",
+                combine=RayGenerationExecutor._select_request_rank_result,
+            )(request, sample_batches)
+        ).value
 
         assert isinstance(result, RequestBatchOutOfMemory)
         assert result.worker_id == "rollout-1"
@@ -324,12 +333,19 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        GenerationBatchResult.from_rank_results([good, other], expected_worker_ids=["r0", "r1"])
+        GenerationBatchResult.from_rank_results(
+            [Recorded(good, Stats()), Recorded(other, Stats())], expected_worker_ids=["r0", "r1"]
+        )
     good = replace(good, rank_metrics={"r0": {"peak_memory_mb": 10}})
     other = replace(good, worker_id="r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
-    result = GenerationBatchResult.from_rank_results(
-        [good, other], expected_worker_ids=["r0", "r1"]
+    primary_stats = Stats(phase_seconds={"generation.denoise_s": 1.0})
+    recorded = GenerationBatchResult.from_rank_results(
+        [Recorded(good, primary_stats), Recorded(other, Stats(phase_seconds={"x": 2.0}))],
+        expected_worker_ids=["r0", "r1"],
     )
+    # One engine reports one rank's stage timings: the primary's.
+    assert recorded.stats is primary_stats
+    result = recorded.value
     assert result.worker_id == good.worker_id
     assert result.output is good.output
     assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
@@ -342,11 +358,13 @@ async def test_batch_combines_metrics_from_every_rank_without_mutating_primary(
 ) -> None:
     async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2) as (run, handles):
         primary_ref = handles[0].actor.execute_batch.remote(_envelope(run, runtime_debug=True))
-        primary = await primary_ref
+        primary = (await primary_ref).value
 
-        result = await RayGenerationEngine("engine-0", handles).execute_batch()(
-            _envelope(run, runtime_debug=True)
-        )
+        result = (
+            await RayGenerationEngine("engine-0", handles).execute_batch()(
+                _envelope(run, runtime_debug=True)
+            )
+        ).value
 
         assert set(result.rank_metrics) == {"rollout-0", "rollout-1"}
         assert result.worker_id == "rollout-0"

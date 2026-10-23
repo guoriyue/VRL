@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import pytest
@@ -31,6 +31,7 @@ from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.orchestration import ContinuousRolloutSchedule
 from vrl.trainers.core.types import ContinuousRolloutConfig
 from vrl.trainers.data.prompts import PromptExample
+from vrl.utils.stats import recording
 
 
 def _continuous_config(**continuous: Any) -> ContinuousRolloutConfig:
@@ -39,8 +40,12 @@ def _continuous_config(**continuous: Any) -> ContinuousRolloutConfig:
     return ContinuousRolloutConfig(**settings)
 
 
-def _iteration_stat(iteration: Any, name: str) -> float:
-    return iteration.stats.as_metrics_dict()[name]
+async def _measured[T](call: Awaitable[T]) -> tuple[T, dict[str, float]]:
+    """Await a schedule call inside a trainer-step scope; return it and what it recorded."""
+
+    with recording() as stats:
+        value = await call
+    return value, stats.as_metrics_dict()
 
 
 def _bench(
@@ -167,9 +172,9 @@ async def test_initialized_runtime_does_not_receive_redundant_initial_push(
     )
 
     try:
-        iteration = await schedule.next_iteration(["p0"], group_size=1)
+        _, recorded = await _measured(schedule.next_iteration(["p0"], group_size=1))
 
-        assert _iteration_stat(iteration, "continuous.rollout_policy_version") == 7.0
+        assert recorded["continuous.rollout_policy_version"] == 7.0
         assert bench.runtime.current_policy_version == 7
         assert _pushes(bench) == pushes_before
     finally:
@@ -184,14 +189,14 @@ async def test_reset_reuses_committed_runtime_weights_without_version_bump(
     schedule = _build(_continuous_config(), bench)
 
     try:
-        first = await schedule.next_iteration(["p0"], group_size=1)
-        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
+        _, first = await _measured(schedule.next_iteration(["p0"], group_size=1))
+        assert first["continuous.rollout_policy_version"] == 1.0
         assert _pushes(bench) == 1
 
         schedule.reset()
-        second = await schedule.next_iteration(["p0"], group_size=1)
+        _, second = await _measured(schedule.next_iteration(["p0"], group_size=1))
 
-        assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
+        assert second["continuous.rollout_policy_version"] == 1.0
         assert _pushes(bench) == 1
         assert "collector_shutdown" not in bench.trace.events
     finally:
@@ -209,10 +214,9 @@ async def test_continuous_drains_full_homogeneous_iteration(monkeypatch, tmp_pat
     schedule = _build(_continuous_config(), bench)
 
     try:
-        iteration = await schedule.next_iteration(["p0", "p1"], group_size=2)
+        iteration, phases = await _measured(schedule.next_iteration(["p0", "p1"], group_size=2))
 
         # Full set, one fresh policy version, distinct group ids 0..1.
-        phases = iteration.stats.as_metrics_dict()
         assert phases["continuous.rollout_policy_version"] == 1.0
         assert phases["continuous.consume_policy_version"] == 1.0
         assert phases["continuous.stale_policy_versions"] == 0.0
@@ -238,8 +242,8 @@ async def test_weight_sync_barrier_advances_version_and_resumes(monkeypatch, tmp
     schedule = _build(_continuous_config(), bench)
 
     try:
-        first = await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
+        _, first = await _measured(schedule.next_iteration(["p0", "p1"], group_size=2))
+        assert first["continuous.rollout_policy_version"] == 1.0
 
         pushes_before = _pushes(bench)
         await schedule.after_train_step()
@@ -250,10 +254,10 @@ async def test_weight_sync_barrier_advances_version_and_resumes(monkeypatch, tmp
         assert snapshot.producer_state.paused_for_weight_sync is False
         assert bench.runtime.current_policy_version == 2
 
-        second = await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert _iteration_stat(second, "continuous.rollout_policy_version") == 2.0
-        assert _iteration_stat(second, "continuous.consume_policy_version") == 2.0
-        assert _iteration_stat(second, "continuous.stale_policy_versions") == 0.0
+        _, second = await _measured(schedule.next_iteration(["p0", "p1"], group_size=2))
+        assert second["continuous.rollout_policy_version"] == 2.0
+        assert second["continuous.consume_policy_version"] == 2.0
+        assert second["continuous.stale_policy_versions"] == 0.0
     finally:
         await schedule.shutdown()
 
@@ -295,20 +299,18 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit(
     schedule = _build(_continuous_config(max_stale_policy_versions=1), bench)
 
     try:
-        first = await schedule.next_iteration(
-            ["p0", "p1"],
-            group_size=2,
-            next_prompts=["p2", "p3"],
+        _, first = await _measured(
+            schedule.next_iteration(["p0", "p1"], group_size=2, next_prompts=["p2", "p3"])
         )
-        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
+        assert first["continuous.rollout_policy_version"] == 1.0
         await schedule.after_train_step()
         assert bench.runtime.current_policy_version == 2
         after = await owner_snapshot(schedule._rollout_thread)
         assert after.batch_stats["ready_items"] == 2
 
-        second = await schedule.next_iteration(["p2", "p3"], group_size=2)
-        assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
-        assert _iteration_stat(second, "continuous.stale_policy_versions") == 1.0
+        _, second = await _measured(schedule.next_iteration(["p2", "p3"], group_size=2))
+        assert second["continuous.rollout_policy_version"] == 1.0
+        assert second["continuous.stale_policy_versions"] == 1.0
     finally:
         await schedule.shutdown()
 
@@ -387,7 +389,7 @@ async def test_weight_sync_waits_for_inflight_reward(monkeypatch, tmp_path) -> N
         assert await asyncio.to_thread(reward.score_blocked.wait, 5.0)
 
         pushes_before = _pushes(bench)
-        barrier = asyncio.create_task(schedule.after_train_step())
+        barrier = asyncio.create_task(_measured(schedule.after_train_step()))
         await asyncio.sleep(0.05)
         # Reward still in flight: admission paused, sync not yet performed.
         blocked = await owner_snapshot(schedule._rollout_thread)
@@ -397,10 +399,10 @@ async def test_weight_sync_waits_for_inflight_reward(monkeypatch, tmp_path) -> N
         assert not barrier.done()
 
         reward.allow_score.set()
-        phases = await asyncio.wait_for(barrier, 5.0)
+        _, phases = await asyncio.wait_for(barrier, 5.0)
         assert _pushes(bench) == pushes_before + 1
         # A full-finetune run has no versioned slots: the barrier drained (mode 0).
-        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
+        assert phases["continuous.weight_sync_barrier_mode"] == 0.0
         resumed = await owner_snapshot(schedule._rollout_thread)
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
@@ -435,9 +437,9 @@ async def test_non_draining_sync_skips_inflight_wait(monkeypatch, tmp_path) -> N
         pushes_before = _pushes(bench)
         # Must complete WITHOUT opening the reward gate (contrast with the draining
         # canary test, where this would block until allow_score.set()).
-        phases = await asyncio.wait_for(schedule.after_train_step(), 5.0)
+        _, phases = await asyncio.wait_for(_measured(schedule.after_train_step()), 5.0)
 
-        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
+        assert phases["continuous.weight_sync_barrier_mode"] == 1.0
         assert _pushes(bench) == pushes_before + 1
         snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
@@ -460,41 +462,56 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence(
     )
     prompts = [[f"update-{update}-micro-{micro}"] for update in range(3) for micro in range(2)]
     iterations = []
+    iteration_stats = []
     sync_stats = []
 
     try:
         for index, current_prompts in enumerate(prompts):
             next_prompts = prompts[index + 1] if index + 1 < len(prompts) else None
-            iterations.append(
-                await schedule.next_iteration(
-                    current_prompts,
-                    group_size=4,
-                    next_prompts=next_prompts,
-                ),
+            iteration, recorded = await _measured(
+                schedule.next_iteration(current_prompts, group_size=4, next_prompts=next_prompts)
             )
+            iterations.append(iteration)
+            iteration_stats.append(recorded)
             if index % 2 == 1:
-                sync_stats.append(await schedule.after_train_step())
+                sync_stats.append((await _measured(schedule.after_train_step()))[1])
 
         assert [
             [batch.trajectory.sample_rows[0].prompt for batch in iteration.batches]
             for iteration in iterations
         ] == prompts
-        assert [
-            _iteration_stat(iteration, "continuous.rollout_policy_version")
-            for iteration in iterations
-        ] == [1.0, 1.0, 1.0, 2.0, 2.0, 3.0]
-        assert [
-            _iteration_stat(iteration, "continuous.consume_policy_version")
-            for iteration in iterations
-        ] == [1, 1, 2, 2, 3, 3]
-        assert [
-            _iteration_stat(iteration, "continuous.stale_policy_versions")
-            for iteration in iterations
-        ] == [0, 0, 1, 0, 1, 0]
-        assert [
-            iteration.stats.as_metrics_dict()["continuous.lookahead_requested"]
-            for iteration in iterations
-        ] == [1.0, 1.0, 1.0, 1.0, 1.0, 0.0]
+        assert [stats["continuous.rollout_policy_version"] for stats in iteration_stats] == [
+            1.0,
+            1.0,
+            1.0,
+            2.0,
+            2.0,
+            3.0,
+        ]
+        assert [stats["continuous.consume_policy_version"] for stats in iteration_stats] == [
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+        ]
+        assert [stats["continuous.stale_policy_versions"] for stats in iteration_stats] == [
+            0,
+            0,
+            1,
+            0,
+            1,
+            0,
+        ]
+        assert [stats["continuous.lookahead_requested"] for stats in iteration_stats] == [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+        ]
         assert [
             (request.prompts, request.samples_per_prompt, request.policy_version)
             for request in bench.trace.requests
@@ -506,9 +523,11 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence(
                 strict=True,
             )
         ]
-        assert [
-            stats.as_metrics_dict()["continuous.weight_sync_barrier_mode"] for stats in sync_stats
-        ] == [1.0, 1.0, 1.0]
+        assert [stats["continuous.weight_sync_barrier_mode"] for stats in sync_stats] == [
+            1.0,
+            1.0,
+            1.0,
+        ]
         assert bench.runtime.current_policy_version == 4
 
         snapshot = await owner_snapshot(schedule._rollout_thread)

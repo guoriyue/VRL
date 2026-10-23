@@ -113,7 +113,7 @@ class RayGenerationEngine:
         return submit
 
     def execute_batch(self) -> Callable[..., Any]:
-        """``execute_batch`` submitter: the ranks' results fold into one
+        """``execute_batch`` submitter: the ranks' recorded results fold into one
         ``GenerationBatchResult``, each rank vouched for by its own worker id."""
 
         return self.remote(

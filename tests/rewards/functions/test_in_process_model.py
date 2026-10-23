@@ -8,9 +8,11 @@ import torch
 from vrl.rewards.base import (
     ModelRewardFunction,
 )
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
+from vrl.utils.stats import recording
 
 
 class _FakeReward(ModelRewardFunction):
@@ -150,3 +152,40 @@ def test_constructor_rejects_bad_score_keys_and_stray_model_knobs() -> None:
         _ClosedReward(score_key="fake", scorer=_Runtime())
     with pytest.raises(TypeError, match="unknown_knob"):
         _ClosedReward(score_key="dense", scorer=_Runtime(), unknown_knob=True)
+
+
+@pytest.mark.asyncio
+async def test_each_call_folds_its_result_timings_into_the_bound_accumulator() -> None:
+    """Per call: inference adds up over results, a stage keeps its slowest result;
+    calls then add up. An unbound call scores the same and records nothing."""
+
+    stamps = (
+        {"inference_ms": 3.0, "service_inference_wall_ms": 5.0, "http_roundtrip_ms": 20.0},
+        {"inference_ms": 4.0, "service_inference_wall_ms": 2.0, "http_roundtrip_ms": 30.0},
+    )
+
+    class StampedScorer:
+        async def score_batch(self, request):
+            return [
+                RewardInferenceResult(artifact.artifact_id, {"fake": 1.0}, timing_ms=stamp)
+                for artifact, stamp in zip(request.artifacts, stamps, strict=True)
+            ]
+
+    reward = _FakeReward(scorer=StampedScorer())
+    samples = [_sample(torch.zeros(3, 2, 2)), _sample(torch.ones(3, 2, 2), sample_id="sample-1")]
+
+    assert (await reward.score_batch(samples)).scores == (1.0, 1.0)
+    with recording() as stats:
+        await reward.score_batch(samples)
+        await reward.score_batch(samples)
+
+    phases = stats.phase_seconds
+    assert phases["reward.inference_s"] == pytest.approx(2 * 0.007)
+    assert phases["reward.service_inference_wall_s"] == pytest.approx(2 * 0.005)
+    assert phases["reward.transport_roundtrip_s"] == pytest.approx(2 * 0.030)
+    # Measured on the driver side of every call.
+    for phase in ("reward.latency_s", "reward.artifact_materialization_s"):
+        assert phase in phases
+    assert phases["reward.latency_s"] >= phases["reward.inference_wall_s"]
+    # No result stamped these stages.
+    assert "reward.artifact_validation_s" not in phases

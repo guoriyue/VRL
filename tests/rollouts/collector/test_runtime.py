@@ -25,9 +25,9 @@ from vrl.rollouts.collector.batch_builder import (
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.core import RolloutCollector
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.weight_sync import flatten_trainable_module_state, to_cpu_snapshot
 from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.utils.stats import elapsed, recording
 
 
 async def collect_scored(
@@ -425,8 +425,8 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group(monkeypatch,
     assert second.extras["reward_components"]["observer"].tolist() == [12.0, 13.0, 14.0]
 
 
-def test_prepare_training_batches_folds_reward_timing_into_stats(monkeypatch, tmp_path) -> None:
-    """Checks reward runtime timing reaches RolloutStats."""
+def test_prepare_training_batches_collects_reward_timing_into_stats(monkeypatch, tmp_path) -> None:
+    """What the reward records during the call's scoring lands in the caller's stats."""
 
     class _TimedReward(IndexReward):
         def __init__(self) -> None:
@@ -435,38 +435,29 @@ def test_prepare_training_batches_folds_reward_timing_into_stats(monkeypatch, tm
 
         async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
             self.batch_sizes.append(len(samples))
-            return RewardOutput(
-                scores=tuple(float(index + 1) for index in range(len(samples))),
-                timing_ms={
-                    "latency_ms": 12.0,
-                    "queue_wait_ms": 3.0,
-                    "inference_ms": 9.0,
-                    "artifact_validation_ms": 2.0,
-                },
-            )
+            elapsed("reward.latency_s", 0.012)
+            elapsed("reward.inference_s", 0.009)
+            return RewardOutput(scores=tuple(float(index + 1) for index in range(len(samples))))
 
     reward = _TimedReward()
     collector = real_collector(monkeypatch, tmp_path, reward=reward).collector
-    stats = RolloutStats()
-
-    batches = asyncio.run(
-        collector.prepare_training_batches(
-            prompts=["p0"],
-            group_size=2,
-            runtime_debug=False,
-            policy_version=None,
-            stats=stats,
-        ),
-    )
+    with recording() as stats:
+        batches = asyncio.run(
+            collector.prepare_training_batches(
+                prompts=["p0"],
+                group_size=2,
+                runtime_debug=False,
+                policy_version=None,
+            ),
+        )
 
     assert reward.batch_sizes == [2]
     assert len(batches) == 1
     assert batches[0].rewards.tolist() == [1.0, 2.0]
     metrics = stats.as_metrics_dict()
     assert metrics["reward.latency_s"] == 0.012
-    assert metrics["reward.queue_wait_s"] == 0.003
     assert metrics["reward.inference_s"] == 0.009
-    assert metrics["reward.artifact_validation_s"] == 0.002
+    assert metrics["reward.call_count"] == 1.0
 
 
 def test_reward_output_is_independent_of_trajectory_storage_dtype(monkeypatch, tmp_path) -> None:

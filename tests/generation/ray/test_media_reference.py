@@ -14,6 +14,7 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.types import GenerationRequest
 from vrl.utils.media_reference import MediaReference
+from vrl.utils.stats import recording
 
 
 def _request(*, references=True, count=2):
@@ -47,9 +48,10 @@ async def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(
         overrides=("rollout.samples_per_generation_batch=2",),
     ) as ray_run:
         await ray_run.runtime.activate()
-        output = await ray_run.runtime.generate(
-            ray_run.request(["p"], group_size=4, reward_media_refs=True)
-        )
+        with recording() as stats:
+            output = await ray_run.runtime.generate(
+                ray_run.request(["p"], group_size=4, reward_media_refs=True)
+            )
 
     refs = output.output
     assert [ref.sample_index for ref in refs] == [0, 1, 0, 1]
@@ -57,6 +59,8 @@ async def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(
     # One object per generation batch, shared by that batch's samples.
     assert refs[0].object_ref == refs[1].object_ref != refs[2].object_ref == refs[3].object_ref
     assert {ref.nbytes for ref in refs} == {3 * 32 * 32}
+    # The rank's stage timings came back with its batch results.
+    assert stats.phase_seconds["generation.denoise_s"] > 0.0
 
 
 @pytest.mark.parametrize("references,rank", [(False, None), (False, 0), (True, 1)])
@@ -99,9 +103,10 @@ async def test_finalized_pipelined_output_forwards_the_rank_media_objects(
         overrides=("distributed.rollout.pipelined=true", "rollout.samples_per_generation_batch=1"),
     ) as ray_run:
         await ray_run.runtime.activate()
-        output = await ray_run.runtime.generate(
-            ray_run.request(["p"], group_size=2, reward_media_refs=True)
-        )
+        with recording() as stats:
+            output = await ray_run.runtime.generate(
+                ray_run.request(["p"], group_size=2, reward_media_refs=True)
+            )
 
     refs = output.output
     assert all(isinstance(ref, MediaReference) for ref in refs)
@@ -109,6 +114,8 @@ async def test_finalized_pipelined_output_forwards_the_rank_media_objects(
     assert [ref.sample_index for ref in refs] == [0, 0]
     assert refs[0].object_ref != refs[1].object_ref
     assert {ref.nbytes for ref in refs} == {3 * 32 * 32}
+    # The rank's stage timings came back with its staged references.
+    assert stats.phase_seconds["generation.denoise_s"] > 0.0
 
 
 def test_media_reference_payload_counts_toward_pending_budget_without_resolving(monkeypatch):

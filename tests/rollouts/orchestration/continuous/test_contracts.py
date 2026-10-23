@@ -50,8 +50,8 @@ from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimeLifecycle
+from vrl.utils.stats import Stats, recording
 
 
 # A LoRA policy under continuous scheduling keeps versioned weight slots, so a
@@ -66,9 +66,7 @@ class _Stack:
     async def bump_version(self) -> int:
         """The trainer's weight push: the real export under the next version."""
 
-        await self.coordinator.push_prepared_weights(
-            self.coordinator.prepare_weight_sync_state(), RolloutStats()
-        )
+        await self.coordinator.push_prepared_weights(self.coordinator.prepare_weight_sync_state())
         return self.bench.runtime.current_policy_version
 
 
@@ -204,7 +202,6 @@ def _attempts(bench: CollectorBench) -> dict[str, int]:
 async def test_result_slot_is_filled_only_after_reward_scoring(monkeypatch, tmp_path) -> None:
     """A generated-but-unscored group must never appear in the batch results."""
 
-    monkeypatch.setenv("VRL_PROFILE", "1")
     stack, reward, _gate = await _gated(monkeypatch, tmp_path)
     reward.allow_score.clear()
     producer = _producer(stack.coordinator)
@@ -612,7 +609,7 @@ def _batch(samples: int = 2) -> RolloutBatch:
 def _item(phase_times: dict[str, float] | None = None) -> ScoredRollout:
     return ScoredRollout(
         batch=_batch(),
-        stats=RolloutStats(phase_seconds=dict(phase_times or {})),
+        stats=Stats(phase_seconds=dict(phase_times or {})),
     )
 
 
@@ -698,12 +695,11 @@ async def test_consumer_aggregates_item_phase_times() -> None:
             _item(phase_times={"collect.engine_generate": 2.5}),
         ]
     )
-    iteration = await _collect_iteration(
-        _consumer(max_stale=0), prompt_batch, current_policy_version=1
-    )
-    assert iteration.stats.as_metrics_dict()["collect.engine_generate"] == 4.0
-    assert iteration.stats.as_metrics_dict()["collect.reward_score"] == 0.5
-    assert "continuous.queue_wait_s" in iteration.stats.as_metrics_dict()
+    with recording() as stats:
+        await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=1)
+    assert stats.phase_seconds["collect.engine_generate"] == 4.0
+    assert stats.phase_seconds["collect.reward_score"] == 0.5
+    assert "continuous.queue_wait_s" in stats.phase_seconds
 
 
 @pytest.mark.asyncio
@@ -728,11 +724,13 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
     await producer.start()
     # The trainer is one version ahead of the installed batch, inside the window.
     assert await stack.bump_version() == 2
-    demand = asyncio.create_task(
-        _collect_iteration(
-            _consumer(max_stale=1, wait_timeout_s=5.0), prompt_batch, current_policy_version=2
+    # The demand task keeps the scope bound at its creation.
+    with recording() as stats:
+        demand = asyncio.create_task(
+            _collect_iteration(
+                _consumer(max_stale=1, wait_timeout_s=5.0), prompt_batch, current_policy_version=2
+            )
         )
-    )
     try:
         await _wait_until(lambda: len(started) == 2)
         # Finish slot 1 first; slot 0 must still be awaited and retain first place.
@@ -747,7 +745,7 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
             "p1",
         ]
         assert [int(batch.group_ids[0]) for batch in iteration.batches] == [0, 1]
-        assert iteration.stats.gauges["continuous.ready_groups_at_demand"] == 0
+        assert stats.gauges["continuous.ready_groups_at_demand"] == 0
         # The owner releases the taken slots through the producer, which alone
         # writes them; only then can the next batch be installed.
         producer.release_results()

@@ -15,8 +15,8 @@ from typing import Any
 
 import torch
 
-from vrl.rollouts.stats import RolloutStats
 from vrl.utils.profiling import profile_range
+from vrl.utils.stats import timed
 
 
 class RolloutPhaseCleanupError(RuntimeError):
@@ -59,16 +59,16 @@ class RolloutRuntimeCoordinator:
         # replaced underneath the runtime (a checkpoint restore).
         self.weights_initialized = False
 
-    async def ensure_initial_weights(self, stats: RolloutStats) -> None:
+    async def ensure_initial_weights(self) -> None:
         prepared = self.prepare_initial_weight_sync_state()
         if prepared is not None:
-            await self.push_prepared_weights(prepared, stats)
+            await self.push_prepared_weights(prepared)
 
-    async def sync_weights_after_train(self, stats: RolloutStats) -> None:
+    async def sync_weights_after_train(self) -> None:
         if self.weight_syncer is None:
             return
         prepared = self.prepare_weight_sync_state()
-        await self.push_prepared_weights(prepared, stats)
+        await self.push_prepared_weights(prepared)
 
     def prepare_weight_sync_state(self) -> dict[str, Any] | None:
         """Capture an immutable CPU policy snapshot on the caller's thread.
@@ -113,18 +113,14 @@ class RolloutRuntimeCoordinator:
             return None
         return self.prepare_weight_sync_state()
 
-    async def push_prepared_weights(
-        self,
-        prepared: dict[str, Any] | None,
-        stats: RolloutStats,
-    ) -> None:
+    async def push_prepared_weights(self, prepared: dict[str, Any] | None) -> None:
         """Push a prepared snapshot without reading trainer-owned state."""
 
         if self.weight_syncer is None:
             return
         if prepared is None:
             raise ValueError("weight sync requires a prepared state snapshot")
-        with stats.phase("rollout.weight_sync_s"):
+        with timed("rollout.weight_sync_s"):
             await self.weight_syncer.push(prepared)
         self.weights_initialized = True
 
@@ -143,20 +139,20 @@ class RolloutRuntimeCoordinator:
 
         return self.collector.lifecycle.offload_train
 
-    def park_training_state_for_rollout(self, stats: RolloutStats) -> bool:
+    def park_training_state_for_rollout(self) -> bool:
         if not self.requires_training_state_parking():
             return False
-        with stats.phase("rollout.offload_driver_s"):
+        with timed("rollout.offload_driver_s"):
             state = self.training_state_getter()
             self.strategy.park_training_state(state)
         return True
 
-    def restore_training_state_after_rollout(self, stats: RolloutStats) -> None:
-        with stats.phase("rollout.restore_driver_s"):
-            self.strategy.restore_training_state(self.training_state_getter())
+    @timed("rollout.restore_driver_s")
+    def restore_training_state_after_rollout(self) -> None:
+        self.strategy.restore_training_state(self.training_state_getter())
 
     @asynccontextmanager
-    async def rollout_phase(self, stats: RolloutStats) -> AsyncIterator[None]:
+    async def rollout_phase(self) -> AsyncIterator[None]:
         """Own the whole GPU handoff around one rollout (generate + score) phase.
 
         The schedule announces the phase; every ordering rule lives here, next
@@ -169,19 +165,19 @@ class RolloutRuntimeCoordinator:
         failure combine into :class:`RolloutPhaseCleanupError`.
         """
 
-        parked = self.park_training_state_for_rollout(stats)
+        parked = self.park_training_state_for_rollout()
         phase_error: BaseException | None = None
         try:
-            await self.activate_rollout_runtime(stats)
+            await self.activate_rollout_runtime()
             yield
         except BaseException as error:
             phase_error = error
 
         cleanup_error: BaseException | None = None
         try:
-            await self.offload_rollout_runtime_memory(stats)
+            await self.offload_rollout_runtime_memory()
             if parked:
-                self.restore_training_state_after_rollout(stats)
+                self.restore_training_state_after_rollout()
         except BaseException as error:
             cleanup_error = error
 
@@ -192,13 +188,13 @@ class RolloutRuntimeCoordinator:
         if cleanup_error is not None:
             raise cleanup_error
 
-    async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
-        with stats.phase("rollout.activate_generation_runtime_s"):
-            await self.collector.activate_generation_runtime()
+    @timed("rollout.activate_generation_runtime_s")
+    async def activate_rollout_runtime(self) -> None:
+        await self.collector.activate_generation_runtime()
 
-    async def offload_rollout_runtime_memory(self, stats: RolloutStats) -> None:
-        with stats.phase("rollout.offload_generation_runtime_s"):
-            await self.collector.offload_generation_runtime_memory()
+    @timed("rollout.offload_generation_runtime_s")
+    async def offload_rollout_runtime_memory(self) -> None:
+        await self.collector.offload_generation_runtime_memory()
 
     async def shutdown_collector_runtime(self) -> None:
         """Park shared trainer state, then release the collector/runtime.
@@ -212,9 +208,7 @@ class RolloutRuntimeCoordinator:
         released.
         """
 
-        # Shutdown reports no timings, but parking stays unconditional; a
-        # throwaway accumulator keeps the recording sites branch-free.
-        self.park_training_state_for_rollout(RolloutStats())
+        self.park_training_state_for_rollout()
         await self.collector.shutdown()
 
 

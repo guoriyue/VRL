@@ -6,7 +6,6 @@ from typing import Any
 
 from vrl.rollouts.orchestration.schedule import RolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.distributed import ContextParallelPeerGroup
 
 
@@ -83,10 +82,10 @@ class ContextParallelRolloutSchedule:
                 "context-parallel peers disagree on the gathered rollout batches; "
                 f"per-rank fingerprints: {fingerprints}",
             )
-        return RolloutIteration(batches=batches, stats=iteration.stats)
+        return RolloutIteration(batches=batches)
 
-    async def after_train_step(self) -> RolloutStats:
-        return await self.inner.after_train_step()
+    async def after_train_step(self) -> None:
+        await self.inner.after_train_step()
 
     def reset(self) -> None:
         self.inner.reset()

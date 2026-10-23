@@ -46,6 +46,7 @@ from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.lifecycle import RuntimePhase
+from vrl.utils.stats import recording
 
 
 async def _stack(
@@ -113,20 +114,25 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop(monkeypatch, tm
     owner = _owner(bench, trainer)
 
     try:
-        iteration = await owner.next_iteration(
-            ["p0"],
-            group_size=1,
-            runtime_debug=False,
-            initial_weights=trainer.export(),
-            next_prompts=["p1"],
-        )
+        with recording() as stats:
+            await owner.next_iteration(
+                ["p0"],
+                group_size=1,
+                runtime_debug=False,
+                initial_weights=trainer.export(),
+                next_prompts=["p1"],
+            )
         before = await owner_snapshot(owner)
 
         # Simulate synchronous trainer forward/backward starving its asyncio loop.
         time.sleep(0.05)
         after = await owner_snapshot(owner)
 
-        assert iteration.stats.as_metrics_dict()["continuous.rollout_policy_version"] == 1.0
+        # What the owner thread recorded, the startup weight push included,
+        # reached the trainer-side scope.
+        assert stats.gauges["continuous.rollout_policy_version"] == 1.0
+        assert stats.phase_seconds["rollout.weight_sync_s"] > 0.0
+        assert stats.phase_seconds["collect.engine_generate"] > 0.0
         assert before.producer_state is not None
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count

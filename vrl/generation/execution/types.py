@@ -21,6 +21,7 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import GenerationRequest
 from vrl.utils.cuda_memory import is_cuda_out_of_memory, validate_parking_residual
+from vrl.utils.stats import Recorded
 
 
 class StaleSlotDiscard(Exception):
@@ -193,47 +194,57 @@ class GenerationBatchResult:
         rank_results: list[Any],
         *,
         expected_worker_ids: Sequence[str],
-    ) -> GenerationBatchResult:
+    ) -> Recorded[GenerationBatchResult]:
         """Fold one generation batch's per-rank results into the result the driver acts on.
 
         Every rank must return a ``GenerationBatchResult`` for the same request and
-        batch (and, when ``expected_worker_ids`` is given, its own worker id). A
+        batch (and, when ``expected_worker_ids`` is given, its own worker id),
+        wrapped with what it recorded (the actor method is ``recorded``). A
         terminal failure on any rank wins over another rank's retryable OOM or
         graceful stale-slot discard, and keeps the reporting rank's identity, so
         the executor's stale-slot and OOM handling still sees it; otherwise the
-        primary rank's payload carries every rank's metrics entry.
+        primary rank's payload carries every rank's metrics entry. The chosen
+        rank's recording stays with its result: on success the primary's, so an
+        engine reports one rank's stage timings, not their sum.
         """
 
-        if not all(isinstance(result, cls) for result in rank_results):
-            raise TypeError("generation engine ranks must return GenerationBatchResult")
-        first = rank_results[0]
+        if not all(
+            isinstance(recorded, Recorded) and isinstance(recorded.value, cls)
+            for recorded in rank_results
+        ):
+            raise TypeError("generation engine ranks must return a recorded GenerationBatchResult")
+        results = [recorded.value for recorded in rank_results]
+        first = results[0]
         if expected_worker_ids is not None:
-            for worker_id, result in zip(expected_worker_ids, rank_results, strict=True):
+            for worker_id, result in zip(expected_worker_ids, results, strict=True):
                 if result.worker_id != worker_id:
                     raise RuntimeError(f"rank {worker_id!r} returned another worker's result")
-        for result in rank_results[1:]:
+        for result in results[1:]:
             if result.request_id != first.request_id or result.batch != first.batch:
                 raise RuntimeError(
                     "generation engine ranks returned different request/batch identities"
                 )
-        for result in rank_results:
+        for recorded, result in zip(rank_results, results, strict=True):
             if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
-                return result
-        for result in rank_results:
+                return recorded
+        for recorded, result in zip(rank_results, results, strict=True):
             if result.stale_slot:
-                return result
-        for result in rank_results:
+                return recorded
+        for recorded, result in zip(rank_results, results, strict=True):
             if result.error:
-                return result
-        if any(result.policy_version != first.policy_version for result in rank_results[1:]):
+                return recorded
+        if any(result.policy_version != first.policy_version for result in results[1:]):
             raise RuntimeError("generation engine ranks returned different policy versions")
-        return replace(
-            first,
-            rank_metrics={
-                worker_id: metrics
-                for result in rank_results
-                for worker_id, metrics in result.rank_metrics.items()
-            },
+        return Recorded(
+            replace(
+                first,
+                rank_metrics={
+                    worker_id: metrics
+                    for result in results
+                    for worker_id, metrics in result.rank_metrics.items()
+                },
+            ),
+            rank_results[0].stats,
         )
 
 

@@ -31,9 +31,9 @@ from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.utils.deadline import require_timeout
+from vrl.utils.stats import Recorded, gauge, recording
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -63,10 +63,7 @@ class ContinuousRolloutProducer:
         self._next_batch_id = 0
         self._loop_task: asyncio.Task[None] | None = None
         # Each running collect task maps to its slot in the installed batch.
-        self._running_tasks: dict[
-            asyncio.Task[tuple[list[RolloutBatch], RolloutStats]],
-            int,
-        ] = {}
+        self._running_tasks: dict[asyncio.Task[Recorded[list[RolloutBatch]]], int] = {}
         self.prompt_batch: PromptBatch | None = None
         self._last_tick_at: float | None = None
         self._last_observability_log_at = 0.0
@@ -342,17 +339,33 @@ class ContinuousRolloutProducer:
         prompt_batch: PromptBatch,
         slot: int,
         admission_wait_s: float,
-    ) -> tuple[list[RolloutBatch], RolloutStats]:
-        stats = RolloutStats()
-        stats.observe_gauge("continuous.generation_queue_wait_s", admission_wait_s)
-        batches = await self.lifecycle.collector.prepare_training_batches(
-            prompts=[prompt_batch.prompts[slot]],
-            group_size=prompt_batch.group_size,
-            runtime_debug=prompt_batch.runtime_debug,
-            policy_version=prompt_batch.policy_version,
-            stats=stats,
-        )
-        return batches, stats
+    ) -> Recorded[list[RolloutBatch]]:
+        # Each collect owns its scope: concurrent collects never share an
+        # accumulator, and the item keeps its stats until a trainer step
+        # consumes it. The binding is explicit because this task inherits
+        # whichever owner command admitted it, not a per-item scope.
+        with recording() as stats:
+            gauge("continuous.generation_queue_wait_s", admission_wait_s)
+            batches = await self.lifecycle.collector.prepare_training_batches(
+                prompts=[prompt_batch.prompts[slot]],
+                group_size=prompt_batch.group_size,
+                runtime_debug=prompt_batch.runtime_debug,
+                policy_version=prompt_batch.policy_version,
+            )
+            # Per-item stage views with gauge (max-on-merge) reduction: summing
+            # concurrent per-slot walls would overstate wall-clock, so the
+            # iteration reports the worst per-item interval. The summed phase
+            # twins (collect.generation_wall / collect.reward_wall) remain the
+            # busy-total view for duty-ratio analysis.
+            gauge(
+                "continuous.generation_service_s",
+                stats.phase_seconds.get("collect.generation_wall", 0.0),
+            )
+            gauge(
+                "continuous.reward_service_s",
+                stats.phase_seconds.get("collect.reward_wall", 0.0),
+            )
+        return Recorded(batches, stats)
 
     def _harvest_done(self) -> None:
         prompt_batch = self.prompt_batch
@@ -362,7 +375,7 @@ class ContinuousRolloutProducer:
         for task in done:
             slot = self._running_tasks.pop(task)
             try:
-                batches, stats = task.result()
+                result = task.result()
             except asyncio.CancelledError as exc:
                 if self.state.running:
                     self.state.error_count += 1
@@ -406,20 +419,14 @@ class ContinuousRolloutProducer:
                 prompt_batch.pending_since[slot] = time.monotonic()
                 continue
             self.state.completed_count += 1
-            self._store_result(
-                prompt_batch=prompt_batch,
-                slot=slot,
-                batches=batches,
-                stats=stats,
-            )
+            self._store_result(prompt_batch=prompt_batch, slot=slot, result=result)
 
     def _store_result(
         self,
         *,
         prompt_batch: PromptBatch,
         slot: int,
-        batches: list[RolloutBatch],
-        stats: RolloutStats,
+        result: Recorded[list[RolloutBatch]],
     ) -> None:
         # Receipt-time freshness gate. A group can finish generation only after
         # the trainer has already advanced past the staleness window — its
@@ -436,6 +443,7 @@ class ContinuousRolloutProducer:
                 "continuous prompt batch became stale before completion "
                 f"(item={prompt_batch.policy_version}, trainer={current_version})",
             )
+        batches = result.value
         if len(batches) != 1:
             raise RuntimeError(
                 "continuous single-slot collect must return exactly one batch, "
@@ -444,26 +452,10 @@ class ContinuousRolloutProducer:
         if prompt_batch.results[slot] is not None:
             raise RuntimeError(f"continuous prompt batch completed a slot twice (slot={slot})")
         stored = batches[0].to_device(_CPU)
-        # Per-item stage views with gauge (max-on-merge) reduction: summing
-        # concurrent per-slot walls would overstate wall-clock, so
-        # the iteration reports the worst per-item interval. The summed phase
-        # twins (collect.generation_wall / collect.reward_wall) remain the
-        # busy-total view for duty-ratio analysis.
-        stats.observe_gauge(
-            "continuous.generation_service_s",
-            stats.phase_seconds.get("collect.generation_wall", 0.0),
-        )
-        stats.observe_gauge(
-            "continuous.reward_service_s",
-            stats.phase_seconds.get("collect.reward_wall", 0.0),
-        )
-        queue_wait = stats.phase_seconds.get("reward.queue_wait_s")
-        if queue_wait is not None:
-            stats.observe_gauge("continuous.reward_queue_wait_s", queue_wait)
         prompt_batch.results[slot] = ScoredRollout(
             batch=stored,
             completed_at=time.monotonic(),
-            stats=stats,
+            stats=result.stats,
         )
 
     def _record_tick(self) -> None:

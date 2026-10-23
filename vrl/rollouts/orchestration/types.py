@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.stats import RolloutStats
 
 
 # Keep the exported modes' historical ``str(member)`` representation; config
@@ -23,7 +22,6 @@ class RolloutIteration:
     """One rollout batch set handed from the schedule to the trainer."""
 
     batches: list[RolloutBatch]
-    stats: RolloutStats = field(default_factory=RolloutStats)
 
 
 __all__ = [

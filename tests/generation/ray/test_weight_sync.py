@@ -142,7 +142,7 @@ async def test_remote_update_puts_the_state_once_for_every_engine(
             [engine.ranks[0].actor.execute_batch.remote(envelope) for engine in session.engines],
             timeout=60,
         )
-        assert [result.error for result in results] == [None, None]
+        assert [result.value.error for result in results] == [None, None]
 
 
 @pytest.mark.asyncio

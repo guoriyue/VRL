@@ -54,12 +54,10 @@ def test_reward_output_normalizes_and_validates_observations() -> None:
     output = RewardOutput(
         scores=(1, 2),
         components={"quality": [0.5, 0.75]},
-        timing_ms={"latency_ms": 4},
     )
 
     assert output.scores == (1.0, 2.0)
     assert output.components == {"quality": (0.5, 0.75)}
-    assert output.timing_ms == {"latency_ms": 4.0}
 
 
 def test_reward_output_rejects_misaligned_components() -> None:
@@ -72,11 +70,6 @@ def test_reward_output_rejects_non_finite_scores() -> None:
         RewardOutput(scores=(float("nan"),))
     with pytest.raises(ValueError, match=r"component .* finite"):
         RewardOutput(scores=(1.0,), components={"quality": (float("inf"),)})
-
-
-def test_reward_output_rejects_invalid_timing() -> None:
-    with pytest.raises(ValueError, match=r"timing .* finite and non-negative"):
-        RewardOutput(scores=(1.0,), timing_ms={"latency_ms": -1.0})
 
 
 @pytest.mark.asyncio

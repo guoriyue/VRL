@@ -21,8 +21,8 @@ from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.collector.core import (
     PromptCollectionCleanupError,
 )
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
+from vrl.utils.stats import recording
 
 # The reward shares the rollout GPU: scoring needs a handoff, so the collector
 # generates every group first and scores all of them in one call.
@@ -34,14 +34,12 @@ async def _collect(
     prompts: list[Any],
     *,
     group_size: int = 1,
-    stats: RolloutStats | None = None,
 ) -> list[Any]:
     return await bench.collector.prepare_training_batches(
         prompts=prompts,
         group_size=group_size,
         runtime_debug=False,
         policy_version=None,
-        stats=stats if stats is not None else RolloutStats(),
     )
 
 
@@ -111,24 +109,15 @@ async def test_mixed_prompts_preserve_group_id_remap(monkeypatch, tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_phase_times_accumulate_per_call(monkeypatch, tmp_path) -> None:
-    """The out-param sums generation per group and score/build once per call."""
+    """The caller's bound stats collect the generation, score and build phases."""
 
-    monkeypatch.setenv("VRL_PROFILE", "1")
     bench = real_collector(monkeypatch, tmp_path, lifecycle=_SHARED_REWARD)
-    bench.trace.watch(bench.collector, "generate_rollout", "generate_rollout")
-    stats = RolloutStats()
 
-    await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")], stats=stats)
+    with recording() as stats:
+        await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")])
 
-    groups = bench.trace.results["generate_rollout"]
-    assert len(groups) == 2
-    assert stats.phase_seconds["collect.engine_generate"] == pytest.approx(
-        sum(group.phases["collect.engine_generate"] for group in groups)
-    )
-    # Call-level score/build timings land on the first group only.
-    assert stats.phase_seconds["collect.reward_score"] == groups[0].phases["collect.reward_score"]
-    assert stats.phase_seconds["collect.batch_build"] == groups[0].phases["collect.batch_build"]
-    assert "collect.reward_score" not in groups[1].phases
+    for phase in ("collect.engine_generate", "collect.reward_score", "collect.batch_build"):
+        assert stats.phase_seconds[phase] > 0.0
     # Each group's generate timer starts at submission, so the prefetched
     # group's time overlaps the running one; the sum may exceed the wall.
     assert stats.phase_seconds["collect.wall"] > 0.0
@@ -136,6 +125,7 @@ async def test_phase_times_accumulate_per_call(monkeypatch, tmp_path) -> None:
     assert stats.counters == {
         "collect.group_count": 2.0,
         "collect.sample_count": 2.0,
+        "reward.call_count": 1.0,
     }
 
 
@@ -201,11 +191,8 @@ async def test_isolated_reward_overlaps_scoring_with_next_generation(
     reward = _GatedReward()
     bench = real_collector(monkeypatch, tmp_path, reward=reward)
     _hook_generation(monkeypatch, bench, _release_score_when_overlapped(reward))
-    stats = RolloutStats()
-
-    batches = await _collect(
-        bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")], stats=stats
-    )
+    with recording() as stats:
+        batches = await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")])
 
     assert reward.events == [
         "score_start:p0",

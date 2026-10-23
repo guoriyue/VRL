@@ -47,6 +47,7 @@ from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import release_cuda_memory_for_parking
 from vrl.utils.deadline import OperationDeadline
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
+from vrl.utils.stats import count
 
 if TYPE_CHECKING:
     from vrl.rewards.ray import RayRewardPlacement
@@ -115,6 +116,7 @@ class RewardFunctionRuntime:
                 raise deadline.timeout_error() from cause
             if not isinstance(output, RewardOutput):
                 raise TypeError("reward function score_batch() must return RewardOutput")
+            count("reward.call_count")
             return output
 
     async def park_memory(self) -> None:

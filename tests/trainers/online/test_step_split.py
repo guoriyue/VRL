@@ -20,10 +20,11 @@ import pytest
 import torch
 
 from tests.rollouts.collector._helpers import IndexReward
-from tests.trainers.online._helpers import TrainerBench, real_trainer
+from tests.trainers.online._helpers import TrainerBench, bare_trainer, real_trainer
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.trainers.online.trainer import TrainingBatch
+from vrl.utils.stats import Stats, recording
 
 # Streaming accumulation: one prompt per collection batch, so the released
 # microbatch cannot be replayed across PPO epochs.
@@ -155,11 +156,12 @@ def test_weight_sync_happens_in_train_half_not_collect(monkeypatch, tmp_path) ->
     assert _pushes(tb) == 1
     assert tb.collector.runtime.current_policy_version == 1
 
-    metrics = asyncio.run(tb.trainer.train_on_rollout_batch(batch))
+    with recording() as train_half:
+        asyncio.run(tb.trainer.train_on_rollout_batch(batch))
 
     assert _pushes(tb) == 2
     assert tb.collector.runtime.current_policy_version == 2
-    assert metrics.phase_times["rollout.weight_sync_s"] > 0.0
+    assert train_half.phase_seconds["rollout.weight_sync_s"] > 0.0
 
 
 def test_next_prompts_reaches_the_rollout_schedule(monkeypatch, tmp_path) -> None:
@@ -341,3 +343,31 @@ def test_unprofiled_step_records_phases_covering_the_step(monkeypatch, tmp_path)
 
     assert min(rows) > 0.5, rows
     assert not (Path(tb.trainer.config.output_dir) / "phase_events.jsonl").exists()
+
+
+def test_phase_log_shares_count_only_the_trainer_phases(tmp_path, caplog) -> None:
+    """Collect, generation and reward timings nest inside rollout.collect_s: listed, no share."""
+
+    from types import SimpleNamespace
+
+    trainer = bare_trainer(
+        _rollout_stats_path=str(tmp_path / "rollout_stats.jsonl"),
+        _strategy=SimpleNamespace(context=SimpleNamespace(rank=0)),
+    )
+    stats = Stats(
+        phase_seconds={
+            "rollout.collect_s": 3.0,
+            "backward": 1.0,
+            "collect.engine_generate": 2.5,
+            "generation.denoise_s": 2.0,
+            "reward.latency_s": 0.5,
+        }
+    )
+
+    with caplog.at_level("INFO", logger="vrl.trainers.online.trainer"):
+        trainer._log_phase_times(0, stats, stats.as_metrics_dict())
+
+    (line,) = [message for message in caplog.messages if message.startswith("phase_times")]
+    assert "total=4.000s" in line
+    assert "backward=1.000s (25.0%)" in line
+    assert "generation.denoise_s=2.000 |" in line

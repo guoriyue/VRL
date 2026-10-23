@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.stats import RolloutStats
+from vrl.utils.stats import Stats
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +53,12 @@ class ScoredRollout:
     # requires the same monotonic clock domain; this is not a portable timestamp
     # for a consumer on another machine.
     completed_at: float = field(default_factory=time.monotonic)
-    # Per-item typed stats (collect.engine_generate / reward_score / batch_build
-    # timings + reward-inference timings) owned by the producing collect call.
-    # The consumer merges them into the iteration's stats; per-item ownership
-    # keeps concurrent collects from overwriting one shared accumulator.
-    stats: RolloutStats = field(default_factory=RolloutStats)
+    # What the producing collect call recorded (collect.engine_generate /
+    # reward_score / batch_build timings + reward-inference timings + the
+    # item's service gauges). Kept as data: the item outlives its collect's
+    # scope on the owner thread, and the consumer absorbs it into the scope of
+    # the trainer step that takes the item.
+    stats: Stats = field(default_factory=Stats)
 
     @property
     def age_s(self) -> float:

@@ -26,7 +26,6 @@ from vrl.rollouts.orchestration.context_parallel import (
     batch_fingerprint,
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.context_parallel import (
     autocast_safe_attention_forward_op,
     enable_context_parallel,
@@ -227,10 +226,10 @@ class _LeaderOnlyInner:
             )
             for i, prompt in enumerate(prompts)
         ]
-        return RolloutIteration(batches=batches, stats=RolloutStats())
+        return RolloutIteration(batches=batches)
 
-    async def after_train_step(self):
-        return RolloutStats()
+    async def after_train_step(self) -> None:
+        pass
 
     def reset(self) -> None:
         pass
