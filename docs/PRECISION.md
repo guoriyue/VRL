@@ -92,9 +92,10 @@ BF16 GEMMs (`torch.backends.cuda.matmul.allow_{fp16,bf16}_reduced_precision_redu
 both default on in PyTorch). With them on, cuBLAS chooses a split-K kernel per
 GEMM shape and may sum the partial products in the half dtype, so a sample's
 output depends on the batch it is computed in, and a rollout batch replayed at a
-different batch size drifts. Measured with
-`vrl.scripts.generation.parity_divergence_probe` on an RTX 5090 (torch 2.11),
-rollout batch 4 replayed as batch 1:
+different batch size drifts. Measured with the rollout/replay divergence probe
+(now `vrl.scripts.generation.full_sequence_probe`; its reductions-on switch was
+removed once this table was recorded) on an RTX 5090 (torch 2.11), rollout
+batch 4 replayed as batch 1:
 
 | Family (dtype) | reductions on | reductions off |
 | --- | --- | --- |
@@ -103,8 +104,8 @@ rollout batch 4 replayed as batch 1:
 
 This covers the base model's GEMMs only. A LoRA adapter that has left its
 zero-initialized state adds rank-sized GEMMs whose cuBLAS kernel still depends
-on the batch: with `--lora-b-std 0.01`, SD3.5 rollout batch 8 replayed as batch 1
-reaches max |Δlogprob| 5.1e-2 (first divergence `to_q.lora_A`), batch 8 replayed
+on the batch: with the probe's `--lora-b-std 0.01`, SD3.5 rollout batch 8
+replayed as batch 1 reaches max |Δlogprob| 5.1e-2 (first divergence `to_q.lora_A`), batch 8 replayed
 as batch 8 is bitwise, and `batch_invariant_ops` brings batch 8→1 to 4.8e-7.
 LoRA runs therefore keep the generation batch equal to the replay batch.
 

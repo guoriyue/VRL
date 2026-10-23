@@ -23,7 +23,7 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 - **FSDP root 的输入 cast**：root `fully_shard` 用默认 `MixedPrecisionPolicy`，即 `cast_forward_inputs=True`；只有 block 显式关掉了（`vrl/trainers/fsdp.py:200-217`）。核对结果分两类：
   - SD3.5、FLUX、Qwen-Image(-2.1)、Krea2、MOSS、Wan、Cosmos2.5 都会在 family forward 里把 timestep 显式转成 transformer dtype（例如 `sd3_5/model.py:87`、`wan_2_1/model.py:361`），所以 root 的 cast 对它们是 no-op。
   - **SANA 例外**：它有意保留 fp32 timestep（`sana/model.py:89-95`）。在 FSDP 下，root 会把它降成 fp16，而非 FSDP 的 rollout 保持 fp32。目前 SANA 没有 FSDP preset，所以这还是潜在风险，不是现存 bug。
-- **工具**：parity 探针是 `vrl/scripts/generation/full_sequence_probe.py`，参数 `--check-replay`。`trainable_state_digest`（`vrl/trainers/diagnostics.py:13`）按 rank 计算本地分片的摘要，只在 gate 处调用，没有跨 rank 比对，也没有在 rollout 侧回算。
+- **工具**：parity 探针是 `vrl/scripts/generation/full_sequence_probe.py`，当时用参数 `--check-replay` 只复核第 0 步（现在探针总是逐步 replay，见 §6）。`trainable_state_digest`（`vrl/trainers/diagnostics.py:13`）按 rank 计算本地分片的摘要，只在 gate 处调用，没有跨 rank 比对，也没有在 rollout 侧回算。
 - **量化**：FP8/NVFP4 rollout 在每次权重安装后都会 `_requantize_weight`（`fp8.py:83`、`fp4.py:203`、`base.py:127,158`）。训练侧量化在配置解析时就被拒绝（`docs/PRECISION.md`）。
 
 ## 2. 外部证据（只列和决策相关的）
@@ -82,11 +82,11 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
      - 一个小改进：bias 现在是在 GEMM 输出 bf16 之后才加（`fp8.py:114-115`），改用 `_scaled_mm(bias=...)` 在 kernel 内融合，相对误差从 2.34e-3 降到 1.66e-3。`use_fast_accum` 保持默认的 False。
      - 测不到的部分：Hopper 的 FP8 tensor core 累加只保留约 14 位尾数（DeepSeek-V3 每 128 个元素提升一次到 fp32）。如果将来在 H100 上跑 FP8 rollout，需要单独测。
    - R4 已经顺带测了：logprob 式的 fp32 `.mean` 相对 fp64 的误差约 1e-7，随 batch 的变化约 1.2e-7，不是逐位一致，但远低于 1e-6。P0.4 只需要在真实的 `sde_step_with_logprob` 上复核一次；P1 里"换成固定顺序"那一条，只有追求逐位一致时才做。
-   - 做法：在 `apply_float32_precision`（`vrl/models/precision.py:35`）旁边，同一个 owner 里设置 `allow_bf16/fp16_reduced_precision_reduction=False`，`trace.py:155` 已经在记录这个状态。然后在 gen batch ≠ replay batch 下跑一次 `full_sequence_probe --check-replay`。上线前要在 L4、L40S 上复测，cuBLAS 的启发式随架构变化。
+   - 做法：在 `apply_float32_precision`（`vrl/models/precision.py:35`）旁边，同一个 owner 里设置 `allow_bf16/fp16_reduced_precision_reduction=False`，`trace.py:155` 已经在记录这个状态。然后在 gen batch ≠ replay batch 下跑一次 `full_sequence_probe`。上线前要在 L4、L40S 上复测，cuBLAS 的启发式随架构变化。
 1. 再在 P0 的探针里手动开启：`batch_invariant_ops`、`allow_tf32=False`、`allow_bf16_reduced_precision_reduction=False`，同时固定 SDPA 后端。compile 打开的那一组，再加上 `torch._inductor.config.deterministic=True`（2.11 已有），必要时再加 `split_reductions=False`。
    - 逐项打开，每打开一项记一次 |Δlogprob|，得到"每个归约来源各贡献多少"的表，不只给全开时的最终结论。
    - 如果 P0.4 测出 R4 本身就超过 1e-6，logprob 的 `.mean` 要换成与 batch 无关的固定顺序：例如先 reshape 成固定的 chunk，再分两级归约，或者在 fp64 下累加。否则下面的 1e-6 目标永远达不到。
-2. **判定**：在 rollout batch ≠ replay batch 的条件下，`full_sequence_probe --check-replay` 的 |Δlogprob| 能否降到 ≤1e-6。
+2. **判定**：在 rollout batch ≠ replay batch 的条件下，`full_sequence_probe` 的 |Δlogprob| 能否降到 ≤1e-6。
    - **能**：才把它做成 `trainer.deterministic` 旁边的一个诊断开关（同一个 seam，不新建模块），并在 `docs/PRECISION.md` 写明代价。
    - **不能**：记录残差来自哪个 op，然后停在这里。
 3. **注意**：rollout 用 bf16/fp8，replay 用 fp32 时，精度本身就不同。BI 只能消除"同精度下的 batch 依赖"。
@@ -119,7 +119,7 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 ### 已落地
 | 项 | commit 主题 | 结论 |
 |---|---|---|
-| P0 探针 | `scripts(generation): add a rollout/replay parity divergence probe` | `vrl/scripts/generation/parity_divergence_probe.py`：逐模块定位第一个分歧点，按步给出 max/mean \|Δlogprob\|；对照开关 `--replay-batch`、`--replay-compile`/`--rollout-compile`、`--quantize ... --replay-dequantize`、`--rollout-sdpa/--replay-sdpa`、`--reduced-precision-reduction`、`--batch-invariant` |
+| P0 探针 | `scripts(generation): add a rollout/replay parity divergence probe` | `vrl/scripts/generation/parity_divergence_probe.py`：逐模块定位第一个分歧点，按步给出 max/mean \|Δlogprob\|；对照开关 `--replay-batch`、`--replay-compile`/`--rollout-compile`、`--quantize ... --replay-dequantize`、`--rollout-sdpa/--replay-sdpa`、`--reduced-precision-reduction`、`--batch-invariant`。后来并入 `full_sequence_probe`（`scripts(generation): merge the parity divergence probe into a recipe-driven full_sequence_probe`），这些对照开关随之删除，结论就是下面的实测表 |
 | P1 第 0 步 | `models(precision): reduce fp16/bf16 GEMMs in full precision` | 生产默认关掉 cuBLAS reduced-precision reduction |
 | 奖励进程同样处理 | `rewards(runtime): reduce half-precision GEMMs in full precision in reward processes` | Qwen3-VL judge 的分数不再随同 batch 的其他图变化 2e-2 |
 | P3.1 FSDP cast | `trainers(fsdp): compute in the stored dtypes and leave inputs to the model` | 根因比计划里设想的大：除了 root 的输入 cast，actor 策略还把 diffusers 固定为 fp32 的模块（Wan 的 norm 和 `scale_shift_table`、SANA）降成了 bf16/fp16 |
@@ -146,7 +146,7 @@ VRL 已经能做到**测量**：有 parity gate，有 `LogprobMismatchStats`，�
 所有差异都集中在最后一两步（R5 的放大效应）：例如 SD3.5 在 reduction 开着时，第 0–5 步只有 8e-5 到 1e-3，第 7 步才到 1.1e-1。
 
 ### P1 判定
-- LoRA 为 0 时，SD3.5 和 Wan 只靠"关掉 reduced-precision reduction"就达到了 ≤1e-6 的目标。LoRA 起作用后，只有 batch_invariant_ops 能做到（4.8e-7，见下方"对现有约束的影响"）。探针里已有 `--batch-invariant` 开关，生产代码里**没有加**诊断开关。
+- LoRA 为 0 时，SD3.5 和 Wan 只靠"关掉 reduced-precision reduction"就达到了 ≤1e-6 的目标。LoRA 起作用后，只有 batch_invariant_ops 能做到（4.8e-7，见下方"对现有约束的影响"）。探针当时的 `--batch-invariant` 开关已随探针合并删除（结论即本表），生产代码里**没有加**诊断开关。
 - SANA 剩余约 1e-3 来自 cuBLAS 瘦 GEMM 和 cuDNN 1x1 卷积的选核，在 0.01 的 gate 之下。要逐位一致，需要卷积也 batch-invariant，代价不值得。
 - batch_invariant_ops 原版的 Triton 配置在 sm120 上超出 shared memory，探针里用的是把 `num_stages` 改成 2 的本地副本。
 
@@ -176,20 +176,20 @@ fp32 `.mean` 在真实流程里的误差底是 3e-9 到 3e-8（上面"关"的几
 ### 逐项状态
 | 项 | 状态 | 依据 |
 |---|---|---|
-| P0.1 探针 | 已落地 | `vrl/scripts/generation/parity_divergence_probe.py`。用的是逐模块 forward hook，没有用 DebugMode：DebugMode 对整张张量做哈希，rollout batch 和 replay batch 不同时形状不同，无法比较；探针只取第 0 行比较。OpGuard 同理不需要 |
+| P0.1 探针 | 已落地 | 原 `vrl/scripts/generation/parity_divergence_probe.py`，现并入 `vrl/scripts/generation/full_sequence_probe.py`（recipe 驱动：batch、compile、量化都来自配置）。用的是逐模块 forward hook，没有用 DebugMode：DebugMode 对整张张量做哈希，rollout batch 和 replay batch 不同时形状不同，无法比较；探针只取第 0 行比较。OpGuard 同理不需要 |
 | P0.2(a) gen batch ≠ replay batch | 已实测 | 见 §5 表格 |
 | P0.2(b) compile 开/关 | 已实测 | 见 §5 表格 |
 | P0.2(c) FP8 rollout vs bf16 | 已实测 | 见 §5 表格 |
 | P0.2(d) ring CP vs 单卡 SDPA | 不做（没有用户） | 没有 recipe 用 ring CP：唯一的 CP preset 是 Ulysses，`ring_degree: 1`（`vrl/config/presets/base/distributed/training_fsdp_cp2.yaml`）。attention 后端之间的差已在 §5 实测（8.8e-2） |
-| P0.3 验收（复现 LoRA parity bug） | 已完成 | `--lora-b-std 0.01` 指到 `to_q.lora_A`（§5"对现有约束的影响"） |
-| P0.4 第一个分歧点标 R1/R2/R3 | 不做 | 探针已有按侧开关（`--rollout-sdpa/--replay-sdpa`、`--reduced-precision-reduction`、`--batch-invariant`、compile），一次只改一项的对照就能分出来源，不需要再加输入指纹和模块分类 |
+| P0.3 验收（复现 LoRA parity bug） | 已完成 | `--lora-b-std 0.01` 指到 `to_q.lora_A`（§5"对现有约束的影响"）；合并后的探针保留了这个参数 |
+| P0.4 第一个分歧点标 R1/R2/R3 | 不做 | 当时探针的按侧开关（`--rollout-sdpa/--replay-sdpa`、`--reduced-precision-reduction`、`--batch-invariant`、compile）一次只改一项，已经分出了来源（§5）；这些开关随后删除，不需要再加输入指纹和模块分类 |
 | P0.4 单独测 R4（batch=1 vs N + fp64 参照） | 不做（已有测量） | §5 R4 小节：真实流程里关掉 reduced-precision reduction 后，整条链路的 \|Δlogprob\| 只有 3.7e-9 到 3e-8，R4 的误差底不会更大，远低于 1e-6，不需要换成固定顺序归约。这个隔离测试原本就是为了决定要不要改归约顺序，结论已经有了 |
 | P0.4 按步拆分（R5） | 已完成 | 探针逐步报告；§5 表格下方"差异集中在最后一两步" |
 | P1.0 关掉 reduced-precision reduction | 已落地 | 训练和 rollout 进程在 `apply_float32_precision` 里关（`vrl/models/precision.py:57-58`）；奖励进程在 `InProcessRewardScorer.__init__` 里关（`vrl/rewards/runtime.py:318-319`）；`vrl/trainers/trace.py:154-156` 记录状态 |
 | P1.0 FP8 bias 融合进 `_scaled_mm` | **本轮实现，待 GPU 复测** | `nn(quantization): fuse the FP8 linear's bias into the scaled_mm epilogue`：`Fp8Linear.forward` 把 bias（转成 GEMM 输出 dtype，kernel 要求）传给 `_scaled_mm(bias=...)`，在 fp32 累加器上加完再做唯一一次舍入；`use_fast_accum` 保持 False。CPU 上用 tensorwise recipe 加了一个测试 |
 | P1.0 L4/L40S 复测 | 待其他硬件 | 本机只有 5090，命令见下 |
 | P1.0 H100 FP8 累加精度 | 待其他硬件 | 只在 H100 上跑 FP8 rollout 时才需要 |
-| P1.1 逐项打开各归约开关 | **开关已齐，待 GPU 运行** | TF32 → `--float32-precision ieee`；reduced-precision reduction → `--reduced-precision-reduction`；SDPA 后端 → `--rollout-sdpa/--replay-sdpa`；`batch_invariant_ops` → `--batch-invariant`；Inductor 的两个开关本身就是环境变量 `TORCHINDUCTOR_DETERMINISTIC=1`、`TORCHINDUCTOR_SPLIT_REDUCTIONS=0`，不新增参数（已写进探针 docstring） |
+| P1.1 逐项打开各归约开关 | **部分待 GPU 运行** | TF32 → 配置 `precision.float32_precision=ieee`；compile → `model.torch_compile.enable=true`（两侧）；Inductor 的两个开关本身就是环境变量 `TORCHINDUCTOR_DETERMINISTIC=1`、`TORCHINDUCTOR_SPLIT_REDUCTIONS=0`（写在探针 docstring）。reduced-precision reduction、SDPA 后端、`batch_invariant_ops` 三个对照开关已从探针删除，它们各自的贡献已在 §5 实测记录 |
 | P1.2 生产诊断开关 | **需要用户决定** | 判定条件（≤1e-6）在 SD3.5 + 活 LoRA 下只有 batch_invariant_ops 能满足（4.8e-7）。做成 `trainer.deterministic` 旁的开关需要把 batch_invariant_ops 的 Triton kernel 引入库内（`.venv` 没有这个包，5090 上还要改 `num_stages=2`），或者新增依赖并重做 lock。生产里"gen batch == replay batch"已经保证 LoRA 逐位一致，所以是否值得由用户决定 |
 | 只对 LoRA Linear 用 batch-invariant kernel | **需要用户决定** | §5 写的是"后续可以考虑"，同样依赖引入 batch-invariant kernel |
 | P2.1 FP8/NVFP4 500 次 update 长跑 | 待 GPU 运行 | 命令见下；配置已在 CPU 上用 `require_training_config` 组合并校验通过，`stages_match=False`，TIS/RS 自动开启 |
@@ -201,58 +201,50 @@ fp32 `.mean` 在真实流程里的误差底是 3e-9 到 3e-8（上面"关"的几
 
 ### 需要 GPU 的命令（未运行）
 
-都从仓库根目录执行。SD3.5 的 LoRA 预设打开了 compile，探针要自己控制 compile，所以先生成一个关掉 compile 的副本：
+都从仓库根目录执行。探针读 recipe：模型、精度、量化、compile、generation batch（`rollout.samples_per_generation_batch`）和 replay batch（`actor.training_microbatch_size`）都用配置覆盖项给出，覆盖项要连续写在 `--config` 后面。SD3.5 的 LoRA 预设打开了 compile，eager 对照用 `model.torch_compile.enable=false` 关掉。|Δlogprob| 超过 `trainer.replay_parity.max_abs_logprob_diff`（默认 0.01）时探针以非零码退出，`result.json` 照常写出。
+
+1. **FP8 bias 融合复测**（对照 §5 的 9.2e-1）。合并后的探针按 recipe 取 SDE 参数（`rollout.noise_level` 等），可能和 §5 当时的默认值不同；要严格对照，就在同一份代码上临时还原 `Fp8Linear.forward` 的 bias 融合，用同一条命令再跑一次作为基线。量化 rollout 的 replay 自动走 master 权重：
 
 ```bash
-sed 's/enable: true/enable: false/' vrl/config/presets/model/sd3_5/medium.yaml > /tmp/sd35_lora_eager.yaml
-mkdir -p outputs/parity
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.full_sequence_probe \
+  --config experiment/sd3_5/online_grpo_pickscore \
+  model.use_lora=false model.torch_compile.enable=false \
+  precision.training.dtype=bf16 precision.float32_precision=tf32 precision.training.outer_autocast=true \
+  precision.rollout.quantization.format=fp8 sampling.num_steps=8 \
+  rollout.n_samples_per_prompt=4 rollout.samples_per_generation_batch=4 actor.training_microbatch_size=1 \
+  --artifact-dir outputs/parity/sd35_fp8_fused_bias
 ```
 
-1. **FP8 bias 融合复测**（对照 §5 的 9.2e-1）。在 该 commit 的父 commit（`git log -1 --format=%h --grep='fuse the FP8 linear'` 的结果加 `^`） 的 worktree 里（`PYTHONPATH` 指向它）用同一条命令再跑一次作为基线：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.parity_divergence_probe \
-  --family sd3_5 --path stabilityai/stable-diffusion-3.5-medium \
-  --dtype bf16 --float32-precision tf32 --outer-autocast \
-  --quantize fp8 --replay-dequantize --rollout-batch 4 --replay-batch 1 --steps 8 \
-  --json-out outputs/parity/sd35_fp8_fused_bias.json
-```
-
-2. **P1.1 每个归约来源的贡献表**（SD3.5，活 LoRA，batch 8→1）。从全开开始，每次只多关一项，记录 `max_logprob_abs` 和第一个分歧模块：
+2. **P1.1 每个归约来源的贡献表**（SD3.5，活 LoRA，batch 8→1）。探针只剩 TF32 和 compile 两个可调来源（reduced-precision reduction 固定为生产的关，SDPA 后端由 PyTorch 选，`batch_invariant_ops` 的结果见 §5）。每次只改一项，记录 `max_logprob_abs` 和第一个分歧模块：
 
 ```bash
 probe() {
-  CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.parity_divergence_probe \
-    --family sd3_5 --path stabilityai/stable-diffusion-3.5-medium \
-    --model-preset /tmp/sd35_lora_eager.yaml --dtype bf16 --outer-autocast \
-    --lora-b-std 0.01 --rollout-batch 8 --replay-batch 1 --steps 8 "$@"
+  CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.full_sequence_probe \
+    --config experiment/sd3_5/online_grpo_pickscore \
+    precision.training.dtype=bf16 precision.training.outer_autocast=true sampling.num_steps=8 \
+    rollout.n_samples_per_prompt=8 rollout.samples_per_generation_batch=8 actor.training_microbatch_size=1 \
+    "$@" --lora-b-std 0.01
 }
-probe --float32-precision tf32 --reduced-precision-reduction on --json-out outputs/parity/p11_0_all_on.json
-probe --float32-precision tf32 --reduced-precision-reduction off --json-out outputs/parity/p11_1_rpr_off.json
-probe --float32-precision ieee --reduced-precision-reduction off --json-out outputs/parity/p11_2_tf32_off.json
-probe --float32-precision ieee --reduced-precision-reduction off --rollout-sdpa flash --replay-sdpa flash \
-  --json-out outputs/parity/p11_3_sdpa_fixed.json
-# batch_invariant_ops 不在 .venv 里：PYTHONPATH 指向 5090 上改过 num_stages=2 的本地副本
-PYTHONPATH=<batch_invariant_ops 本地副本> probe --float32-precision ieee --reduced-precision-reduction off \
-  --rollout-sdpa flash --replay-sdpa flash --batch-invariant --json-out outputs/parity/p11_4_bi.json
+probe model.torch_compile.enable=false precision.float32_precision=tf32 --artifact-dir outputs/parity/p11_1_rpr_off
+probe model.torch_compile.enable=false precision.float32_precision=ieee --artifact-dir outputs/parity/p11_2_tf32_off
 # compile 组：两侧 compile、batch 8→1，再逐项加 Inductor 开关
-probe --float32-precision ieee --rollout-compile --json-out outputs/parity/p11_c0_compile.json
-TORCHINDUCTOR_DETERMINISTIC=1 probe --float32-precision ieee --rollout-compile \
-  --json-out outputs/parity/p11_c1_deterministic.json
-TORCHINDUCTOR_DETERMINISTIC=1 TORCHINDUCTOR_SPLIT_REDUCTIONS=0 probe --float32-precision ieee \
-  --rollout-compile --json-out outputs/parity/p11_c2_no_split.json
+probe precision.float32_precision=ieee --artifact-dir outputs/parity/p11_c0_compile
+TORCHINDUCTOR_DETERMINISTIC=1 probe precision.float32_precision=ieee \
+  --artifact-dir outputs/parity/p11_c1_deterministic
+TORCHINDUCTOR_DETERMINISTIC=1 TORCHINDUCTOR_SPLIT_REDUCTIONS=0 probe precision.float32_precision=ieee \
+  --artifact-dir outputs/parity/p11_c2_no_split
 ```
 
-3. **P1.0 在 L4 / L40S 上复测**（每种卡各跑一对）：
+3. **P1.0 在 L4 / L40S 上复测**（每种卡跑一次）。探针的 `--reduced-precision-reduction` 开关已删除（5090 上的开/关对照见 §5），这里复测生产设置（关）在该卡上是否仍在 1e-8 量级：
 
 ```bash
-for rpr in on off; do
-  CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.parity_divergence_probe \
-    --family sd3_5 --path stabilityai/stable-diffusion-3.5-medium \
-    --dtype bf16 --float32-precision tf32 --outer-autocast \
-    --rollout-batch 4 --replay-batch 1 --steps 8 --reduced-precision-reduction $rpr \
-    --json-out outputs/parity/sd35_rpr_${rpr}_$(nvidia-smi --query-gpu=name --format=csv,noheader | tr ' ' _).json
-done
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.full_sequence_probe \
+  --config experiment/sd3_5/online_grpo_pickscore \
+  model.use_lora=false model.torch_compile.enable=false \
+  precision.training.dtype=bf16 precision.float32_precision=tf32 precision.training.outer_autocast=true \
+  sampling.num_steps=8 rollout.n_samples_per_prompt=4 rollout.samples_per_generation_batch=4 \
+  actor.training_microbatch_size=1 \
+  --artifact-dir outputs/parity/sd35_rpr_off_$(nvidia-smi --query-gpu=name --format=csv,noheader | tr ' ' _)
 ```
 
 4. **P2.1 FP8 rollout 500 次 update 长跑**（单卡约占满 5090；观察 metrics CSV 里 `mismatch_kl` 的斜率）。`.venv` 目前没有 vLLM，colocated 的 CuMem parking 需要 scratch 里那个带 vLLM 的副本环境：

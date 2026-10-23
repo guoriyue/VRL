@@ -1,115 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
-import pytest
-import torch
+from omegaconf import OmegaConf
 
-from vrl.models.families.registry import get_model_family_entry
-from vrl.scripts.generation import full_sequence_probe as generate
-
-
-@pytest.mark.parametrize("value", ["nan", "inf", "-1"])
-def test_replay_tolerance_rejects_invalid_values(value):
-    import argparse
-
-    with pytest.raises(argparse.ArgumentTypeError):
-        generate._nonnegative_finite(value)
+from tests.tiny_real_stack import TinySanaPipeline, tiny_sana_online_config
+from vrl.scripts.generation import full_sequence_probe
 
 
-@pytest.mark.parametrize("pred,lp", [(float("nan"), 0), (0, float("inf")), (0, 0.002)])
-def test_replay_guard_fails_closed(pred, lp):
-    with pytest.raises(SystemExit, match="FAIL"):
-        generate._check_replay_errors(pred, lp, pred_atol=1e-3, lp_atol=1e-3)
+def test_probe_replays_a_recipe_rollout_at_the_trainer_batch(monkeypatch, tmp_path) -> None:
+    # The SANA online recipe on tiny real modules: fp32, two steps, generation
+    # batch 2 replayed as batch 1, so replay runs a different batch shape than
+    # the rollout through the production loop, executor hooks and SDE math.
+    cfg = tiny_sana_online_config(tmp_path, overrides=("actor.training_microbatch_size=1",))
+    TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
+    config = tmp_path / "resolved.yaml"
+    OmegaConf.save(cfg, config)
 
+    full_sequence_probe.main(["--config", str(config), "--artifact-dir", str(tmp_path / "probe")])
 
-def test_replay_guard_accepts_threshold_boundary():
-    generate._check_replay_errors(1e-3, 0, pred_atol=1e-3, lp_atol=1e-3)
-
-
-def test_probe_uses_existing_cosmos_lora_preset():
-    preset = (
-        Path(__file__).resolve().parents[2] / "vrl/config/presets/model/cosmos/predict2_5_2b.yaml"
-    )
-    args = generate.build_parser().parse_args(
-        [
-            "--family",
-            "cosmos-predict2.5",
-            "--path",
-            "/local/pinned/cosmos",
-            "--dtype",
-            "bf16",
-            "--float32-precision",
-            "ieee",
-            "--outer-autocast",
-            "--model-preset",
-            str(preset),
-        ]
-    )
-    build = generate.resolve_probe_model_build(
-        args, get_model_family_entry("cosmos-predict2.5"), torch.device("cpu")
-    )
-    assert build.use_lora
-    assert build.lora.rank == 32
-    assert build.model_name_or_path == "/local/pinned/cosmos"
-    assert build.model_config["skip_text_encoder"] is False
-
-
-def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -> None:
-    args = generate.build_parser().parse_args(
-        [
-            "--family",
-            "sana",
-            "--path",
-            "unused",
-            "--dtype",
-            "fp16",
-            "--float32-precision",
-            "ieee",
-            "--no-outer-autocast",
-        ],
-    )
-
-    build = generate.resolve_probe_model_build(
-        args,
-        get_model_family_entry("sana"),
-        torch.device("cpu"),
-    )
-
-    assert build.parameter_dtype is torch.float16
-    rollout = build.require_rollout()
-    assert build.precision.dtype == "fp16"
-    assert build.precision.float32_precision == "ieee"
-    assert build.precision.quantization is None
-    assert build.precision.outer_autocast is False
-    assert rollout.prompt_encoder_dtype is torch.float16
-    assert rollout.base_weight_sync is False
-
-
-@pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
-def test_probe_model_build_derives_quantization_from_role_precision(
-    quantization_format: str,
-) -> None:
-    args = generate.build_parser().parse_args(
-        [
-            "--family",
-            "sana",
-            "--path",
-            "unused",
-            "--dtype",
-            "fp16",
-            "--float32-precision",
-            "ieee",
-            "--no-outer-autocast",
-            "--quantize",
-            quantization_format,
-        ],
-    )
-
-    build = generate.resolve_probe_model_build(
-        args,
-        get_model_family_entry("sana"),
-        torch.device("cpu"),
-    )
-
-    assert build.precision.quantization.format == quantization_format
+    report = json.loads((tmp_path / "probe" / "result.json").read_text())
+    assert report["passed"]
+    assert (report["rollout_batch"], report["replay_batch"]) == (2, 1)
+    assert [step["step"] for step in report["steps"]] == [0, 1]
+    assert report["max_logprob_abs"] <= report["max_abs_logprob_diff_gate"]
+    assert "first_divergent_module" in report["steps"][0]
+    assert (tmp_path / "probe" / "image.png").is_file()

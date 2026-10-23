@@ -184,14 +184,16 @@ CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest \
   tests/models/interfaces -q
 ```
 
-Then drive the registered production model and denoise math without Ray or a
-trainer. The probe fails on non-finite/collapsed output and can verify the first
-rollout-to-replay step with `--check-replay`:
+Then drive the registered production model, executor hooks and denoise loop
+without Ray or a trainer. The probe takes the family's recipe (same `--config` +
+overrides grammar as `vrl-train`), fails on non-finite/collapsed output, replays
+every step at the recipe's replay batch and fails when `|Δlogprob|` exceeds
+`trainer.replay_parity.max_abs_logprob_diff`:
 
 ```bash
 python -m vrl.scripts.generation.full_sequence_probe \
-  --family my_model --path <checkpoint> --dtype bf16 \
-  --float32-precision tf32 --outer-autocast --check-replay
+  --config <experiment/my_model/recipe> model.path=<checkpoint> \
+  --artifact-dir outputs/probes/my_model
 ```
 
 ## 6. Promotion bar

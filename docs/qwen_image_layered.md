@@ -70,15 +70,20 @@ experiments and the data layout are in `archive/main-20261016:docs/research/laye
 ## Smoke
 
 ```bash
-# loading / conditioning / decode path on the real checkpoint (no adapter)
+# loading / conditioning / decomposition / replay on the real checkpoint
+# (fresh adapter); there is no online recipe, so the model preset is composed
+# onto the generic online one
 HF_HUB_OFFLINE=1 .venv/bin/python -m vrl.scripts.generation.full_sequence_probe \
-  --family qwen_image_layered --path Qwen/Qwen-Image-Layered \
-  --model-preset vrl/config/presets/model/qwen_image_layered/base.yaml \
-  --dtype bf16 --float32-precision ieee --outer-autocast --quantize fp8 --steps 20
+  --config recipe/online/flow_matching_grpo +model=qwen_image_layered/base \
+  precision.training.dtype=bf16 precision.float32_precision=ieee \
+  precision.rollout.quantization.format=fp8 rollout.n_samples_per_prompt=1 \
+  sampling.width=640 sampling.height=640 sampling.num_steps=20 \
+  sampling.guidance_scale=1.0 sampling.layers=4 \
+  actor.optim.lr=0 trainer.output_dir=outputs/probes/qwen_image_layered \
+  --reference-image <source.png> --artifact-dir outputs/probes/qwen_image_layered/probe
 ```
 
-The generic probe has no source-image input; drive the family directly
-(`encode_prompt(..., reference_image=, height=, width=)`,
-`prepare_sampling(..., layers=)`) or through `QwenImageLayeredBatchExecutor`
-for a full decomposition. CPU tests in `tests/models/families/qwen_image/`
-cover the token layout, replay parity, the codec round trip and the executor.
+The probe prepares the batch through `QwenImageLayeredBatchExecutor`'s own
+hooks, so `--reference-image` is the RGBA source it decomposes. CPU tests in
+`tests/models/families/qwen_image/` cover the token layout, replay parity, the
+codec round trip and the executor.

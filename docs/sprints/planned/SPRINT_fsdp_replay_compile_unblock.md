@@ -173,7 +173,11 @@ torchrun --standalone --nproc_per_node=2 -m vrl.scripts.train \
 #### P3.1 剩余家族的普查命令（单卡，本次没有运行）
 ```bash
 CUDA_VISIBLE_DEVICES=0 TORCH_LOGS=graph_breaks \
-python -m vrl.scripts.generation.parity_divergence_probe --family <flux|qwen_image|qwen_image_21|krea2|moss_image|cosmos-predict2.5|...> \
-  --path <checkpoint> --dtype bf16 --float32-precision ieee --no-outer-autocast \
-  --rollout-compile --replay-compile --rollout-batch 1 --replay-batch 1 --steps 2 2>&1 | grep -c "Graph break"
+python -m vrl.scripts.generation.full_sequence_probe \
+  --config experiment/<flux|qwen_image|qwen_image_21|krea2|moss_image|cosmos_predict2_5|...>/<recipe> \
+  model.path=<checkpoint> precision.training.dtype=bf16 precision.float32_precision=ieee \
+  precision.training.outer_autocast=false model.torch_compile.enable=true \
+  model.torch_compile.scope=all rollout.n_samples_per_prompt=1 sampling.num_steps=2 \
+  2>&1 | grep -c "Graph break"
 ```
+（探针的 rollout 和 replay 共用同一个 rollout 模型，`model.torch_compile` 打开时两侧都跑编译后的模块；`rollout.n_samples_per_prompt=1` 让 generation batch 和 replay batch 都是 1。）
