@@ -274,17 +274,6 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
     assert experiment.files[0].fetch_command == ""
 
 
-def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
-    """The experiment's files flag the Pick-a-Pic download."""
-    experiment = bootstrap.ExperimentDataFiles.from_mapping(
-        {"loader": "pickapic_preference"},
-        repo_root=tmp_path,
-    )
-
-    assert experiment.ready is False
-    assert any("pickapic --with-images" in f.fetch_command for f in experiment.files)
-
-
 def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path) -> None:
     """A missing Danbooru manifest leaves the experiment not ready and names the ``anime-safety-prompts``
     command that produces it.

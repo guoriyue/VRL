@@ -112,20 +112,6 @@ class ExperimentDataFiles:
                             break
                     data_file = replace(data_file, fetch_command=fetch)
                 files.append(data_file)
-        if loader == "pickapic_preference":
-            from vrl.scripts.data import pickapic
-
-            files.append(
-                DataFile(
-                    role="images",
-                    path="(huggingface cache)",
-                    present=False,
-                    rows=0,
-                    fetch_command=_setup_command(
-                        pickapic.image_setup_argv(str(data.get("dataset_name") or "") or None),
-                    ),
-                ),
-            )
         return cls(loader=loader, files=tuple(files))
 
     @property

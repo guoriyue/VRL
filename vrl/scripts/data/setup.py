@@ -1,14 +1,14 @@
 """Dataset setup CLI — the single entrypoint for preparing training datasets.
 
-Each dataset has its own concrete implementation (``pickapic.py``, ``danbooru.py``,
-``video_world/``, ``bootstrap.py``, ``videophy_i2v.py``, and
+Each dataset has its own concrete implementation (``danbooru.py``, ``video_world/``,
+``bootstrap.py``, ``videophy_i2v.py``, and
 ``derive_text_video_targets.py``); this module wires their subcommands together
 and adds ``init-dirs`` for creating the empty artifact directories a dataset
 downloads into. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.setup <command>
 
-Commands: pickapic, anime-safety-prompts, videophy-i2v, video-world-bridge, video-world-targets,
+Commands: anime-safety-prompts, videophy-i2v, video-world-bridge, video-world-targets,
 derive-text-video-targets, for-experiment, init-dirs.
 """
 
@@ -21,18 +21,16 @@ from vrl.scripts.data import (
     bootstrap,
     danbooru,
     derive_text_video_targets,
-    pickapic,
     video_world,
     videophy_i2v,
 )
-from vrl.scripts.data.common import default_cache_dir, emit
+from vrl.scripts.data.common import emit
 from vrl.utils.paths import RootedPaths
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
 # init-dirs command's own small wiring table, not a generic artifact registry (the
 # module docstring rules that out); keep it local rather than a per-dataset protocol.
 _INIT_DIRS_BY_DATASET = {
-    "pickapic": ("pickapic",),
     "video-world": ("video_world/references", "video_world/targets"),
 }
 
@@ -44,11 +42,6 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
         path = data_root / rel
         path.mkdir(parents=True, exist_ok=True)
         created.append(path)
-    if args.dataset == "pickapic":
-        # The directory pickapic's --cache-dir defaults to.
-        cache = default_cache_dir()
-        cache.mkdir(parents=True, exist_ok=True)
-        created.append(cache)
     emit(
         {
             "dataset": args.dataset,
@@ -61,7 +54,6 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    pickapic.register(subparsers)
     danbooru.register(subparsers)
     videophy_i2v.register(subparsers)
     video_world.register(subparsers)
