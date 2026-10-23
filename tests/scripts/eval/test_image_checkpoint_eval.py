@@ -121,6 +121,16 @@ def test_explicit_lora_export_uses_parent_checkpoint_and_rejects_wrong_mode(tmp_
         )
 
 
+def test_seed_grid_is_dense_and_shared_by_every_arm(evaluation):
+    prompts = tuple(
+        checkpoint_eval.EvalPrompt(index, PromptExample(f"prompt {index}")) for index in range(3)
+    )
+    cells = list(replace(evaluation, prompts=prompts).cells())
+    for label in ("base", "checkpoint-3", "checkpoint-8"):
+        seeds = [cell["seed"] for cell in cells if cell["checkpoint_label"] == label]
+        assert seeds == list(range(17, 23))
+
+
 def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(evaluation):
     examples = [
         PromptExample(
@@ -261,7 +271,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, evaluation, 
 
     def generate(_model, **kwargs):
         events.append(("generate", model.adapter_enabled, kwargs["seed"]))
-        return [Image.new("RGB", (8, 8))]
+        return Image.new("RGB", (8, 8))
 
     def load(path):
         checkpoint = SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1]))
@@ -273,7 +283,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, evaluation, 
         checkpoint.restore_model = restore
         return checkpoint
 
-    monkeypatch.setattr(checkpoint_eval, "generate_images", generate)
+    monkeypatch.setattr(checkpoint_eval, "generate_image", generate)
     monkeypatch.setattr("vrl.trainers.checkpointing.TrainingCheckpoint.load", load)
     monkeypatch.setattr("vrl.utils.cuda_memory.release_cuda_memory", lambda: None)
     rows = evaluation.generate(tmp_path / "generated")

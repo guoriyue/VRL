@@ -21,28 +21,158 @@ import random
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from omegaconf import OmegaConf
 
-from vrl.scripts.eval.denoise_generation import (
-    ImageSampling,
-    generate_images,
-    seed_for,
-)
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json
 from vrl.utils.paths import RootedPaths, user_path
 
 if TYPE_CHECKING:
+    from PIL import Image
+
+    from vrl.config.schema import RootConfig
     from vrl.models.families.registry import ModelFamilyEntry
     from vrl.models.interfaces import ModelBuild
+    from vrl.models.steps.denoise.base import DenoisePipelineModelBase
     from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data.prompts import PromptExample
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSampling:
+    """The effective sampling values every arm is generated with.
+
+    ``from_root`` projects the parsed run config and owns no defaults: an
+    evaluation that silently ran with a value the run never set would measure
+    the wrong thing, so a missing key is an error naming its config path.
+    """
+
+    width: int
+    height: int
+    num_steps: int
+    guidance_scale: float
+    # None for families whose sampling section declares no prompt-length knob
+    # (Qwen-Image-2.1).
+    max_sequence_length: int | None = None
+    # Every other key the family's sampling section declares beyond the shared
+    # geometry (Qwen-Image-2.1: reference_resolution, output_mode), handed to
+    # the family executor as-is.
+    family: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("width", "height", "num_steps", "max_sequence_length"):
+            value = getattr(self, name)
+            if name == "max_sequence_length" and value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"sampling.{name} must be a positive integer")
+        guidance_scale = self.guidance_scale
+        if (
+            isinstance(guidance_scale, bool)
+            or not isinstance(guidance_scale, (int, float))
+            or not math.isfinite(guidance_scale)
+            or guidance_scale < 0
+        ):
+            raise ValueError("sampling.guidance_scale must be finite and non-negative")
+        object.__setattr__(self, "guidance_scale", float(guidance_scale))
+
+    @classmethod
+    def from_root(cls, root: RootConfig) -> ImageSampling:
+        """Project ``sampling`` into the image fields.
+
+        Family keys (whatever the family schema adds to the shared denoise
+        section, so a new field reaches evaluation without a hand-kept list)
+        fall back to ``model.executor`` exactly as the training runtime does.
+        """
+
+        from vrl.config.sampling_schema import DenoiseImageSamplingSection
+
+        section = root.sampling
+        if section is None:
+            raise ValueError("config missing required field: sampling")
+        executor = root.model.executor if root.model is not None else None
+
+        def pick(name: str, *, executor_fallback: bool = False) -> Any:
+            value = getattr(section, name, None)
+            if value is None and executor_fallback and executor is not None:
+                value = getattr(executor, name, None)
+            if value is None:
+                raise ValueError(f"config missing required field: sampling.{name}")
+            return value
+
+        shared = DenoiseImageSamplingSection.model_fields
+        family = {
+            name: pick(name, executor_fallback=True)
+            for name in type(section).model_fields
+            if name not in shared
+        }
+        return cls(
+            width=int(pick("width")),
+            height=int(pick("height")),
+            num_steps=int(pick("num_steps")),
+            guidance_scale=float(pick("guidance_scale")),
+            max_sequence_length=family.pop("max_sequence_length", None),
+            family=family,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        """One flat mapping of every effective sampling value, family keys included."""
+
+        named = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "family"}
+        return {**named, **self.family}
+
+
+def generate_image(
+    model: DenoisePipelineModelBase,
+    *,
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    sampling: ImageSampling,
+) -> Image.Image:
+    """Generate one reproducible text-to-image sample through native scheduler steps.
+
+    Models keep their configured forward precision while scheduler arithmetic
+    stays in float32.
+    """
+
+    import torch
+
+    from vrl.generation.types import DenoiseRequest
+    from vrl.utils.media import to_pil_image
+
+    encoded = model.encode_prompt(
+        [prompt],
+        [negative_prompt],
+        max_sequence_length=sampling.max_sequence_length,
+        guidance_scale=sampling.guidance_scale,
+    )
+    request = DenoiseRequest(
+        negative_prompt=negative_prompt,
+        width=sampling.width,
+        height=sampling.height,
+        frame_count=1,
+        num_steps=sampling.num_steps,
+        guidance_scale=sampling.guidance_scale,
+        seed=int(seed),
+    )
+    state = model.prepare_sampling(request, encoded)
+    with torch.no_grad():
+        for step_idx, timestep in enumerate(state.timesteps):
+            step_output = model.forward_step(state, step_idx)
+            state.latents = state.scheduler.step(
+                step_output["noise_pred"].float(),
+                timestep,
+                state.latents.float(),
+                return_dict=False,
+            )[0]
+    return to_pil_image(model.decode_latents(state.latents)[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,20 +251,14 @@ class CheckpointEvaluation:
                         "prompt_index": prompt_index,
                         "manifest_index": prompt.manifest_index,
                         "sample_index": sample_index,
-                        "seed": seed_for(
-                            base_seed=self.seed,
-                            prompt_index=prompt_index,
-                            sample_index=sample_index,
-                            samples_per_prompt=self.samples_per_prompt,
-                        ),
+                        # Checkpoint-independent: every arm sees the same seed grid.
+                        "seed": self.seed + prompt_index * self.samples_per_prompt + sample_index,
                         "prompt": prompt.example.prompt,
                         "reward_metadata": reward_metadata,
                         "image_path": f"images/{target.label}/prompt{prompt_index:04d}_sample{sample_index:02d}.png",
                     }
 
-    def _generate_edit(
-        self, model: Any, example: PromptExample, seed: int
-    ) -> tuple[list[Any], str]:
+    def _generate_edit(self, model: Any, example: PromptExample, seed: int) -> tuple[Any, str]:
         """One reference-conditioned edit through the family's own batch executor.
 
         The executor is the rollout path (reference loading, conditioning,
@@ -173,7 +297,7 @@ class CheckpointEvaluation:
         initial = batch.observations[:, 0].detach().cpu().contiguous()
         latent_hash = hashlib.sha256(initial.float().numpy().tobytes()).hexdigest()
         generated = executor.merge_generation_batches(request, [batch])
-        return [to_pil_image(generated.output[0])], latent_hash
+        return to_pil_image(generated.output[0]), latent_hash
 
     def blind_orders(self) -> dict[int, list[str]]:
         orders = {}
@@ -218,25 +342,22 @@ class CheckpointEvaluation:
                             continue
                         example = self.prompts[row["prompt_index"]].example
                         if example.reference_images:
-                            images, latent_hash = self._generate_edit(model, example, row["seed"])
+                            image, latent_hash = self._generate_edit(model, example, row["seed"])
                             row["initial_latents_sha256"] = latent_hash
                         else:
-                            images = generate_images(
+                            image = generate_image(
                                 model,
                                 prompt=row["prompt"],
                                 negative_prompt=self.negative_prompt,
                                 seed=row["seed"],
-                                samples_per_prompt=1,
                                 sampling=self.sampling,
                             )
-                        if len(images) != 1:
-                            raise RuntimeError(f"expected one image, received {len(images)}")
                         path = output_dir / row["image_path"]
                         path.parent.mkdir(parents=True, exist_ok=True)
-                        images[0].save(path, format="PNG")
+                        image.save(path, format="PNG")
                         row["image_sha256"] = sha256_file(path)
                         logger.info("Generated %s", row["image_path"])
-                        del images
+                        del image
         finally:
             del model, bundle
             release_cuda_memory()
@@ -269,7 +390,20 @@ class CheckpointEvaluation:
         from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME, load_resolved_run_config
 
         config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
-        _, root = load_resolved_run_config(args.run_dir)
+        # Only geometry and step count may differ from training; the guidance
+        # scale and prompt length stay the run's own.
+        _, root = load_resolved_run_config(
+            args.run_dir,
+            overrides=[
+                f"sampling.{name}={value}"
+                for name, value in (
+                    ("width", args.width),
+                    ("height", args.height),
+                    ("num_steps", args.num_steps),
+                )
+                if value
+            ],
+        )
         if root.model is None:
             raise ValueError("checkpoint evaluation requires a model config")
         entry = get_model_family_entry(root.model.family)
@@ -371,16 +505,7 @@ class CheckpointEvaluation:
             model_identity,
             targets,
             prompts,
-            # Only geometry and step count may differ from training; the guidance
-            # scale and prompt length stay the run's own.
-            ImageSampling.from_root(
-                root,
-                overrides={
-                    "width": args.width,
-                    "height": args.height,
-                    "num_steps": args.num_steps,
-                },
-            ),
+            ImageSampling.from_root(root),
             reward,
             args.samples_per_prompt,
             args.seed,
