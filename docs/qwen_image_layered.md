@@ -64,7 +64,10 @@ rendered scenes with full per-layer truth (`algorithm.kind: diffusion_sft`, the
 offline `OfflineSFTTrainer`). `vrl/scripts/denoise/encode_layered_scenes.py`
 caches each scene's condition tokens, prompt embeds, packed target frames and
 token weights with the family model; `vrl/scripts/eval/layered_decompose_eval.py`
-decomposes cached scenes with one adapter and scores the known-layer axes. The
+decomposes cached scenes with one adapter and scores the known-layer axes. It
+takes the same `--config` and overrides as training, plus `--adapter` (omit it
+for the base model), `--seeds` and `--output`; pass `data.split=heldout` to
+evaluate the held-out scenes. The
 experiments and the data layout are in `archive/main-20261016:docs/research/layering_scene_family/`.
 
 ## Smoke

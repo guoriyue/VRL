@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from vrl.scripts.eval.layered_metrics import SCORE_KEYS, composite, score_layers
+from vrl.scripts.eval.layered_decompose_eval import SCORE_KEYS, composite, score_layers
 
 
 def _scene():

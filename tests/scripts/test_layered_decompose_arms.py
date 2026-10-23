@@ -43,8 +43,18 @@ def test_heun_integrates_a_constant_velocity_exactly_over_the_sigma_grid() -> No
     assert calls == [0, 1, 1, 2, 2, 3, 3, 4, 4]
 
 
-def test_base_arm_disables_the_adapter() -> None:
-    assert adapter_overrides(None, base=True) == ["model.use_lora=false"]
+def test_no_adapter_is_the_base_arm_of_the_layered_recipe() -> None:
+    from vrl.config.loading import load_config
+    from vrl.config.schema import parse_config
+
+    root = parse_config(
+        load_config(
+            "experiment/qwen_image_layered/offline_sft_layered_scenes",
+            overrides=adapter_overrides(None),
+        )
+    )
+
+    assert (root.model.use_lora, root.model.lora) == (False, None)
 
 
 def test_adapter_arm_takes_a_peft_directory_or_a_checkpoint_directory(tmp_path: Path) -> None:
@@ -55,18 +65,13 @@ def test_adapter_arm_takes_a_peft_directory_or_a_checkpoint_directory(tmp_path: 
     (checkpoint / "lora_weights").mkdir(parents=True)
     (checkpoint / "lora_weights" / "adapter_config.json").write_text("{}")
 
-    assert adapter_overrides(peft_dir, base=False) == [
+    assert adapter_overrides(peft_dir) == [
         "model.use_lora=true",
         f"model.lora.path={peft_dir}",
     ]
-    assert adapter_overrides(checkpoint, base=False) == [
+    assert adapter_overrides(checkpoint) == [
         "model.use_lora=true",
         f"model.lora.path={checkpoint / 'lora_weights'}",
     ]
     with pytest.raises(FileNotFoundError, match="PEFT adapter directory"):
-        adapter_overrides(tmp_path, base=False)
-
-
-def test_an_arm_is_exactly_one_of_adapter_or_base() -> None:
-    with pytest.raises(ValueError, match="exactly one"):
-        adapter_overrides(None, base=False)
+        adapter_overrides(tmp_path)
