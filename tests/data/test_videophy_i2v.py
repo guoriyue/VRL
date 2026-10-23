@@ -61,8 +61,6 @@ def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
             train_prompts=prompts,
             eval_prompts=prompts,
             data_root=tmp_path / "data",
-            width=4,
-            height=4,
         )
 
     if status == 503:

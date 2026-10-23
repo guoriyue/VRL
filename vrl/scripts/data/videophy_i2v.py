@@ -31,7 +31,7 @@ from typing import Any
 from urllib.error import HTTPError
 
 from vrl.utils.json_files import write_json, write_jsonl
-from vrl.utils.paths import RootedPaths, repo_root, user_path
+from vrl.utils.paths import RootedPaths, repo_root
 
 # (repo_id, csv_file, official split). Train captions live only in the training
 # CSV and held-out captions only in the test CSV, so both are always read.
@@ -39,6 +39,11 @@ DEFAULT_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("videophysics/videophy2_train", "videophy2_training.csv", "train"),
     ("videophysics/videophy2_test", "videophy2_test.csv", "test"),
 )
+# The caption splits dataset/videophy trains and evaluates on.
+TRAIN_PROMPTS = repo_root() / "manifests/videophy/train.txt"
+EVAL_PROMPTS = repo_root() / "manifests/videophy/eval.txt"
+# Wan 2.1 I2V 480p geometry; every reference frame is resized to it.
+WIDTH, HEIGHT = 832, 480
 DATASET_NAME = "videophy_i2v"
 DECODE_METHOD = "imageio_ffmpeg_first_frame"
 
@@ -85,43 +90,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument(
-        "--source",
-        action="append",
-        default=None,
-        metavar="REPO_ID:CSV_FILE:SPLIT",
-        help="Official VideoPhy CSV to draw videos from; repeatable. "
-        "Defaults to the VideoPhy2 training and test CSVs.",
-    )
-    parser.add_argument(
-        "--train-prompts", type=Path, default=repo_root() / "manifests/videophy/train.txt"
-    )
-    parser.add_argument(
-        "--eval-prompts", type=Path, default=repo_root() / "manifests/videophy/eval.txt"
-    )
     parser.add_argument("--data-root", type=Path, default=None)
-    parser.add_argument("--width", type=int, default=832)
-    parser.add_argument("--height", type=int, default=480)
     parser.add_argument(
         "--limit",
         type=int,
         default=0,
         help="If >0, cap each split to the first N prompts for local smoke preparation.",
     )
-    parser.add_argument(
-        "--keep-videos",
-        action="store_true",
-        help="Keep downloaded mp4 files under data/external instead of deleting them after frame extraction.",
-    )
     args = parser.parse_args(argv)
 
-    data_root = RootedPaths.data_root(args.data_root).root
-    specs: list[tuple[str, str, str]] = []
-    for spec in args.source or ():
-        parts = spec.split(":")
-        if len(parts) != 3 or not all(parts):
-            raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
-        specs.append((parts[0], parts[1], parts[2]))
     sources = [
         VideoPhySource(
             repo_id=repo_id,
@@ -131,17 +108,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 csv_file, repo_type="dataset"
             ),
         )
-        for repo_id, csv_file, split in (specs or DEFAULT_SOURCES)
+        for repo_id, csv_file, split in DEFAULT_SOURCES
     ]
     report = prepare_videophy_i2v_dataset(
         sources=sources,
-        train_prompts=user_path(args.train_prompts),
-        eval_prompts=user_path(args.eval_prompts),
-        data_root=data_root,
+        train_prompts=TRAIN_PROMPTS,
+        eval_prompts=EVAL_PROMPTS,
+        data_root=RootedPaths.data_root(args.data_root).root,
         limit=args.limit,
-        keep_videos=args.keep_videos,
-        width=args.width,
-        height=args.height,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
 
@@ -153,9 +127,6 @@ def prepare_videophy_i2v_dataset(
     eval_prompts: Path,
     data_root: Path,
     limit: int = 0,
-    keep_videos: bool = False,
-    width: int = 832,
-    height: int = 480,
 ) -> dict[str, Any]:
     """Build source-backed Wan I2V manifests from local VideoPhy CSVs."""
 
@@ -205,9 +176,6 @@ def prepare_videophy_i2v_dataset(
                     dataset_root=dataset_root,
                     image_root=image_root,
                     video_root=video_root,
-                    keep_videos=keep_videos,
-                    width=width,
-                    height=height,
                 )
                 break
             except HTTPError as error:
@@ -230,10 +198,6 @@ def prepare_videophy_i2v_dataset(
 
     report = {
         "dataset": DATASET_NAME,
-        "source_repo": ",".join(source.repo_id for source in sources),
-        "source_csv": ",".join(source.csv_file for source in sources),
-        "source_csv_path": ",".join(source.csv_path.as_posix() for source in sources),
-        "source_split": ",".join(source.split for source in sources),
         "sources": [
             {
                 "repo_id": source.repo_id,
@@ -251,8 +215,7 @@ def prepare_videophy_i2v_dataset(
         "train_manifest": train_manifest.as_posix(),
         "eval_manifest": eval_manifest.as_posix(),
         "reference_dir": image_root.as_posix(),
-        "kept_videos": keep_videos,
-        "image_size": {"width": width, "height": height},
+        "image_size": {"width": WIDTH, "height": HEIGHT},
         "selection_policy": (
             "Per caption, prefer rows with the highest semantic-adherence (sa) then "
             "physical-commonsense (pc) labels; "
@@ -358,12 +321,9 @@ def _materialize_selected_video(
     dataset_root: Path,
     image_root: Path,
     video_root: Path,
-    keep_videos: bool,
-    width: int,
-    height: int,
 ) -> dict[str, Any]:
     source_key = hashlib.sha256(item.source_row.video_url.encode()).hexdigest()[:16]
-    stem = f"{item.split_index:03d}-{source_key}-{width}x{height}"
+    stem = f"{item.split_index:03d}-{source_key}-{WIDTH}x{HEIGHT}"
     image_path = image_root / item.split / f"{stem}.png"
     video_path = video_root / item.split / f"{stem}.mp4"
     source_info_path = image_path.with_suffix(".source.json")
@@ -390,13 +350,12 @@ def _materialize_selected_video(
         finally:
             reader.close()
         Image.fromarray(frame).convert("RGB").save(image_path, format="PNG")
-        source_size = _resize_image(image_path, width=width, height=height)
+        source_size = _resize_image(image_path)
         write_json(source_info_path, {"source_size": list(source_size)})
     else:
         source_size = json.loads(source_info_path.read_text())["source_size"]
-        _resize_image(image_path, width=width, height=height)
-    if not keep_videos and video_path.exists():
-        video_path.unlink()
+        _resize_image(image_path)
+    video_path.unlink(missing_ok=True)
 
     metadata = {
         "source": "videophy",
@@ -405,10 +364,9 @@ def _materialize_selected_video(
         "source_split": item.source_row.source_split,
         "source_csv_row": item.source_row.row_index,
         "source_video_url": item.source_row.video_url,
-        "source_video": _relative_or_absolute(video_path, dataset_root) if keep_videos else "",
         "source_frame_index": 0,
         "source_frame_size": {"width": source_size[0], "height": source_size[1]},
-        "image_size": {"width": width, "height": height},
+        "image_size": {"width": WIDTH, "height": HEIGHT},
         "decode_method": DECODE_METHOD,
         "conditioning": "first_frame",
         "video_source": item.source_row.source,
@@ -425,14 +383,14 @@ def _materialize_selected_video(
     }
 
 
-def _resize_image(image_path: Path, *, width: int, height: int) -> tuple[int, int]:
+def _resize_image(image_path: Path) -> tuple[int, int]:
     from PIL import Image
 
     with Image.open(image_path) as image:
         rgb = image.convert("RGB")
         original_size = rgb.size
-        if width > 0 and height > 0 and rgb.size != (width, height):
-            rgb = rgb.resize((width, height), Image.Resampling.LANCZOS)
+        if rgb.size != (WIDTH, HEIGHT):
+            rgb = rgb.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
         rgb.save(image_path, format="PNG")
     return original_size
 
