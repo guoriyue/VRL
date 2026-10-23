@@ -21,9 +21,12 @@ generates square outputs, and a non-square reference would be resampled into
 one, which no consistency measure can then read.
 
 Binary images are written under ``data/external/local_edit`` (or
-``VRL_DATA_ROOT``); manifests hold paths relative to that root.
-Use ``--retain-reference-edits`` to save aligned reference edits for review.
-These are unverified dataset examples, not gold labels or training targets.
+``VRL_DATA_ROOT``); manifests hold paths relative to that root. The manifests
+go to ``manifests/local_edit``: ``train.jsonl`` / ``heldout.jsonl`` and their
+``*_plain_remove_add`` views (unhinted removal and addition rows), which
+``dataset/local_edit`` and ``dataset/local_edit_plain_remove_add`` read.
+
+    python -m vrl.scripts.data.local_edit
 """
 
 from __future__ import annotations
@@ -36,8 +39,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vrl.rewards.models.local_edit import HINT_SUFFIX
-from vrl.utils.artifacts import sha256_file
-from vrl.utils.paths import RootedPaths
+from vrl.utils.paths import RootedPaths, repo_root
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
 OMNIEDIT = "TIGER-Lab/OmniEdit-Filtered-1.2M"
@@ -47,6 +49,21 @@ OMNIEDIT_SHARD = (
     + "/resolve/main/data/train-{:05d}-of-00571.parquet"
 )
 OMNIEDIT_SHARDS = 571
+# The build that produced the committed manifests/local_edit/{train,heldout}.jsonl.
+PER_TASK = 400
+HELDOUT_PER_TASK = 40
+HINT_FRACTION = 0.5
+# Change-box area bounds, as a fraction of the frame.
+MIN_AREA, MAX_AREA = 0.01, 0.45
+# Shorter sources are skipped; the square crop keeps its native side (the
+# trainer samples at 512 and evaluation resamples the reference to its own
+# geometry).
+MIN_SIDE = 768
+SEED = 0
+SHARDS_PER_TASK = 2
+MANIFEST_DIR = repo_root() / "manifests" / "local_edit"
+# The rows where the base model fails by doing nothing: the training view.
+PLAIN_TASKS = ("removal", "addition")
 
 
 def task_shards(shards_per_task: int, stride: int = 20) -> dict[str, list[str]]:
@@ -86,17 +103,14 @@ def task_shards(shards_per_task: int, stride: int = 20) -> dict[str, list[str]]:
     return found
 
 
-def square_crop(image, size: int | None = None):
-    """Centre square of ``image``; ``size`` resizes the result (same crop for source and edit)."""
-
-    from PIL import Image
+def square_crop(image):
+    """Centre square of ``image`` (the same crop for source and edit)."""
 
     w, h = image.size
     side = min(w, h)
-    out = image.crop(
+    return image.crop(
         ((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side)
     )
-    return out.resize((size, size), Image.Resampling.LANCZOS) if size and side != size else out
 
 
 def change_box(
@@ -141,39 +155,21 @@ def draw_hint(image, box: Sequence[float]):
     return out
 
 
-def rows_from_omniedit(
-    out: Path,
-    root: Path,
-    per_task: int,
-    hint_fraction: float,
-    min_area: float,
-    max_area: float,
-    min_side: int,
-    size: int,
-    seed: int,
-    shards_per_task: int = 2,
-    *,
-    retain_reference_edits: bool = False,
-) -> list[dict]:
-    """Stream OmniEdit until every local task has ``per_task`` rows; write images, return manifest rows.
-
-    Sources shorter than ``min_side`` are skipped; ``size`` > 0 resizes the square
-    crop (0 keeps the native side -- the trainer samples at 512 and evaluation
-    resamples the reference to its own geometry, as it did for 442 px COCO crops).
-    """
+def rows_from_omniedit(root: Path) -> list[dict]:
+    """Stream OmniEdit until every local task has ``PER_TASK`` rows; write images under
+    ``root/local_edit``, return manifest rows."""
 
     from datasets import load_dataset
     from PIL import Image
 
-    rng = random.Random(seed)
+    out = root / "local_edit"
+    rng = random.Random(SEED)
     (out / "img").mkdir(parents=True, exist_ok=True)
     (out / "hint").mkdir(parents=True, exist_ok=True)
-    if retain_reference_edits:
-        (out / "reference_edits").mkdir(parents=True, exist_ok=True)
     counts = dict.fromkeys(LOCAL_TASKS, 0)
     rows: list[dict] = []
     seen = 0
-    shards = task_shards(shards_per_task)
+    shards = task_shards(SHARDS_PER_TASK)
     print(
         "shards per task:",
         {k: [u.rsplit("/", 1)[1] for u in v] for k, v in shards.items()},
@@ -196,7 +192,7 @@ def rows_from_omniedit(
                 v if isinstance(v, Image.Image) else Image.open(io.BytesIO(v["bytes"]))
                 for v in (example["src_img"], example["edited_img"])
             )
-            if min(source.size) < min_side:
+            if min(source.size) < MIN_SIDE:
                 continue
             # The reference edit is stored at its own resolution (the source is the
             # 768-side copy); bring it onto the source's grid before differencing.
@@ -204,16 +200,16 @@ def rows_from_omniedit(
                 if abs(source.size[0] / source.size[1] - edited.size[0] / edited.size[1]) > 0.1:
                     continue
                 edited = edited.resize(source.size, Image.Resampling.LANCZOS)
-            source, edited = square_crop(source, size or None), square_crop(edited, size or None)
+            source, edited = square_crop(source), square_crop(edited)
             box = change_box(source, edited)
             if box is None:
                 continue
             area = (box[2] - box[0]) * (box[3] - box[1])
-            if not min_area <= area <= max_area:
+            if not MIN_AREA <= area <= MAX_AREA:
                 continue
             stem = f"{task}_{counts[task]:04d}"
             source.convert("RGB").save(out / "img" / f"{stem}.jpg", quality=94)
-            hint = rng.random() < hint_fraction
+            hint = rng.random() < HINT_FRACTION
             if hint:
                 draw_hint(source.convert("RGB"), box).save(
                     out / "hint" / f"{stem}.jpg", quality=94
@@ -222,14 +218,6 @@ def rows_from_omniedit(
             provenance = {}
             if example.get("omni_edit_id"):
                 provenance["upstream_id"] = str(example["omni_edit_id"])
-            if retain_reference_edits:
-                reference_path = out / "reference_edits" / f"{stem}.png"
-                edited.convert("RGB").save(reference_path)
-                provenance.update(
-                    reference_edit=str(reference_path.relative_to(root)),
-                    reference_edit_sha256=sha256_file(reference_path),
-                    reference_edit_review_status="unreviewed",
-                )
             rows.append(
                 {
                     "prompt": prompts[0].strip() + (HINT_SUFFIX if hint else ""),
@@ -248,11 +236,11 @@ def rows_from_omniedit(
                 }
             )
             counts[task] += 1
-            if counts[task] >= per_task:
+            if counts[task] >= PER_TASK:
                 break
-    short = {k: v for k, v in counts.items() if v < per_task}
+    short = {k: v for k, v in counts.items() if v < PER_TASK}
     if short:
-        print(f"short of {per_task} for {short}; raise --shards-per-task", flush=True)
+        print(f"short of {PER_TASK} for {short}; raise SHARDS_PER_TASK", flush=True)
     return rows
 
 
@@ -273,46 +261,24 @@ def split_heldout(rows: list[dict], per_task: int, seed: int) -> tuple[list[dict
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--per-task", type=int, default=400)
-    parser.add_argument("--heldout-per-task", type=int, default=40)
-    parser.add_argument("--hint-fraction", type=float, default=0.5)
-    parser.add_argument("--min-area", type=float, default=0.01)
-    parser.add_argument("--max-area", type=float, default=0.45)
-    parser.add_argument("--min-side", type=int, default=768)
-    parser.add_argument(
-        "--size", type=int, default=0, help="resize the square crop; 0 keeps the native side"
-    )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--shards-per-task", type=int, default=2)
-    parser.add_argument(
-        "--retain-reference-edits",
-        action="store_true",
-        help="save aligned dataset edits for quality review, not as verified training targets",
-    )
-    parser.add_argument("--manifest-dir", type=Path, default=Path("manifests/local_edit"))
-    args = parser.parse_args(argv)
-    root = RootedPaths.data_root().root
-    out = root / "local_edit"
-    rows = rows_from_omniedit(
-        out,
-        root,
-        args.per_task,
-        args.hint_fraction,
-        args.min_area,
-        args.max_area,
-        args.min_side,
-        args.size,
-        args.seed,
-        args.shards_per_task,
-        retain_reference_edits=args.retain_reference_edits,
-    )
-    train, held = split_heldout(rows, args.heldout_per_task, args.seed)
-    args.manifest_dir.mkdir(parents=True, exist_ok=True)
+    argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args(argv)
+    rows = rows_from_omniedit(RootedPaths.data_root().root)
+    train, held = split_heldout(rows, HELDOUT_PER_TASK, SEED)
+    MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     for name, part in (("train", train), ("heldout", held)):
-        with open(args.manifest_dir / f"{name}.jsonl", "w", encoding="utf-8") as handle:
-            for row in part:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        plain = [
+            row
+            for row in part
+            if not row["metadata"]["local_edit"]["hint"]
+            and row["metadata"]["local_edit"]["task"] in PLAIN_TASKS
+        ]
+        for path, view in (
+            (MANIFEST_DIR / f"{name}.jsonl", part),
+            (MANIFEST_DIR / f"{name}_plain_remove_add.jsonl", plain),
+        ):
+            with open(path, "w", encoding="utf-8") as handle:
+                for row in view:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(
         f"train {len(train)} heldout {len(held)} (hint rows: {sum(r['metadata']['local_edit']['hint'] for r in rows)})"
     )

@@ -41,8 +41,8 @@ on 2026-10-16; recover it from commit `47f276be7` to rerun the comparison.
 `experiment/qwen_image_21/online_grpo_local_edit` composes
 `model/qwen_image_21/lora_wide`, `reward/editreward_http`, and
 `dataset/local_edit_plain_remove_add`. The dataset is the unhinted removal and
-addition rows of `manifests/local_edit/` (built by
-`vrl/scripts/data/local_edit.py`), with a matching held-out subset; source
+addition rows of `manifests/local_edit/` (written with the full manifests by
+`python -m vrl.scripts.data.local_edit`), with a matching held-out subset; source
 images live under the artifact data root and must be provisioned separately.
 The reward is the EditReward judge alone, served by an operator-run service;
 the experiment points `reward.inference.editreward.endpoint` at port 18316
