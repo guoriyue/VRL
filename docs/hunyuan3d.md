@@ -33,6 +33,9 @@ South Korea; `vrl/models/families/hunyuan3d/NOTICE` carries the required notice.
   white). No mesh library; the frames are what the reward sees. Mesh export
   (marching cubes) is not provided.
 - `torch.compile` is off: MoE routing changes per batch.
+- The ShapeVAE exposes no `vae_decode` memory target (tiling and slicing are
+  image-VAE knobs), so a config for this family leaves `model.memory.vae_decode`
+  unset.
 
 ## Bundled experiments
 

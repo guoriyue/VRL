@@ -305,6 +305,7 @@ def test_hunyuan3d_from_build_runs_the_released_layout_end_to_end(tmp_path) -> N
     assert not any(p.requires_grad for p in model.pipeline.vae.parameters())
     assert not any(p.requires_grad for p in model.pipeline.conditioner.parameters())
     assert model.pipeline.vae.scale_factor == 1.25
+    assert model.generation_memory_targets() == {}
 
     encoded = model.encode_prompt(
         "unused text", None, reference_image=_cutout(), guidance_scale=5.0

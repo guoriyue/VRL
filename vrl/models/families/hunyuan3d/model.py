@@ -324,6 +324,12 @@ class Hunyuan3DPipelineModel(DiffusersPipelineModelBase, Hunyuan3DModel):
         self._decode_height = 256
         self._decode_width = 256
 
+    def generation_memory_targets(self) -> dict[str, Any]:
+        """No VAE decode-memory target: the ShapeVAE is not an image VAE (no tiling or
+        slicing); ``decode_latents`` already queries the occupancy grid in chunks."""
+
+        return {}
+
     @classmethod
     def from_build(cls, build: ModelBuild) -> Hunyuan3DPipelineModel:
         """Load the shape stage's three modules and apply the shared freeze / placement rule.
