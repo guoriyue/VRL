@@ -121,6 +121,17 @@
     "scheduler_config_path": "scheduler/scheduler_config.json",
     "scheduler_repo_id": "black-forest-labs/FLUX.1-dev"
   },
+  "hunyuan3d": {
+    "config": {
+      "_class_name": "vrl.models.families.hunyuan3d.model:Hunyuan3DFlowScheduler",
+      "num_train_timesteps": 1000
+    },
+    "model_repo_id": "tencent/Hunyuan3D-2.1",
+    "revision": "0b94677654c57bb9a6b6845cd7b704ccf551d327",
+    "scheduler_config_path": "hunyuan3d-dit-v2-1/config.yaml",
+    "scheduler_repo_id": "tencent/Hunyuan3D-2.1",
+    "note": "Code-owned: the released checkpoint ships no diffusers scheduler config, only the `scheduler:` section of the DiT yaml (num_train_timesteps 1000) read by upstream's reversed-clock FlowMatchEuler copy; Hunyuan3DFlowScheduler is that uniform grid on the shared sigma convention."
+  },
   "krea2": {
     "config": {
       "_class_name": "FlowMatchEulerDiscreteScheduler",

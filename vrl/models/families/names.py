@@ -16,6 +16,7 @@ _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "qwen_image_21": ("qwen-image-2.1", "qwen_image_2_1"),
     "moss_image": ("moss-image",),
     "krea2": ("krea-2", "krea_2"),
+    "hunyuan3d": ("hunyuan3d_2_1", "hunyuan3d-2.1", "hunyuan3d_shape"),
     "sana": ("sana_1600m",),
     "wan_2_1": ("wan",),
     "wan_2_1_i2v": ("wan_i2v",),

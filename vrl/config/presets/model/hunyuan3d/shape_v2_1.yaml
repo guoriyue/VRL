@@ -1,0 +1,32 @@
+# Hunyuan3D 2.1 shape stage (Tencent, 3.3B MoE DiT over 4096x64 VecSet latents,
+# DINOv2-L image conditioner, ShapeVAE decoder) — checkpoint, LoRA, compile.
+# The paint (texture) stage is not part of this family. Sampling: the rendered
+# view canvas and count live under sampling/ (height/width/num_frames).
+#
+# License: Tencent Hunyuan 3D 2.1 Community License, whose territory EXCLUDES the
+# European Union, the United Kingdom and South Korea; redistribution carries the
+# notice in vrl/models/families/hunyuan3d/NOTICE. The repo is not gated.
+#
+# Inputs are RGBA cutouts (the alpha channel is the object mask upstream recenters
+# on); feed a plain RGB photo and the whole frame is treated as the object.
+model:
+  family: hunyuan3d
+  path: tencent/Hunyuan3D-2.1
+  revision: 0b94677654c57bb9a6b6845cd7b704ccf551d327
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    # Self- and cross-attention projections of the DiT blocks (upstream names);
+    # the MoE experts and the skip-connection linears stay frozen.
+    target_modules:
+      - to_q
+      - to_k
+      - to_v
+      - out_proj
+
+  torch_compile:
+    # The last six blocks route tokens through a top-2 MoE; the expert assignment
+    # changes per batch, so a compiled graph would retrace every step.
+    enable: false

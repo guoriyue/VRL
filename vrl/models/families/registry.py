@@ -593,6 +593,27 @@ _register_model_family(
 
 _register_model_family(
     _full_sequence_entry(
+        family="hunyuan3d",
+        task="i23d",
+        model_section_cls="vrl.config.model_schema:ModelSection",
+        # ``num_frames`` is the rendered view count; ``fps`` is unused.
+        sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
+        executor_cls="vrl.models.families.hunyuan3d.runtime:Hunyuan3DBatchExecutor",
+        # Hunyuan3D 2.1 shape stage: the vendored 3.3B MoE DiT over VecSet latents,
+        # conditioned on a DINOv2 image embedding, decoded to rendered views. The
+        # released checkpoint is yaml + ckpt, not a diffusers layout, so both
+        # classes load themselves (no transformer_classname).
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.hunyuan3d.model:Hunyuan3DPipelineModel",
+            replay_cls="vrl.models.families.hunyuan3d.model:Hunyuan3DModel",
+        ),
+        # MoE routing is data dependent; torch.compile would retrace per batch.
+        runtime_capabilities=GenerationRuntimeCapabilities(supports_torch_compile=False),
+    ),
+)
+
+_register_model_family(
+    _full_sequence_entry(
         family="vdn_h3",
         task="t2v",
         model_section_cls="vrl.models.families.vdn_h3.config:VDNH3ModelSection",

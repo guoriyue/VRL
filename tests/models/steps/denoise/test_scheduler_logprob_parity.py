@@ -68,10 +68,17 @@ def _scheduler_for(family: str):
     diffusers = pytest.importorskip("diffusers")
     config = dict(_SCHEDULER_FIXTURES[family]["config"])
     class_name = config.pop("_class_name")
-    scheduler_cls = getattr(diffusers, class_name, None)
+    if ":" in class_name:
+        # A code-owned scheduler (Hunyuan3D): the fixture names the production class by
+        # import path, as the registry grammar does.
+        from vrl.models.loader import resolve_component_class
+
+        scheduler_cls = resolve_component_class(class_name)
+    else:
+        scheduler_cls = getattr(diffusers, class_name, None)
     if scheduler_cls is None:
-        # A vendored scheduler (MOSS-Image): the registry names the class the
-        # production replay loads, and the fixture's ``_class_name`` must be it.
+        # A vendored scheduler whose config file keeps its upstream class name
+        # (MOSS-Image): the registry names the class the production replay loads.
         from vrl.utils.config import import_from_path
 
         scheduler_cls = import_from_path(FAMILY_REGISTRY[family].family_build.scheduler_classname)
@@ -112,10 +119,17 @@ def test_scheduler_fixtures_have_complete_pinned_provenance() -> None:
         assert fixture["model_repo_id"] in model_repos[family]
         assert re.fullmatch(r"[^/]+/[^/]+", str(fixture["scheduler_repo_id"]))
         assert re.fullmatch(r"[0-9a-f]{40}", str(fixture["revision"]))
-        assert fixture["scheduler_config_path"] == "scheduler/scheduler_config.json"
+        config_path = str(fixture["scheduler_config_path"])
+        assert config_path.endswith((".json", ".yaml"))
         assert isinstance(fixture["config"], dict)
         assert "_class_name" in fixture["config"]
-        if fixture["scheduler_repo_id"] != fixture["model_repo_id"]:
+        # Anything but the standard diffusers layout from the model's own repo
+        # explains itself: a scheduler from another repo, or a code-owned class
+        # mirroring a config the checkpoint ships in a non-diffusers file.
+        if (
+            fixture["scheduler_repo_id"] != fixture["model_repo_id"]
+            or config_path != "scheduler/scheduler_config.json"
+        ):
             assert isinstance(fixture.get("note"), str)
 
 

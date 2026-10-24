@@ -27,10 +27,12 @@ GenerationRegime = Literal["full_sequence"]
 # set to the wrong "image" default (the skew this centralizes away). This is NOT
 # a form-4 registry re-derivation: the registry stores only each family's task
 # literal, never these modality / task_type mappings.
-Task = Literal["t2i", "t2v", "t2w", "i2v", "v2w"]
+Task = Literal["t2i", "t2v", "t2w", "i2v", "v2w", "i23d"]
 
 # i2v is image-conditioned but still emits video frames, so it scores as video.
-VIDEO_TASKS: frozenset[str] = frozenset({"t2v", "i2v", "v2w", "t2w"})
+# i23d (image to 3D shape) decodes its shape into a sequence of rendered views,
+# which the frame-based rewards consume, so it scores as video too.
+VIDEO_TASKS: frozenset[str] = frozenset({"t2v", "i2v", "v2w", "t2w", "i23d"})
 
 _TASK_TYPE_BY_TASK: dict[str, str] = {
     "t2i": "text_to_image",
@@ -38,6 +40,7 @@ _TASK_TYPE_BY_TASK: dict[str, str] = {
     "t2w": "text_to_video",
     "i2v": "image_to_video",
     "v2w": "video2world",
+    "i23d": "image_to_3d",
 }
 
 

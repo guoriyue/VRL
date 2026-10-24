@@ -76,6 +76,12 @@ TINY_QWEN21_CONTEXT_DIM = 16
 TINY_MOSS_LATENT_SHAPE = (2, 16, 2, 2)
 TINY_MOSS_TEXT_DIM = 16
 
+# Hunyuan3D feeds a SET of latent tokens [B, N, C] (no spatial grid) conditioned on
+# DINOv2 tokens [B, CONTEXT_LEN, CONTEXT_DIM].
+TINY_HUNYUAN3D_LATENT_SHAPE = (2, 16, 4)
+TINY_HUNYUAN3D_CONTEXT_DIM = 16
+TINY_HUNYUAN3D_CONTEXT_LEN = 5
+
 # Krea 2 feeds PACKED latents [B, seq, C*4] with C=4 -> 16 in_channels, and a STACK
 # of tapped text-encoder layers per token: [B, S, TINY_KREA2_TEXT_LAYERS, TEXT_DIM].
 TINY_KREA2_IN_CHANNELS = 16
@@ -232,6 +238,28 @@ _TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
             num_layerwise_text_blocks=1,
             num_refiner_text_blocks=1,
             axes_dims_rope=(2, 2, 4),
+        ),
+    ),
+    # Vendored (not a diffusers export), hence the import path. head_dim must be a
+    # multiple of 8 (hidden 32 / 4 heads); depth 4 keeps the U-Net skip links and
+    # puts a top-1 MoE of two experts in the last two blocks; qk_norm / no bias /
+    # no attention pooling as the released config.
+    "hunyuan3d": (
+        "vrl.models.families.hunyuan3d.upstream:HunYuanDiTPlain",
+        dict(
+            input_size=TINY_HUNYUAN3D_LATENT_SHAPE[1],
+            in_channels=TINY_HUNYUAN3D_LATENT_SHAPE[2],
+            hidden_size=32,
+            context_dim=TINY_HUNYUAN3D_CONTEXT_DIM,
+            depth=4,
+            num_heads=4,
+            qk_norm=True,
+            text_len=TINY_HUNYUAN3D_CONTEXT_LEN,
+            use_attention_pooling=False,
+            qkv_bias=False,
+            num_moe_layers=2,
+            num_experts=2,
+            moe_top_k=1,
         ),
     ),
     # Vendored (not a diffusers export), hence the import path. head_dim must be
