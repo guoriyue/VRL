@@ -1,0 +1,56 @@
+# Hunyuan3D 2.1 shape GRPO — single-GPU smoke recipe (validation + naive profiling).
+#
+# Image-to-shape on the released example cutouts: four shaded orthographic views
+# of each sampled shape are scored by DINOv2 similarity against the input image
+# (per-view mean only; the preset's temporal term compares view-to-view change
+# against a still target and is switched off). Proves the family runs
+# encode -> prepare -> denoise -> occupancy decode -> render -> reward -> LoRA
+# grad on one 32 GB card. A shaded silhouette against an RGB photo is a coarse
+# shape anchor, not a quality judge; record the reward curve before trusting it.
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/hunyuan3d/online_grpo_shape_dino_smoke_single_gpu
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/hunyuan3d/shape_v2_1
+  - /sampling/denoise/10_step_cfg_5_0
+  - /reward/target_dino_similarity
+  - /dataset/hunyuan3d_example_objects
+  - _self_
+
+
+sampling:
+  # Render canvas and view count of the decoded shape (the latent set has no
+  # spatial size of its own).
+  height: 256
+  width: 256
+  num_frames: 4
+
+reward:
+  kwargs:
+    target_dino_similarity:
+      worker_config:
+        num_frames: 4
+        sequence_weight: 1.0
+        final_weight: 0.0
+        temporal_weight: 0.0
+
+actor:
+  optim:
+    lr: 1.0e-4
+  prompts_per_collection: 2
+  gradient_checkpointing: true
+
+rollout:
+  n_samples_per_prompt: 4
+  prompts_per_batch: 2
+  samples_per_generation_batch: 2
+
+trainer:
+  output_dir: outputs/hunyuan3d_shape_dino_grpo_smoke_single_gpu
+  total_epochs: 1
+  save_freq: 9999
+  profile: true
+  debug:
+    first_step: true

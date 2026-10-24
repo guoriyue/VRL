@@ -1,0 +1,4 @@
+# Shared diffusion denoise preset: 10 steps, CFG 5.0 (Hunyuan3D 2.1's released guidance).
+sampling:
+  num_steps: 10
+  guidance_scale: 5.0

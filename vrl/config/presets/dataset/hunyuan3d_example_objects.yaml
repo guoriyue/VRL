@@ -1,0 +1,14 @@
+# Hunyuan3D 2.1's released example objects: 108 RGBA cutouts from the upstream
+# repository's assets/example_images, each row conditioning on one image and
+# scoring against the same image (reference_image == target_image). Images live
+# under the data root (data/external/hunyuan3d/example_images); copy them from
+# github.com/Tencent-Hunyuan/Hunyuan3D-2.1 assets/example_images. The prompt
+# text names the file and is not a model input.
+data:
+  loader: prompt_manifest
+  manifest: manifests/hunyuan3d/example_objects.jsonl
+  eval_manifest: manifests/hunyuan3d/example_objects_heldout.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement
