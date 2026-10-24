@@ -252,6 +252,9 @@ def test_all_experiments_load_and_validate() -> None:
         raw_model = OmegaConf.to_container(cfg.model, resolve=True)
         typed_model = root.model
         assert isinstance(raw_model, dict)
+        if raw_model.get("offload") is True:
+            # ``offload: true`` spells the default offload section.
+            raw_model["offload"] = {}
         assert typed_model is not None
         typed_payload = typed_model.model_dump(exclude_unset=True)
         assert {key: typed_payload[key] for key in raw_model} == raw_model

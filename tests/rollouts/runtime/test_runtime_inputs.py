@@ -236,6 +236,7 @@ def test_sana_launch_config_carries_parameter_and_rollout_precision() -> None:
     assert model_build["rollout"] == {
         "prompt_encoder_dtype": "bfloat16",
         "base_weight_sync": False,
+        "offload": None,
     }
     assert pickle.loads(pickle.dumps(model_build)) == model_build
 
