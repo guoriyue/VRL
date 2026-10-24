@@ -935,7 +935,6 @@ class OnlineTrainer:
         iteration = await self.rollout_schedule.next_iteration(
             prompts,
             group_size=self.config.batch_config.n_samples_per_prompt,
-            runtime_debug=bool(self.config.debug.first_step and self.state.step == 0),
             next_prompts=next_prompts,
         )
         return self._training_batch(iteration)
@@ -1336,7 +1335,6 @@ class OnlineTrainer:
                 iteration = await self.rollout_schedule.next_iteration(
                     prompts,
                     group_size=batch_config.n_samples_per_prompt,
-                    runtime_debug=bool(self.config.debug.first_step and self.state.step == 0),
                     next_prompts=lookahead,
                 )
                 if batch_config.host_memory_budget_fraction > 0:

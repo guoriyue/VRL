@@ -162,7 +162,6 @@ def _producer(
     max_stale: int = 0,
     prompts: list[str] | None = None,
     group_size: int = 2,
-    runtime_debug: bool = False,
     max_inflight: int = 1,
     poll_interval_s: float = 0.001,
     fail_fast_errors: int = 3,
@@ -180,7 +179,6 @@ def _producer(
     producer.set_prompt_batch(
         prompt_list,
         group_size=group_size,
-        runtime_debug=runtime_debug,
     )
     return producer
 
@@ -364,7 +362,6 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry(
         max_stale=1,
         prompts=["p0", "p1"],
         group_size=3,
-        runtime_debug=True,
         poll_interval_s=60.0,
     )
     prompt_batch = producer.prompt_batch
@@ -381,7 +378,6 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry(
         assert _attempts(stack.bench) == {"p0": 2, "p1": 1}
         assert {request.policy_version for request in requests} == {1}
         assert {request.samples_per_prompt for request in requests} == {3}
-        assert {request.runtime_debug for request in requests} == {True}
         assert producer.state.error_count == 1
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 2
@@ -410,7 +406,6 @@ async def test_prompt_batch_rejects_replacing_incomplete_work(monkeypatch, tmp_p
             producer.set_prompt_batch(
                 ["p1"],
                 group_size=2,
-                runtime_debug=False,
             )
     finally:
         gate.allow.set()
@@ -429,7 +424,6 @@ async def test_prompt_batch_rejects_replacing_unconsumed_ready_work(monkeypatch,
             producer.set_prompt_batch(
                 ["p1"],
                 group_size=2,
-                runtime_debug=False,
             )
     finally:
         await producer.stop()
@@ -634,7 +628,6 @@ def _prompt_batch(
         policy_version=version,
         prompts=tuple(f"p{slot}" for slot in range(len(results))),
         group_size=2,
-        runtime_debug=False,
         pending_slots=deque(slot for slot, item in enumerate(results) if item is None),
         pending_since={},
         results=results,
@@ -751,7 +744,7 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
         producer.release_results()
         assert prompt_batch.results == [None, None]
         assert prompt_batch.consumed is True
-        producer.set_prompt_batch(["next"], group_size=2, runtime_debug=False)
+        producer.set_prompt_batch(["next"], group_size=2)
         assert producer.prompt_batch.results == [None]
     finally:
         demand.cancel()

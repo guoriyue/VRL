@@ -86,11 +86,9 @@ class WorkerMemoryParkingSnapshot:
 class BatchMemoryReading:
     """Measured CUDA memory footprint of one executed generation batch."""
 
-    # display/provenance-only: identifies the measured batch width in runtime
-    # debug telemetry; the source batch is no longer available after aggregation.
+    # The measured batch width; the source batch is gone after aggregation.
     sample_count: int
-    # display/provenance-only: captures the unrepeatable allocator baseline used
-    # to interpret phase peaks in runtime debug telemetry.
+    # The allocator baseline the phase peaks are read against.
     baseline_allocated_bytes: int
     denoise_peak_bytes: int
     decode_peak_bytes: int

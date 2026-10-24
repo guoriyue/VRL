@@ -16,7 +16,7 @@ class _Owned:
         self.groups = groups
         self.seen: list[dict] = []
 
-    async def collect(self, collector, *, group_size, runtime_debug, policy_version):
+    async def collect(self, collector, *, group_size, policy_version):
         self.seen.append({"collector": collector, "group_size": group_size})
         return [
             RolloutBatch(
@@ -40,7 +40,6 @@ async def test_owned_items_collect_themselves_and_get_disjoint_group_ids(
     batches = await bench.collector.prepare_training_batches(
         prompts=[first, second],
         group_size=3,
-        runtime_debug=False,
         policy_version=7,
     )
 
@@ -59,12 +58,11 @@ async def test_owned_items_do_not_mix_with_plain_prompts(monkeypatch, tmp_path) 
         await collector.prepare_training_batches(
             prompts=[_Owned(1), "plain"],
             group_size=1,
-            runtime_debug=False,
             policy_version=None,
         )
     with pytest.raises(ValueError, match="prepare_training_batches"):
         list(
             collector.build_generation_requests(
-                prompts=[_Owned(1)], group_size=1, runtime_debug=False, policy_version=None
+                prompts=[_Owned(1)], group_size=1, policy_version=None
             )
         )

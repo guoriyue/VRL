@@ -50,6 +50,9 @@ plan-time binding、dynamic worker capacity 与 inflight count；它不等待 Ob
 
 ### Typed timing
 
+（已作废：`schedule` 参数随 runtime_debug 通道一起删除，见 commit
+"rollouts: delete the runtime_debug channel"。下文保留原计划。）
+
 当前 `schedule: list[dict[str, Any]]` 是 closed finite bag，keys 只有：
 
 ```text

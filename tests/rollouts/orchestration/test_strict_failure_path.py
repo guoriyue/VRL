@@ -78,13 +78,12 @@ async def test_strict_schedule_collects_and_syncs(monkeypatch, tmp_path) -> None
     trainer = trainer_side(bench)
     schedule = StrictOnPolicyRolloutSchedule(lifecycle=trainer.coordinator(bench))
 
-    iteration = await schedule.next_iteration(["p0", "p1"], group_size=2, runtime_debug=True)
+    iteration = await schedule.next_iteration(["p0", "p1"], group_size=2)
     await schedule.after_train_step()
 
     request = bench.trace.requests[0]
     assert request.prompts == ["p0", "p1"]
     assert request.policy_version == 1
-    assert request.runtime_debug is True
     assert len(iteration.batches) == 2
     assert sum(batch.rewards.numel() for batch in iteration.batches) == 4
     assert bench.trace.events.count("update_weights") == 2

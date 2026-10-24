@@ -77,7 +77,6 @@ class ContinuousRolloutSchedule:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         # Strategy/FSDP export and the CPU snapshot happen on the trainer
@@ -87,7 +86,6 @@ class ContinuousRolloutSchedule:
         return await self._rollout_thread.next_iteration(
             prompts,
             group_size=group_size,
-            runtime_debug=runtime_debug,
             initial_weights=initial_weights,
             next_prompts=next_prompts,
         )

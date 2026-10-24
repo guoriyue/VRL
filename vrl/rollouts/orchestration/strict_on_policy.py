@@ -26,7 +26,6 @@ class StrictOnPolicyRolloutSchedule:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         del next_prompts
@@ -46,7 +45,6 @@ class StrictOnPolicyRolloutSchedule:
                 batches = await self.lifecycle.collector.prepare_training_batches(
                     prompts=list(prompts),
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                     policy_version=policy_version,
                 )
 

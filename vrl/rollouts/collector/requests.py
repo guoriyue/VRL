@@ -47,7 +47,6 @@ class GenerationRequestBuilder:
         *,
         metadata: Mapping[str, Any] | None = None,
         request_overrides: Mapping[str, Any] | None = None,
-        runtime_debug: bool = False,
         policy_version: int | None = None,
         reward_media_refs: bool = False,
     ) -> CollectorRequest:
@@ -113,7 +112,6 @@ class GenerationRequestBuilder:
             trajectory_storage=self.config.trajectory_storage,
             denoise=self.config.denoise,
             reward_media_refs=reward_media_refs,
-            runtime_debug=runtime_debug,
             policy_version=policy_version,
         )
         return CollectorRequest(

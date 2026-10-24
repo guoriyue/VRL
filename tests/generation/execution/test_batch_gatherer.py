@@ -77,7 +77,6 @@ def test_diffusion_chunk_gatherer_gathers_prompt_major_without_model_object() ->
     assert output.output.device.type == "cpu"
     assert output.trajectory is not None
     assert output.trajectory.context == context
-    assert output.runtime_debug is None
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["denoise"].length == 2

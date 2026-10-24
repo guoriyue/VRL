@@ -36,7 +36,6 @@ from vrl.utils.deadline import require_timeout
 from vrl.utils.stats import Recorded, gauge, recording
 
 _CPU = torch.device("cpu")
-_OBSERVABILITY_LOG_INTERVAL_S = 30.0
 _STARVATION_LOG_GAP_S = 10.0
 _RETRY_BACKOFF_MAX_S = 0.05
 
@@ -66,7 +65,6 @@ class ContinuousRolloutProducer:
         self._running_tasks: dict[asyncio.Task[Recorded[list[RolloutBatch]]], int] = {}
         self.prompt_batch: PromptBatch | None = None
         self._last_tick_at: float | None = None
-        self._last_observability_log_at = 0.0
 
     @property
     def _has_pending_work(self) -> bool:
@@ -104,7 +102,6 @@ class ContinuousRolloutProducer:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool,
     ) -> None:
         """Install one finite prompt batch and freeze its collection inputs.
 
@@ -132,7 +129,6 @@ class ContinuousRolloutProducer:
             policy_version=self.lifecycle.current_policy_version(),
             prompts=prompt_batch,
             group_size=group_size,
-            runtime_debug=bool(runtime_debug),
             pending_slots=deque(range(len(prompt_batch))),
             pending_since={slot: installed_at for slot in range(len(prompt_batch))},
             results=[None] * len(prompt_batch),
@@ -349,7 +345,6 @@ class ContinuousRolloutProducer:
             batches = await self.lifecycle.collector.prepare_training_batches(
                 prompts=[prompt_batch.prompts[slot]],
                 group_size=prompt_batch.group_size,
-                runtime_debug=prompt_batch.runtime_debug,
                 policy_version=prompt_batch.policy_version,
             )
             # Per-item stage views with gauge (max-on-merge) reduction: summing
@@ -385,11 +380,6 @@ class ContinuousRolloutProducer:
                     ) from exc
                 continue
             except StaleSlotDiscard as exc:
-                if prompt_batch.runtime_debug:
-                    logger.info(
-                        "continuous rollout lost its fixed policy-version slot: %s",
-                        exc,
-                    )
                 raise RuntimeError(
                     "continuous prompt batch lost its fixed policy-version "
                     f"slot (slot={slot}, version={prompt_batch.policy_version})",
@@ -469,19 +459,10 @@ class ContinuousRolloutProducer:
         gap_s = now - last_tick_at
         self.state.last_tick_gap_s = gap_s
         self.state.max_tick_gap_s = max(self.state.max_tick_gap_s, gap_s)
-        prompt_batch = self.prompt_batch
-        should_log_debug = (
-            prompt_batch is not None
-            and prompt_batch.runtime_debug
-            and now - self._last_observability_log_at >= _OBSERVABILITY_LOG_INTERVAL_S
-        )
-        should_log_starvation = gap_s >= _STARVATION_LOG_GAP_S
-        if not should_log_debug and not should_log_starvation:
+        if gap_s < _STARVATION_LOG_GAP_S:
             return
-
-        self._last_observability_log_at = now
-        log_fn = logger.warning if should_log_starvation else logger.info
-        log_fn(
+        prompt_batch = self.prompt_batch
+        logger.warning(
             "continuous rollout producer tick: gap_s=%.3f max_gap_s=%.3f "
             "inflight=%d queue_size=%d submitted=%d completed=%d paused=%s errors=%d",
             gap_s,

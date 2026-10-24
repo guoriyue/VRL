@@ -566,28 +566,6 @@ async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch(
 
 
 @pytest.mark.asyncio
-async def test_prefetch_freezes_runtime_debug_at_generation_time(monkeypatch, tmp_path) -> None:
-    bench = _bench(monkeypatch, tmp_path)
-    schedule = _build(_continuous_config(), bench)
-
-    try:
-        await schedule.next_iteration(
-            ["p0"],
-            group_size=1,
-            runtime_debug=True,
-            next_prompts=["p1"],
-        )
-        await schedule.next_iteration(
-            ["p1"],
-            group_size=1,
-            runtime_debug=False,
-        )
-        assert [request.runtime_debug for request in bench.trace.requests] == [True, True]
-    finally:
-        await schedule.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batch(
     monkeypatch, tmp_path
 ) -> None:

@@ -351,7 +351,6 @@ async def test_healthy_chunks_skip_degradation_path(
         output = await run.runtime.generate(run.request(["p"], group_size=4))
 
         assert output.output.shape[0] == 4
-        assert output.runtime_debug is None
         (history,) = _histories(local_ray, run)
         assert history["request_calls"] == []
         assert history["batch_calls"] == [_key(0, 2), _key(2, 2)]

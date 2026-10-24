@@ -112,7 +112,6 @@ class OwnedCollection(Protocol):
         collector: RolloutCollector,
         *,
         group_size: int,
-        runtime_debug: bool,
         policy_version: int | None,
     ) -> list[RolloutBatch]: ...
 
@@ -351,7 +350,6 @@ class RolloutCollector:
         *,
         prompts: list[Any],
         group_size: int,
-        runtime_debug: bool,
         policy_version: int | None,
     ) -> Iterator[tuple[CollectorRequest, list[int]]]:
         """Build requests and original prompt indices without executing generation.
@@ -367,7 +365,6 @@ class RolloutCollector:
             request = self.request_builder.build(
                 inputs,
                 group_size=group_size,
-                runtime_debug=runtime_debug,
                 policy_version=policy_version,
                 reward_media_refs=True,
                 **kwargs,
@@ -407,7 +404,6 @@ class RolloutCollector:
         *,
         prompts: list[Any],
         group_size: int,
-        runtime_debug: bool,
         policy_version: int | None,
     ) -> list[RolloutBatch]:
         """Collect every trainer prompt's sample group and return per-group batches.
@@ -442,7 +438,6 @@ class RolloutCollector:
                 for batch in await item.collect(
                     self,
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                     policy_version=policy_version,
                 ):
                     batch.group_ids = batch.group_ids + offset
@@ -519,7 +514,6 @@ class RolloutCollector:
                 self.build_generation_requests(
                     prompts=prompts,
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                     policy_version=policy_version,
                 ),
             )

@@ -55,7 +55,6 @@ class ContextParallelRolloutSchedule:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         import torch.distributed as dist
@@ -63,7 +62,6 @@ class ContextParallelRolloutSchedule:
         iteration = await self.inner.next_iteration(
             self.local_prompts(list(prompts)),
             group_size=group_size,
-            runtime_debug=runtime_debug,
             next_prompts=None if next_prompts is None else self.local_prompts(list(next_prompts)),
         )
         gathered: list[Any] = [None] * self.groups.cp_size

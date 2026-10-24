@@ -216,7 +216,7 @@ class _LeaderOnlyInner:
     def __init__(self) -> None:
         self.prompts_seen: list[list[str]] = []
 
-    async def next_iteration(self, prompts, *, group_size, runtime_debug=False, next_prompts=None):
+    async def next_iteration(self, prompts, *, group_size, next_prompts=None):
         self.prompts_seen.append(list(prompts))
         batches = [
             RolloutBatch(

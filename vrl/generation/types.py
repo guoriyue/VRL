@@ -105,7 +105,6 @@ class GenerationRequest:
     # Request-owned fallback randomness for the SDE window. Copies sent to
     # separate workers retain it without imposing a latent-noise sampling seed.
     sde_window_seed: int | None = None
-    runtime_debug: bool = False
     policy_version: int | None = None
     # Online reward transport: Ray actors return boxed media references instead
     # of decoded tensors. Direct/in-process generation retains its tensor API.
@@ -123,7 +122,6 @@ class GenerationRequest:
         samples_per_generation_batch: int | None = None,
         trajectory_storage: TrajectoryStoragePolicy | None = None,
         denoise: DenoiseRequestOptions | None = None,
-        runtime_debug: bool = False,
         policy_version: int | None = None,
         sde_window_seed: int | None = None,
         reward_media_refs: bool = False,
@@ -149,7 +147,6 @@ class GenerationRequest:
         self.denoise = denoise
         self.sde_window_seed = sde_window_seed
         self.reward_media_refs = bool(reward_media_refs)
-        self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
 
@@ -175,8 +172,6 @@ class GenerationRequest:
             raise ValueError(
                 "GenerationRequest.samples_per_generation_batch must be >= 1",
             )
-        if not isinstance(self.runtime_debug, bool):
-            raise TypeError("GenerationRequest.runtime_debug must be a bool")
         if self.policy_version is not None:
             require_int(
                 self.policy_version,
@@ -292,9 +287,6 @@ class GenerationOutput:
     # Decoded media, or sample-ordered boxed MediaReferences for online scoring.
     output: Any
     trajectory: TrajectoryBatch
-    # Display/provenance-only: optional scheduler/worker diagnostics requested
-    # explicitly by GenerationRequest.runtime_debug.
-    runtime_debug: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         from vrl.trajectory.types import TrajectoryBatch

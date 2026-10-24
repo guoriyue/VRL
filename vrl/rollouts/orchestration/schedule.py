@@ -21,7 +21,6 @@ class RolloutSchedule(Protocol):
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration: ...
 

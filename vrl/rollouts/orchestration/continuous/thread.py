@@ -63,7 +63,6 @@ class _ContinuousRolloutController:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool,
         initial_weights: Any,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
@@ -78,14 +77,12 @@ class _ContinuousRolloutController:
                 await self._start_pipeline(
                     prompts,
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                     initial_weights=initial_weights,
                 )
             elif self.producer.prompt_batch is None or self.producer.prompt_batch.consumed:
                 self._set_prompt_batch(
                     prompts,
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                 )
             elif self.producer.prompt_batch.prompts != tuple(prompts):
                 raise RuntimeError(
@@ -111,13 +108,9 @@ class _ContinuousRolloutController:
             )
             self.producer.release_results()
             if next_prompts is not None:
-                # Debug metadata belongs to generation time. This prefetch runs
-                # during the current training step, even when the trainer consumes
-                # it after state.step (and therefore runtime_debug) changes.
                 self._set_prompt_batch(
                     next_prompts,
                     group_size=group_size,
-                    runtime_debug=runtime_debug,
                 )
             # Preserve the persisted metrics schema used by existing training logs.
             gauge("continuous.lookahead_requested", float(next_prompts is not None))
@@ -138,7 +131,6 @@ class _ContinuousRolloutController:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool,
     ) -> None:
         """Install the next finite prompt batch and dispatch it immediately."""
 
@@ -146,7 +138,6 @@ class _ContinuousRolloutController:
         self.producer.set_prompt_batch(
             list(prompts),
             group_size=group_size,
-            runtime_debug=runtime_debug,
         )
         self.producer.admit_now()
 
@@ -285,7 +276,6 @@ class _ContinuousRolloutController:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool,
         initial_weights: Any,
     ) -> None:
         # The trainer exported this immutable CPU snapshot before crossing the
@@ -305,7 +295,6 @@ class _ContinuousRolloutController:
         self.producer.set_prompt_batch(
             list(prompts),
             group_size=group_size,
-            runtime_debug=runtime_debug,
         )
         await self.producer.start()
         self.producer.admit_now()
@@ -346,7 +335,6 @@ class ContinuousRolloutThread:
         prompts: list[Any],
         *,
         group_size: int,
-        runtime_debug: bool,
         initial_weights: Any,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
@@ -355,7 +343,6 @@ class ContinuousRolloutThread:
             controller.next_iteration(
                 list(prompts),
                 group_size=group_size,
-                runtime_debug=runtime_debug,
                 initial_weights=initial_weights,
                 next_prompts=(None if next_prompts is None else list(next_prompts)),
             ),

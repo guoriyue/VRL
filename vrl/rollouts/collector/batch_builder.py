@@ -113,9 +113,6 @@ class TrajectoryRolloutBatchBuilder:
         rollout_context = dict(self.trajectory.context)
         if self.context.metadata:
             rollout_context["reward_metadata"] = dict(self.context.metadata)
-        runtime_debug = self.output.runtime_debug
-        if runtime_debug is not None:
-            rollout_context["runtime_debug"] = runtime_debug
 
         return RolloutBatch(
             rewards=rewards_adjusted,

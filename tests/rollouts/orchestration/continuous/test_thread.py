@@ -97,7 +97,6 @@ async def test_empty_prefetch_fails_before_initial_weight_sync(monkeypatch, tmp_
             await owner.next_iteration(
                 ["p0"],
                 group_size=1,
-                runtime_debug=False,
                 initial_weights=trainer.export(),
                 next_prompts=[],
             )
@@ -118,7 +117,6 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop(monkeypatch, tm
             await owner.next_iteration(
                 ["p0"],
                 group_size=1,
-                runtime_debug=False,
                 initial_weights=trainer.export(),
                 next_prompts=["p1"],
             )
@@ -156,7 +154,6 @@ async def test_failed_commit_closes_admission_and_preserves_root_cause(
     await owner.next_iteration(
         ["p0"],
         group_size=1,
-        runtime_debug=False,
         initial_weights=trainer.export(),
     )
 
@@ -306,7 +303,6 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root(
         await owner.next_iteration(
             ["p0"],
             group_size=1,
-            runtime_debug=False,
             initial_weights=None,
         )
         closes = Trace(monkeypatch)
@@ -345,7 +341,6 @@ async def test_sibling_failure_after_weight_ack_never_resumes_owner_admission(
         await owner.next_iteration(
             ["p0"],
             group_size=1,
-            runtime_debug=False,
             initial_weights=None,
         )
         session = runtime._session
@@ -387,7 +382,6 @@ async def test_failed_terminal_cleanup_is_retried_by_shutdown_once(monkeypatch, 
     await owner.next_iteration(
         ["p0"],
         group_size=1,
-        runtime_debug=False,
         initial_weights=trainer.export(),
     )
     bench.trace.fail("update_weights", "worker install ACK mismatch")
@@ -464,7 +458,6 @@ async def test_owner_rejects_invalid_group_size_before_weight_push(
             await owner.next_iteration(
                 ["p0"],
                 group_size=group_size,
-                runtime_debug=False,
                 initial_weights=trainer.export(),
             )
         assert _pushes(bench) == 0
@@ -490,9 +483,7 @@ async def test_shutdown_retries_producer_stop_before_closing_collector(monkeypat
     bench, trainer = await _stack(monkeypatch, tmp_path)
     owner = _owner(bench, trainer)
     try:
-        await owner.next_iteration(
-            ["p0"], group_size=1, runtime_debug=False, initial_weights=trainer.export()
-        )
+        await owner.next_iteration(["p0"], group_size=1, initial_weights=trainer.export())
         with pytest.raises(RuntimeError, match="producer stop failed"):
             await owner.shutdown()
         assert _shutdowns(bench) == 0

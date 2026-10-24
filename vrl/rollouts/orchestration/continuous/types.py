@@ -82,7 +82,6 @@ class PromptBatch:
     policy_version: int
     prompts: tuple[Any, ...]
     group_size: int
-    runtime_debug: bool
     pending_slots: deque[int]
     # Per-slot admission timestamps become the completed item's wait metric.
     pending_since: dict[int, float]

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -105,7 +104,6 @@ class RayActorDispatcher:
         operation: str,
         call_timeout_s: float,
         worker_methods: Mapping[str, Any] | None = None,
-        schedule: list[dict[str, Any]] | None = None,
     ) -> list[tuple[int, Any]]:
         """Run jobs with cross-request actor admission and ordered results."""
 
@@ -149,8 +147,6 @@ class RayActorDispatcher:
         pending = deque(jobs)
         ref_to_job: dict[Any, tuple[int, str]] = {}
         result_pairs: list[tuple[int, Any]] = []
-        pool_started = time.perf_counter()
-        submit_time_by_ref: dict[Any, float] = {}
         deadline_by_ref: dict[Any, RayCallDeadline] = {}
         admission = _AdmissionWaiter()
         submitted_count = 0
@@ -222,8 +218,6 @@ class RayActorDispatcher:
                     raise error from cause
                 ref_to_job[ref] = (job.job_index, worker_id)
                 submitted_count += 1
-                if schedule is not None:
-                    submit_time_by_ref[ref] = time.perf_counter()
                 deadline_by_ref[ref] = deadline
                 new_refs.append(ref)
                 if not self._available:
@@ -249,17 +243,6 @@ class RayActorDispatcher:
         ) -> None:
             self._finish(ref, worker_id)
             result_pairs.append((job_index, result))
-            if schedule is not None:
-                submitted = submit_time_by_ref.pop(ref)
-                finished = time.perf_counter()
-                schedule.append(
-                    {
-                        "job_index": job_index,
-                        "worker_id": worker_id,
-                        "queue_wait_s": submitted - pool_started,
-                        "execution_s": finished - submitted,
-                    },
-                )
 
         admission_task: asyncio.Task[None] | None = None
         try:

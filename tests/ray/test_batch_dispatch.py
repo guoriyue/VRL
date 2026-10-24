@@ -163,7 +163,6 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         samples_per_prompt=samples,
         sampling={"height": 64, "width": 64, "num_steps": num_steps},
         samples_per_generation_batch=sbs,
-        runtime_debug=True,
     )
 
 
@@ -272,32 +271,6 @@ async def test_actor_pool_validates_every_worker_before_first_submission(spawn) 
         operation="test.after_prevalidate",
         call_timeout_s=30.0,
     ) == [(0, "still-open")]
-
-
-def test_schedule_telemetry_rows_are_emitted(spawn) -> None:
-    """The dispatch loop emits one telemetry row per job."""
-
-    worker = spawn(_Worker, "w0", _FAST_S)
-    jobs = [
-        RayActorJob(job_index=i, worker_id="w0", remote_method=worker.run.remote, payload=i)
-        for i in range(2)
-    ]
-    schedule: list[dict[str, Any]] = []
-
-    asyncio.run(
-        RayActorDispatcher(("w0",)).run(
-            jobs,
-            operation="test.actor_job",
-            call_timeout_s=30.0,
-            schedule=schedule,
-        ),
-    )
-
-    assert sorted(row["job_index"] for row in schedule) == [0, 1]
-    for row in schedule:
-        assert row["worker_id"] == "w0"
-        assert row["queue_wait_s"] >= 0.0
-        assert row["execution_s"] >= 0.0
 
 
 @pytest.mark.asyncio
@@ -753,12 +726,6 @@ async def test_executor_round_robin_dispatches_per_plan_binding(local_ray, spawn
     # The envelopes and results crossed a real wire, and the gather is still
     # ordered by batch even though w0 finished both of its batches first.
     assert [entry["batch_key"] for entry in output.output] == batch_keys
-    assert output.runtime_debug is not None
-    schedule = output.runtime_debug["chunk_schedule"]
-    assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
-    assert [row["batch_key"] for row in schedule] == batch_keys
-    for row in schedule:
-        assert row["sample_count"] == 2
 
 
 @pytest.mark.parametrize("worker_ids", ["ab", [""], [1]])

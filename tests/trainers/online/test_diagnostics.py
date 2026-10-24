@@ -90,7 +90,6 @@ class TestDiagnostics:
             "actor.timestep_fraction=1.0",
         )
         batch = asyncio.run(tb.trainer.collect_training_batch(["a cat"]))
-        assert tb.collector.trace.requests[0].runtime_debug is debug_enabled
         if drift_step is not None:
             _shift_rollout_log_prob(batch, drift_step, delta)
         before = _snapshot(tb)

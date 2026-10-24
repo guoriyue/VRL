@@ -142,10 +142,8 @@ class RayGenerationExecutor:
                 pipelined_result.worker_id,
                 pipelined_result.error,
             )
-        runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, Recorded[GenerationBatchResult]]] = []
-        schedule_rows: list[dict[str, Any]] = []
         envelope_by_batch_key: dict[str, GenerationBatchEnvelope] = {}
 
         for job_index, batch in enumerate(sample_batches):
@@ -167,7 +165,6 @@ class RayGenerationExecutor:
                     remote_jobs,
                     operation="rollout.generation.batch",
                     call_timeout_s=self.generation_stall_timeout_s,
-                    schedule=schedule_rows if runtime_debug_on else None,
                 ),
             )
 
@@ -226,33 +223,6 @@ class RayGenerationExecutor:
                 reading.budget_bytes / 2**20,
                 reading.non_torch_bytes / 2**20,
             )
-        schedule_summary: list[dict[str, Any]] = []
-        if schedule_rows:
-            by_index = {row["job_index"]: row for row in schedule_rows}
-            schedule_summary = [
-                {
-                    "batch_key": batch.batch_key,
-                    "sample_count": batch.sample_count,
-                    "assigned_worker": by_index[job_index]["worker_id"],
-                    "queue_wait_s": by_index[job_index]["queue_wait_s"],
-                    "execution_s": by_index[job_index]["execution_s"],
-                }
-                for job_index, batch in enumerate(sample_batches)
-                if job_index in by_index
-            ]
-        if runtime_debug_on:
-            for row in schedule_summary:
-                logger.info(
-                    "ray batch schedule: batch=%s worker=%s samples=%d "
-                    "queue_wait=%.3fs exec=%.3fs",
-                    row["batch_key"],
-                    row["assigned_worker"],
-                    row["sample_count"],
-                    row["queue_wait_s"],
-                    row["execution_s"],
-                )
-        if runtime_debug_on and schedule_summary:
-            output.runtime_debug = {"chunk_schedule": schedule_summary}
         return output
 
     async def _execute_request_batches(

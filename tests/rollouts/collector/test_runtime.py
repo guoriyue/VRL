@@ -446,7 +446,6 @@ def test_prepare_training_batches_collects_reward_timing_into_stats(monkeypatch,
             collector.prepare_training_batches(
                 prompts=["p0"],
                 group_size=2,
-                runtime_debug=False,
                 policy_version=None,
             ),
         )
@@ -531,7 +530,6 @@ def test_request_generation_reward_and_assembly_are_separate_stages(monkeypatch,
         collector.build_generation_requests(
             prompts=["first", "second"],
             group_size=2,
-            runtime_debug=False,
             policy_version=7,
         )
     )

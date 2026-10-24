@@ -106,7 +106,7 @@ class _MemoryExecutor:
         raise NotImplementedError
 
 
-def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
+def test_worker_forwards_batch_memory() -> None:
     config = launch_config(policy_version=1)
     executor = _MemoryExecutor()
     core = GenerationWorkerCore("rollout-0", config)

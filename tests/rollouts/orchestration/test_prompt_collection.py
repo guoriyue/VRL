@@ -38,7 +38,6 @@ async def _collect(
     return await bench.collector.prepare_training_batches(
         prompts=prompts,
         group_size=group_size,
-        runtime_debug=False,
         policy_version=None,
     )
 
@@ -354,7 +353,6 @@ async def test_generation_handoff_is_demand_driven_and_never_scores(monkeypatch,
     groups = collector.build_generation_requests(
         prompts=["plain", PromptExample(prompt="example"), "later"],
         group_size=2,
-        runtime_debug=False,
         policy_version=None,
     )
     first_request, first_indices = next(groups)
