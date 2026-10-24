@@ -37,6 +37,23 @@ South Korea; `vrl/models/families/hunyuan3d/NOTICE` carries the required notice.
   image-VAE knobs), so a config for this family leaves `model.memory.vae_decode`
   unset.
 
+## Integration check
+
+The full-sequence probe on the released weights (2026-10-19, one 5090: 10 SDE
+steps, CFG 5, four 256 px views of example cutout `1128.png`, a street lamp)
+passed: the DiT, conditioner and ShapeVAE load strictly from the ckpt layout
+(the VAE's encoder and `pre_kl` weights skipped), the rendered views show the
+lamp's silhouette and shading from four sides, and the step-0 replay reproduces
+the rollout's noise prediction and log-prob exactly. Peak memory 10.6 GB, 10.7 s
+including load. Rerun with:
+
+```bash
+python -m vrl.scripts.generation.full_sequence_probe \
+  --config experiment/hunyuan3d/online_grpo_shape_dino_smoke_single_gpu \
+  --reference-image data/external/hunyuan3d/example_images/1128.png \
+  --prompt "shape of the reference object" --artifact-dir outputs/probes/hunyuan3d
+```
+
 ## Bundled experiments
 
 - `experiment/hunyuan3d/online_grpo_shape_dino_smoke_single_gpu`: GRPO on the
