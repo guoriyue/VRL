@@ -23,3 +23,5 @@ Lifecycle invariants:
   non-test consumers, tests, and dotted-string/config references before acting.
 - Measurements that matter to a current decision go into the plan that needs
   them; a measurement that matters to no plan is not committed.
+
+Current program entry point: [VRL implementation and research sprint backlog](planned/SPRINT_pytorch2026_execution_program.md). It links the focused conference-review work, dependency order and existing owner plans.
