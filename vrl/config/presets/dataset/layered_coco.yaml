@@ -1,0 +1,18 @@
+# Layered GRPO rows (5439): 2939 COCO val2017 photos with 2 to 8 panoptic
+# "thing" instances that each cover at least 1.5% of the center square, 1200
+# synthetic occlusions of those photos (a COCO object pasted over another,
+# with the hidden part known), 1200 rendered indoor scenes, and 50 copies of
+# each of the two Luma demo images. Every reference image is pre-cropped to
+# the 640x640 center square the reward scores, every prompt is the generic
+# decomposition prompt the SFT caches use, and each row carries its layer
+# budget as a request override and its reference for the layered_grouping
+# reward: object masks (metadata.instances) for photos, truth layers
+# (metadata.truth_dir) for rendered scenes, both for the occlusions.
+data:
+  loader: prompt_manifest
+  manifest: data/external/coco/layered_val2017/train_mixed_v3.jsonl
+  artifact_data_root: data/external/coco/val2017
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

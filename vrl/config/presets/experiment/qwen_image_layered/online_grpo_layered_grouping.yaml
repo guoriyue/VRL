@@ -1,0 +1,85 @@
+# Qwen-Image-Layered GRPO with the layered_grouping reward on one 32 GB card.
+#
+# Starts from a scene-family SFT adapter (model.lora.path, a PEFT directory from
+# convert_adapter). Both the rollout worker and the trainer keep the bf16
+# frozen blocks of the transformer on the host and stream them per call
+# (model.offload, actor.offload), as the SFT recipe does: a resident fp8
+# rollout already fills 30 GB before the first activation of a 10-layer
+# 640x640 sequence, while the streamed policy needs ~4 GB, and the two
+# processes share one page-cached copy of the weights. The rollout and the
+# replay then also run the same bf16 numerics. Each manifest row sets its own
+# layer budget (request_overrides.layers) and the reward's reference (object
+# masks, truth layers or both; see /dataset/layered_coco).
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/qwen_image_layered/online_grpo_layered_grouping \
+#     model.lora.path=<peft dir> trainer.output_dir=outputs/layered_grpo/<run>
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_layered/base
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/layered_grouping
+  - /dataset/layered_coco
+  - _self_
+
+sampling:
+  width: 640
+  height: 640
+  num_steps: 10
+  guidance_scale: 1.0
+  layers: 9
+  input_mode: rgb
+
+model:
+  offload: true
+  use_lora: true
+  lora:
+    path: outputs/layered_v3_data/run_20261015/luma/peft/v3_seg3
+    parameter_dtype: float32
+  torch_compile:
+    enable: false
+
+actor:
+  optim:
+    lr: 5.0e-5
+    # LoRA gradients are ~1e-5 here, so Adam's second moment sits far below the
+    # default eps of 1e-8 and the update shrinks to ~0.3% of lr.
+    eps: 1.0e-12
+  prompts_per_collection: 1
+  gradient_checkpointing: full
+  offload: true
+  # Two 10-layer samples per training microbatch fill ~28 GB; use 1 on 24 GB.
+  training_microbatch_size: 2
+  # Train exactly the stochastic steps of the rollout window below.
+  timestep_selection: sde_window
+  timestep_fraction: 1.0
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 4
+  samples_per_generation_batch: 4
+  # Noise only on the first 4 of the 10 steps: with noise on every step the
+  # final layers were noise-dominated, while deterministic last steps keep them
+  # clean and the samples still differ in how they group the objects.
+  noise_level: 0.5
+  sde:
+    window_size: 4
+    window_range: [0, 4]
+
+# The local venv has no vLLM, so neither the rollout nor the reward can park
+# through a CuMem pool: the rollout's device-resident parts move to the host
+# between phases and the CPU reward is rebuilt per scoring phase.
+distributed:
+  resources:
+    rollout:
+      parking:
+        mechanism: move
+    reward:
+      parking:
+        mechanism: reload
+
+trainer:
+  output_dir: outputs/layered_grpo/coco_grouping
+  total_epochs: 1000
+  save_freq: 2

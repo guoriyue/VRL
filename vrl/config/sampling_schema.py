@@ -74,13 +74,14 @@ class QwenImage21SamplingSection(DenoiseImageSamplingSection):
 class QwenImageLayeredSamplingSection(TextEncodedImageSamplingSection):
     """Qwen-Image-Layered layer budget and source-image channel handling.
 
-    ``layers`` is the number of RGBA layers generated per source image (the
-    checkpoint was trained around 4; 8 is the practical ceiling). ``input_mode``
+    ``layers`` is the number of RGBA layers generated per source image, the
+    background included (the checkpoint was trained around 4; the scene-family
+    adapters decompose up to 10). ``input_mode``
     chooses whether a source PNG's alpha reaches the four-channel VAE or is
     replaced by opaque, matching the upstream decomposition script.
     """
 
-    layers: StrictInt = Field(default=4, ge=1, le=8)
+    layers: StrictInt = Field(default=4, ge=1, le=12)
     input_mode: Literal["rgb", "rgba"] = "rgb"
 
 
