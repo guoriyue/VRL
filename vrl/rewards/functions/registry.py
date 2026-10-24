@@ -58,6 +58,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+    from vrl.rewards.functions.layered_grouping import LayeredGroupingReward
     from vrl.rewards.functions.local_edit import LocalEditReward
     from vrl.rewards.functions.locality_keep import LocalityKeepReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
@@ -94,6 +95,7 @@ def _register_builtins() -> None:
             "robotics_video_reward": RoboticsVideoReward,
             "hpsv3": HPSv3Reward,
             "kling_video_reward": KlingVideoReward,
+            "layered_grouping": LayeredGroupingReward,
             "videocon_physics": VideoConPhysicsReward,
             "qwen3vl_preference": Qwen3VLPreferenceReward,
             "unified_reward_video": UnifiedRewardVideoReward,

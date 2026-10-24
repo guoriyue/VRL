@@ -1,0 +1,10 @@
+# Layer-decomposition reward on CPU: one object per layer (soft panoptic quality
+# against the row's metadata.instances masks), hidden-region completion against
+# metadata.truth_dir layers where the row has them, and recomposition fidelity.
+reward:
+  components:
+    layered_grouping: 1.0
+  kwargs:
+    layered_grouping:
+      # Weight of completion beside grouping and fidelity (each in [0, 1]).
+      completion_weight: 0.8
