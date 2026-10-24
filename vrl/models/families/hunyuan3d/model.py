@@ -167,7 +167,9 @@ def load_vae(checkpoint: Hunyuan3DCheckpoint) -> Any:
     state = _load_state(checkpoint.vae_checkpoint)
     state = state.get("vae", state)
     missing, unexpected = vae.load_state_dict(state, strict=False)
-    stray = [key for key in unexpected if not key.startswith("encoder.")]
+    # The released ckpt also carries the encoder (``encoder.*``) and its posterior
+    # projection (``pre_kl``); neither exists on the decoder-only module.
+    stray = [key for key in unexpected if not key.startswith(("encoder.", "pre_kl."))]
     if missing or stray:
         raise RuntimeError(
             f"ShapeVAE checkpoint mismatch: missing={sorted(missing)[:5]} unexpected={stray[:5]}"

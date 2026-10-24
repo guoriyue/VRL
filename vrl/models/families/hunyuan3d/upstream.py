@@ -1136,7 +1136,8 @@ class CrossAttentionDecoder(nn.Module):
 class ShapeVAE(nn.Module):
     """The decoder side of upstream ``ShapeVAE``: latent tokens -> occupancy logits at
     query points. The encoder parameters of the released config are accepted and
-    ignored (``**encoder_params``); its weights are skipped at load."""
+    ignored (``**encoder_params``); its weights (``encoder.*`` and the posterior
+    projection ``pre_kl``) are skipped at load."""
 
     def __init__(
         self,

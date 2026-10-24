@@ -258,7 +258,12 @@ def _tiny_checkpoint_dir(tmp_path):
         {"model": dit.state_dict(), "conditioner": conditioner.state_dict()},
         dit_dir / "model.fp16.ckpt",
     )
-    vae_state = {**vae.state_dict(), "encoder.input_proj.weight": torch.zeros(2, 2)}
+    vae_state = {
+        **vae.state_dict(),
+        "encoder.input_proj.weight": torch.zeros(2, 2),
+        "pre_kl.weight": torch.zeros(8, 32),
+        "pre_kl.bias": torch.zeros(8),
+    }
     torch.save(vae_state, vae_dir / "model.fp16.ckpt")
     return tmp_path, dit, vae, conditioner
 
