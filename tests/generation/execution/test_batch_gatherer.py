@@ -233,8 +233,8 @@ def _request(
 
 def _diffusion_batches(context: dict[str, Any]) -> list[DenoiseBatchResult]:
     return [
-        _diffusion_chunk(1.0, context, sample_start=0, peak_memory_mb=10.0),
-        _diffusion_chunk(2.0, context, sample_start=1, peak_memory_mb=20.0),
+        _diffusion_chunk(1.0, context, sample_start=0),
+        _diffusion_chunk(2.0, context, sample_start=1),
     ]
 
 
@@ -243,7 +243,6 @@ def _diffusion_chunk(
     context: dict[str, Any],
     *,
     sample_start: int,
-    peak_memory_mb: float,
 ) -> DenoiseBatchResult:
     return DenoiseBatchResult(
         batch=GenerationSampleBatch(
@@ -257,7 +256,6 @@ def _diffusion_chunk(
         video=torch.full((1, 3, 4, 4), value),
         replay_tensors={},
         context=context,
-        peak_memory_mb=peak_memory_mb,
     )
 
 

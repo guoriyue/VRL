@@ -336,36 +336,24 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
         GenerationBatchResult.from_rank_results(
             [Recorded(good, Stats()), Recorded(other, Stats())], expected_worker_ids=["r0", "r1"]
         )
-    good = replace(good, rank_metrics={"r0": {"peak_memory_mb": 10}})
-    other = replace(good, worker_id="r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
+    other = replace(good, worker_id="r1")
     primary_stats = Stats(phase_seconds={"generation.denoise_s": 1.0})
     recorded = GenerationBatchResult.from_rank_results(
         [Recorded(good, primary_stats), Recorded(other, Stats(phase_seconds={"x": 2.0}))],
         expected_worker_ids=["r0", "r1"],
     )
-    # One engine reports one rank's stage timings: the primary's.
+    # One engine reports one rank: the primary's result and stage timings.
     assert recorded.stats is primary_stats
-    result = recorded.value
-    assert result.worker_id == good.worker_id
-    assert result.output is good.output
-    assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
-    assert good.rank_metrics == {"r0": {"peak_memory_mb": 10}}
+    assert recorded.value is good
 
 
 @pytest.mark.asyncio
-async def test_batch_combines_metrics_from_every_rank_without_mutating_primary(
+async def test_engine_batch_reports_the_primary_ranks_result_and_recording(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
     async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2) as (run, handles):
-        primary_ref = handles[0].actor.execute_batch.remote(_envelope(run, runtime_debug=True))
-        primary = (await primary_ref).value
+        recorded = await RayGenerationEngine("engine-0", handles).execute_batch()(_envelope(run))
 
-        result = (
-            await RayGenerationEngine("engine-0", handles).execute_batch()(
-                _envelope(run, runtime_debug=True)
-            )
-        ).value
-
-        assert set(result.rank_metrics) == {"rollout-0", "rollout-1"}
-        assert result.worker_id == "rollout-0"
-        assert set(primary.rank_metrics) == {"rollout-0"}
+        assert recorded.value.worker_id == "rollout-0"
+        assert recorded.stats.phase_seconds["generation.denoise_s"] > 0
+        assert recorded.stats.counters["generation.payload_bytes"] > 0

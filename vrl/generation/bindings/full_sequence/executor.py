@@ -11,7 +11,7 @@ The driver-side half lives in ``gather.py`` (model-free reassembly), with
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -43,7 +43,7 @@ from vrl.utils.cuda_memory import (
     reset_cuda_peak,
 )
 from vrl.utils.media import to_uint8
-from vrl.utils.stats import timed
+from vrl.utils.stats import count, timed
 from vrl.utils.tensors import expand_tensor_to_batch
 from vrl.utils.validation import require_int
 
@@ -59,13 +59,9 @@ class DenoiseBatchResult(DenoisePath):
     video: Any
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
-    # Display/provenance-only: emitted through per-batch runtime debug metrics.
-    peak_memory_mb: float | None = None
     # Binding-local memory reading consumed and cleared at the worker boundary.
     # None off-CUDA.
     memory: dict[str, int] | None = None
-    # Display/provenance-only: emitted through per-batch runtime debug metrics.
-    engine_counters: dict[str, Any] = field(default_factory=dict)
 
     # The media a reward scores, by one name across the family result types
     # (the Ray adapter replaces it with references for online scoring).
@@ -466,12 +462,10 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
 
         decode_peak_bytes = cuda_peak_allocated_bytes(device)
         memory = None
-        peak_memory_mb = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
-            peak_memory_mb = max(memory["denoise_peak_bytes"], decode_peak_bytes) / (1024 * 1024)
 
-        return DenoiseBatchResult(
+        result = DenoiseBatchResult(
             batch=batch,
             latents=denoise_result.latents,
             log_probs=denoise_result.log_probs,
@@ -479,14 +473,11 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             video=video,
             replay_tensors=replay_tensors,
             context=context,
-            peak_memory_mb=peak_memory_mb,
             memory=memory,
-            engine_counters={
-                **denoise_result.engine_counters,
-                "diffusion_replay_tensor_bytes": trajectory_tensor_bytes(replay_tensors),
-                "diffusion_video_bytes": trajectory_tensor_bytes(video),
-            },
         )
+        # What this batch hands the driver: the denoise path, replay tensors and media.
+        count("generation.payload_bytes", trajectory_tensor_bytes(result))
+        return result
 
     # -- family hooks --------------------------------------------------
 

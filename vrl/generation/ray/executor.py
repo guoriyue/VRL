@@ -30,7 +30,7 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.deadline import require_timeout
-from vrl.utils.stats import Recorded, unwrap
+from vrl.utils.stats import Recorded, count, unwrap
 
 logger = logging.getLogger(__name__)
 
@@ -124,33 +124,23 @@ class RayGenerationExecutor:
         staged, before the request is merged.
         """
 
-        import time
-
         from vrl.utils.profiling import profile_range
 
-        _gen_start = time.perf_counter()
         with profile_range("engine.plan"):
             sample_batches = request.sample_batches()
-        pipelined_oom: RequestBatchOutOfMemory | None = None
         if self.pipelined and len(sample_batches) >= 2:
             pipelined_result = await self._execute_request_batches(
                 request,
                 sample_batches,
             )
             if isinstance(pipelined_result, GenerationOutput):
-                logger.info(
-                    "generation wall: path=per_request_pipelined batches=%d wall_s=%.3f",
-                    len(sample_batches),
-                    time.perf_counter() - _gen_start,
-                )
                 return pipelined_result
-            pipelined_oom = pipelined_result
             logger.warning(
                 "pipelined generation request %s OOMed on rank %s; retrying "
                 "through per-batch split admission: %s",
                 request.request_id,
-                pipelined_oom.worker_id,
-                pipelined_oom.error,
+                pipelined_result.worker_id,
+                pipelined_result.error,
             )
         runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
@@ -192,7 +182,7 @@ class RayGenerationExecutor:
         for recorded in recorded_results:
             self._validate_result_identity(recorded.value, envelope_by_batch_key)
 
-        results, oom_splits = await self._degrade_oom_chunks(
+        results = await self._degrade_oom_chunks(
             recorded_results,
             envelope_by_batch_key=envelope_by_batch_key,
         )
@@ -261,41 +251,8 @@ class RayGenerationExecutor:
                     row["queue_wait_s"],
                     row["execution_s"],
                 )
-        rank_debug_rows: list[dict[str, Any]] = []
-        if runtime_debug_on:
-            rank_by_id = {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
-            for result in results:
-                for worker_id, metrics in result.rank_metrics.items():
-                    rank = rank_by_id[worker_id]
-                    rank_debug_rows.append(
-                        {
-                            "worker_id": worker_id,
-                            "node_ip": rank.node_ip,
-                            "gpu_ids": list(rank.gpu_ids),
-                            "policy_version": result.policy_version,
-                            "batch_key": result.batch.batch_key,
-                            **metrics,
-                        },
-                    )
-        debug_payload: dict[str, Any] = {}
-        if rank_debug_rows:
-            debug_payload["ray_chunks"] = rank_debug_rows
         if runtime_debug_on and schedule_summary:
-            debug_payload["chunk_schedule"] = schedule_summary
-        if runtime_debug_on and oom_splits:
-            debug_payload["batch_oom_splits"] = oom_splits
-        if debug_payload:
-            output.runtime_debug = debug_payload
-        logger.info(
-            "generation wall: path=%s batches=%d wall_s=%.3f",
-            (
-                "per_batch_dispatch_after_pipelined_oom"
-                if pipelined_oom is not None
-                else "per_batch_dispatch"
-            ),
-            len(sample_batches),
-            time.perf_counter() - _gen_start,
-        )
+            output.runtime_debug = {"chunk_schedule": schedule_summary}
         return output
 
     async def _execute_request_batches(
@@ -437,7 +394,7 @@ class RayGenerationExecutor:
         results: list[Recorded[GenerationBatchResult]],
         *,
         envelope_by_batch_key: dict[str, GenerationBatchEnvelope],
-    ) -> tuple[list[GenerationBatchResult], list[dict[str, Any]]]:
+    ) -> list[GenerationBatchResult]:
         """Split OOM batches in half and re-run until success or single sample.
 
         The retry lives on the driver so vrl/ray stays batch-agnostic, and the
@@ -453,7 +410,6 @@ class RayGenerationExecutor:
 
         final: list[GenerationBatchResult] = []
         pending = list(results)
-        splits: list[dict[str, Any]] = []
         while pending:
             # A slot can be evicted before initial execution or between OOM
             # retries. In either case discard the whole request before treating
@@ -495,14 +451,7 @@ class RayGenerationExecutor:
                     batch.sample_count,
                     [child.batch_key for child in children],
                 )
-                splits.append(
-                    {
-                        "batch_key": batch.batch_key,
-                        "worker_id": result.worker_id,
-                        "sample_count": batch.sample_count,
-                        "children": [child.batch_key for child in children],
-                    },
-                )
+                count("generation.oom_splits")
                 for child in children:
                     child_envelope = replace(parent_envelope, batch=child)
                     envelope_by_batch_key[child_envelope.batch_key] = child_envelope
@@ -524,7 +473,7 @@ class RayGenerationExecutor:
                 pending.extend(result for _, result in pairs)
             for recorded in pending:
                 self._validate_result_identity(recorded.value, envelope_by_batch_key)
-        return final, splits
+        return final
 
     @staticmethod
     def _validate_result_identity(

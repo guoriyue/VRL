@@ -198,7 +198,6 @@ class GenerationWorkerCore:
         self._synchronize_rank_rng()
         request = envelope.request
         batch = envelope.batch
-        runtime_debug = request.runtime_debug
         expected_version = request.policy_version
         model = getattr(self.executor, "model", None)
         if self._uses_versioned_slots and expected_version is not None:
@@ -243,10 +242,6 @@ class GenerationWorkerCore:
                 batch=batch,
                 output=copy_tensor_tree_to_pinned_cpu(output),
                 memory=memory,
-                rank_metrics=self._rank_metrics(
-                    runtime_debug=runtime_debug,
-                    batch_output=output,
-                ),
                 policy_version=result_version,
             )
             return result
@@ -368,41 +363,6 @@ class GenerationWorkerCore:
         except Exception:
             logger.exception("generation batch execution failed")
             raise
-
-    def _rank_metrics(
-        self, *, runtime_debug: bool, batch_output: Any
-    ) -> dict[str, dict[str, Any]]:
-        """This rank's runtime-debug diagnostics, keyed by its worker id."""
-
-        if not runtime_debug:
-            return {}
-
-        def counter_value(value: Any) -> Any:
-            if value is None or isinstance(value, (str, int, float, bool)):
-                return value
-            if isinstance(value, Mapping):
-                return {str(key): counter_value(item) for key, item in value.items()}
-            if isinstance(value, (list, tuple)):
-                return [counter_value(item) for item in value]
-            item = getattr(value, "item", None)
-            if callable(item):
-                try:
-                    return item()
-                except Exception:
-                    pass
-            return repr(value)
-
-        metrics: dict[str, Any] = {}
-
-        engine_counters = getattr(batch_output, "engine_counters", None)
-        if isinstance(engine_counters, Mapping):
-            metrics["engine_counters"] = counter_value(engine_counters)
-
-        peak_memory_mb = getattr(batch_output, "peak_memory_mb", None)
-        if peak_memory_mb is not None:
-            metrics["peak_memory_mb"] = float(peak_memory_mb)
-
-        return {self.worker_id: metrics}
 
     @staticmethod
     def _batch_memory_reading(batch_output: Any) -> BatchMemoryReading | None:

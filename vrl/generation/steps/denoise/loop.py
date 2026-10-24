@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -11,7 +11,6 @@ from vrl.generation.execution.types import BatchMemoryReading
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import SDEStepResult, sde_step_with_logprob
-from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
     reset_cuda_peak,
@@ -50,12 +49,8 @@ class DenoiseLoopResult(DenoisePath):
     timesteps: Any
     prev_sample_means: Any | None = None
     # Batch-memory reading (occupancy at loop start plus the denoise peak),
-    # None off CUDA. The executor adds the decode peak and derives the
-    # runtime-debug peak display from it.
+    # None off CUDA. The executor adds the decode peak.
     memory: dict[str, int] | None = None
-    # display/provenance-only: denoise-engine counters forwarded to optional
-    # runtime-debug telemetry.
-    engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -250,16 +245,6 @@ def run_denoise_loop(
         timesteps=buffers.timesteps,
         prev_sample_means=buffers.prev_sample_means,
         memory=memory,
-        engine_counters={
-            "diffusion_num_denoise_steps": num_steps_to_run,
-            "diffusion_samples_per_generation_batch": int(batch_rows),
-            "diffusion_observation_bytes": trajectory_tensor_bytes(buffers.observations),
-            "diffusion_action_bytes": trajectory_tensor_bytes(buffers.actions),
-            "diffusion_old_logprob_bytes": trajectory_tensor_bytes(buffers.log_probs),
-            "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
-            "diffusion_denoise_mode": config.denoise_mode,
-            **(teacache.counters() if teacache is not None else {}),
-        },
     )
 
 

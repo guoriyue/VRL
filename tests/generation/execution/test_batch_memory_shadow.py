@@ -129,4 +129,3 @@ def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     assert result.error is None
     assert result.memory == _reading()
     assert result.output.memory is None
-    assert result.rank_metrics == {}

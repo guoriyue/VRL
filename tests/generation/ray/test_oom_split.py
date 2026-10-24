@@ -32,6 +32,7 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.media_reference import MediaReference
+from vrl.utils.stats import recording
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
@@ -264,24 +265,20 @@ async def test_failed_gather_rejects_misaligned_media_references(
 @_OOM_WIRE_FORMAT
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank(
+async def test_nonprimary_oom_retries_whole_engine(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
     worker = _fault_worker(capacity={"rollout-0": 4, "rollout-1": 2})
     async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=4, engines=2) as run:
         executor = _one_engine_of_every_rank(run)
 
-        output = await executor.execute(run.request(["p"], group_size=4, runtime_debug=True))
+        with recording() as stats:
+            output = await executor.execute(run.request(["p"], group_size=4))
 
         histories = _histories(local_ray, run)
         assert [h["batch_calls"] for h in histories] == [[_key(0, 4), _key(0, 2), _key(2, 2)]] * 2
         assert output.output.shape[0] == 4
-        assert all(
-            row["worker_id"] == "rollout-1" for row in output.runtime_debug["batch_oom_splits"]
-        )
-        rows = output.runtime_debug["ray_chunks"]
-        assert {row["worker_id"] for row in rows} == {"rollout-0", "rollout-1"}
-        assert {row["batch_key"] for row in rows} == {_key(0, 2), _key(2, 2)}
+        assert stats.counters["generation.oom_splits"] == 1
 
 
 @_OOM_WIRE_FORMAT
@@ -295,15 +292,15 @@ async def test_oom_chunk_splits_until_it_fits(
     async with _fleet(
         monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(capacity=2), batch=8
     ) as run:
-        output = await run.runtime.generate(run.request(["p"], group_size=8, runtime_debug=True))
+        with recording() as stats:
+            output = await run.runtime.generate(run.request(["p"], group_size=8))
 
         assert output.output.shape[0] == 8
         assert [row.sample_index for row in output.sample_rows] == list(range(8))
-        splits = output.runtime_debug["batch_oom_splits"]
-        # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
-        assert [row["batch_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
-        assert all(row["worker_id"] == "rollout-0" for row in splits)
+        assert stats.counters["generation.oom_splits"] == 3
         (history,) = _histories(local_ray, run)
+        # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
+        assert history["batch_calls"][:3] == [_key(0, 8), _key(0, 4), _key(4, 4)]
         assert sorted(history["batch_calls"][3:]) == sorted(
             [_key(0, 2), _key(2, 2), _key(4, 2), _key(6, 2)]
         )

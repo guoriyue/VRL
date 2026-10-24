@@ -125,8 +125,10 @@ async def test_phase_times_accumulate_per_call(monkeypatch, tmp_path) -> None:
     assert stats.counters == {
         "collect.group_count": 2.0,
         "collect.sample_count": 2.0,
+        "generation.payload_bytes": stats.counters["generation.payload_bytes"],
         "reward.call_count": 1.0,
     }
+    assert stats.counters["generation.payload_bytes"] > 0
 
 
 class _GatedReward(IndexReward):

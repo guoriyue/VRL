@@ -93,7 +93,7 @@ per-phase 事件。**验收**：分段数据回填 §1.3 两个估算区间；�
   `compile(PeftModel(transformer))` 形态），再省 **~50–100s**。
 - 风险：FSDP+LoRA graph break、CFG 双 batch 形状重编译、warmup 摊销。
 - 工具：`vrl/scripts/perf/compile_benchmark.py`。
-- **验收**：compile on/off 的 `generation wall` 差 ≥10%，replay parity 不劣化；
+- **验收**：compile on/off 的 `collect.engine_generate`（rollout_stats.jsonl）差 ≥10%，replay parity 不劣化；
   否则记负结果关闭。
 
 ### 2.3 P2 — 启用已有 NVFP4 量化 rollout（手写 Triton 已在仓）

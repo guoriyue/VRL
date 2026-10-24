@@ -10,6 +10,7 @@ from vrl.generation.steps.denoise.teacache import (
     TeaCacheState,
     relative_l1_change,
 )
+from vrl.utils.stats import recording
 
 
 def test_from_sampling_off_variants_return_none():
@@ -33,16 +34,17 @@ def test_warmup_and_last_step_always_run():
     cfg = TeaCacheConfig(threshold=999.0, warmup_steps=2)
     state = TeaCacheState(cfg, num_steps=4)
     sig = torch.ones(1, 4)
-    # warmup steps 0,1 forced to run even though change is zero (caller caches)
-    assert state.should_run(sig, 0) is True
-    state.cache_noise_pred(torch.zeros(1, 4))
-    assert state.should_run(sig, 1) is True
-    state.cache_noise_pred(torch.zeros(1, 4))
-    # step 2: huge threshold + tiny change + a cache present -> skip
-    assert state.should_run(sig, 2) is False
-    # last step (3) forced to run
-    assert state.should_run(sig, 3) is True
-    assert state.runs == 3 and state.skips == 1
+    with recording() as stats:
+        # warmup steps 0,1 forced to run even though change is zero (caller caches)
+        assert state.should_run(sig, 0) is True
+        state.cache_noise_pred(torch.zeros(1, 4))
+        assert state.should_run(sig, 1) is True
+        state.cache_noise_pred(torch.zeros(1, 4))
+        # step 2: huge threshold + tiny change + a cache present -> skip
+        assert state.should_run(sig, 2) is False
+        # last step (3) forced to run
+        assert state.should_run(sig, 3) is True
+    assert stats.counters == {"generation.teacache_runs": 3.0, "generation.teacache_skips": 1.0}
 
 
 def test_low_change_skips_high_change_runs():
@@ -71,8 +73,6 @@ def test_nonfinite_signal_never_grants_cache_reuse(invalid_value):
     # reuse either. Once two finite signals are compared, normal skipping resumes.
     assert state.should_run(finite, 2)
     assert not state.should_run(finite, 3)
-    assert state.runs == 3
-    assert state.skips == 1
 
 
 def test_no_cache_yet_forces_run():
@@ -102,7 +102,6 @@ def test_zero_previous_signal_forces_run_after_warmup():
     # A zero previous signal carries no evidence of stability: even an
     # arbitrarily large threshold must not authorize reuse.
     assert state.should_run(zero, 1)
-    assert state.skips == 0
 
 
 def test_half_precision_change_above_threshold_runs_forward():
@@ -111,7 +110,6 @@ def test_half_precision_change_above_threshold_runs_forward():
     assert state.should_run(previous, 0)
     state.cache_noise_pred(torch.zeros_like(previous))
     assert state.should_run(previous + 1, 1)
-    assert state.skips == 0
 
 
 def test_sampling_enabled_requires_boolean():

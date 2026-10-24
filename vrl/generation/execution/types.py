@@ -14,7 +14,7 @@ import.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, fields
 from typing import Any, Literal, get_args
 
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -168,8 +168,7 @@ class GenerationBatchResult:
     worker_id: str
     batch: GenerationSampleBatch
     output: BatchPayload | None
-    # display/provenance-only: worker-local measurements folded into optional
-    # runtime-debug telemetry after batch execution.
+    # The batch's memory reading for admission calibration, None off CUDA.
     memory: BatchMemoryReading | None = None
     policy_version: int | None = None
     error: str | None = None
@@ -179,14 +178,6 @@ class GenerationBatchResult:
     # real generation failure so the caller counts it as a stale discard, not an
     # error — see SPRINT_shadow_model_weight_sync.md.
     stale_slot: bool = False
-    # display/provenance-only: worker diagnostics requested explicitly by
-    # GenerationRequest.runtime_debug, keyed by worker_id. A worker reports its
-    # own rank; the driver-side combine of a multi-rank engine merges every
-    # rank's entry. Read only by runtime_debug telemetry: the executor's
-    # per-rank debug rows and the sequence-parallel acceptance report's
-    # per-rank peak memory. No control flow keys off it; behaviour (failure
-    # priority, policy version) is decided in the combine itself.
-    rank_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_rank_results(
@@ -203,8 +194,7 @@ class GenerationBatchResult:
         terminal failure on any rank wins over another rank's retryable OOM or
         graceful stale-slot discard, and keeps the reporting rank's identity, so
         the executor's stale-slot and OOM handling still sees it; otherwise the
-        primary rank's payload carries every rank's metrics entry. The chosen
-        rank's recording stays with its result: on success the primary's, so an
+        primary rank's result, with its recording, stands for the engine: an
         engine reports one rank's stage timings, not their sum.
         """
 
@@ -235,17 +225,7 @@ class GenerationBatchResult:
                 return recorded
         if any(result.policy_version != first.policy_version for result in results[1:]):
             raise RuntimeError("generation engine ranks returned different policy versions")
-        return Recorded(
-            replace(
-                first,
-                rank_metrics={
-                    worker_id: metrics
-                    for result in results
-                    for worker_id, metrics in result.rank_metrics.items()
-                },
-            ),
-            rank_results[0].stats,
-        )
+        return rank_results[0]
 
 
 @dataclass(frozen=True, slots=True)

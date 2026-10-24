@@ -12,7 +12,8 @@ Adapted from the forward-interception approach in vLLM-Omni's
 Skipped forwards change the rollout prediction relative to exact trainer replay.
 The config drift checks require an explicit correction policy when matching
 precision labels would otherwise leave that approximation unguarded. Caching is
-disabled by default. Skip counters measure reuse; training speed and drift must
+disabled by default. The ``generation.teacache_runs`` / ``teacache_skips``
+counters measure reuse; training speed and drift must
 be evaluated on the actual workload.
 """
 
@@ -23,6 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vrl.utils.stats import count
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -112,8 +114,6 @@ class TeaCacheState:
         self._prev_signal: torch.Tensor | None = None
         self._accumulated_change = 0.0
         self._cached_noise_pred: torch.Tensor | None = None
-        self.runs = 0
-        self.skips = 0
 
     def should_run(self, signal: torch.Tensor, step_idx: int) -> bool:
         """Decide whether step ``step_idx`` must run the real transformer forward.
@@ -143,10 +143,7 @@ class TeaCacheState:
             if run:
                 self._accumulated_change = 0.0
         self._prev_signal = signal.detach()
-        if run:
-            self.runs += 1
-        else:
-            self.skips += 1
+        count("generation.teacache_runs" if run else "generation.teacache_skips")
         return run
 
     def cache_noise_pred(self, noise_pred: torch.Tensor) -> None:
@@ -157,21 +154,6 @@ class TeaCacheState:
     @property
     def cached_noise_pred(self) -> torch.Tensor | None:
         return self._cached_noise_pred
-
-    @property
-    def skip_ratio(self) -> float:
-        total = self.runs + self.skips
-        return self.skips / total if total else 0.0
-
-    def counters(self) -> dict[str, Any]:
-        """Engine counters so a profiled run can see how aggressive the cache was."""
-
-        return {
-            "teacache_runs": self.runs,
-            "teacache_skips": self.skips,
-            "teacache_skip_ratio": self.skip_ratio,
-            "teacache_threshold": self._cfg.threshold,
-        }
 
 
 __all__ = ["TeaCacheConfig", "TeaCacheState", "relative_l1_change"]

@@ -15,7 +15,8 @@ from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEPar
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers
 from vrl.generation.types import GenerationRequest
 from vrl.math.denoise.flow_matching import SDEStepResult
-from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.trajectory.storage import TrajectoryStoragePolicy, trajectory_tensor_bytes
+from vrl.utils.stats import recording
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
@@ -116,9 +117,7 @@ def test_preallocate_denoise_buffers_rejects_sample_count_mismatch() -> None:
 
 
 def test_run_denoise_steps_writes_preallocated_buffers() -> None:
-    """``run_denoise_steps`` fills the preallocated buffers in place: per-step timesteps and engine counters for steps, batch width and
-    observation bytes.
-    """
+    """``run_denoise_steps`` fills the preallocated buffers in place, with per-step timesteps."""
     executor = _Executor()
     config = _config(sample_count=2)
 
@@ -132,11 +131,6 @@ def test_run_denoise_steps_writes_preallocated_buffers() -> None:
     assert result.log_probs.shape == (2, 2)
     assert result.timesteps.shape == (2, 2)
     assert torch.equal(result.timesteps[0], torch.tensor([0.0, 1.0]))
-    assert result.engine_counters["diffusion_num_denoise_steps"] == 2
-    assert result.engine_counters["diffusion_samples_per_generation_batch"] == 2
-    assert result.engine_counters["diffusion_observation_bytes"] == (
-        result.observations.numel() * result.observations.element_size()
-    )
 
 
 def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -317,19 +311,21 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
         config=_config(sample_count=2),
     )
 
-    batch = executor.decode_denoise_result(
-        batch=_chunk(),
-        config=_config(sample_count=2),
-        denoise_result=denoise,
-    )
+    with recording() as stats:
+        batch = executor.decode_denoise_result(
+            batch=_chunk(),
+            config=_config(sample_count=2),
+            denoise_result=denoise,
+        )
 
     from vrl.utils.media import to_uint8
 
     assert batch.video.dtype == torch.uint8
     expected = to_uint8(torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4))
     assert torch.equal(batch.video, expected)
-    # One byte per element on the wire.
-    assert batch.engine_counters["diffusion_video_bytes"] == batch.video.numel()
+    # One byte per element on the wire, counted with the rest of the payload.
+    assert trajectory_tensor_bytes(batch.video) == batch.video.numel()
+    assert stats.counters == {"generation.payload_bytes": trajectory_tensor_bytes(batch)}
     # Training tensors keep their dtype.
     assert batch.latents.is_floating_point()
     assert batch.log_probs.dtype == torch.float32
