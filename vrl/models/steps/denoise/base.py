@@ -580,8 +580,14 @@ class DenoisePipelineModelBase(DenoiseModelBase):
         self,
         negative_prompt: str | list[str] | None,
     ) -> None:
-        """Fail when a single-branch family receives ignored conditioning."""
+        """Fail when a single-branch family receives ignored conditioning.
 
+        A batch of empty strings is the same absence as ``None``: the probe and
+        the eval scripts spell "no negative prompt" per prompt row.
+        """
+
+        if isinstance(negative_prompt, list):
+            negative_prompt = [text for text in negative_prompt if text]
         if negative_prompt not in (None, "", []):
             raise ValueError(f"{type(self).__name__} does not support negative prompts")
 

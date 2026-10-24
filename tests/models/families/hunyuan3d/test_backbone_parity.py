@@ -329,6 +329,10 @@ def test_hunyuan3d_from_build_runs_the_released_layout_end_to_end(tmp_path) -> N
     assert frames.min() >= 0.0 and frames.max() <= 1.0
     with pytest.raises(ValueError, match="reference image"):
         model.encode_prompt("unused text", None)
+    # A row of empty negatives is no negative; text there would be silently ignored.
+    model.encode_prompt("unused text", [""], reference_image=_cutout())
+    with pytest.raises(ValueError, match="negative prompts"):
+        model.encode_prompt("unused text", ["blurry"], reference_image=_cutout())
 
 
 def test_hunyuan3d_replay_build_loads_only_the_dit_and_can_stay_a_skeleton(tmp_path) -> None:
