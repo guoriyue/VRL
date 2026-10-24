@@ -1,6 +1,35 @@
-"""Hunyuan3D 2.1 shape DiT, ShapeVAE decoder and DINOv2 conditioner, vendored from upstream.
+"""Hunyuan3D 2.1's shape-stage model code, copied from its GitHub repository because diffusers has none.
 
-Source: the ``hy3dshape`` package of https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1 at
+WHY THIS FILE EXISTS. ``tencent/Hunyuan3D-2.1`` ships yaml configs plus ``model.fp16.ckpt``
+state dicts, and the classes those weights load into exist only in the ``hy3dshape``
+package of https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1 (not on PyPI, with its own
+loaders, loggers and CUDA-only attention contexts). The classes the released shape
+checkpoint instantiates live here under their upstream names, parameter names unchanged.
+
+WHAT VRL CALLS, AND FROM WHERE (everything else in this file is an internal of these):
+
+    HunYuanDiTPlain        the 3.3B MoE DiT: the trainable policy. Built from the DiT yaml's
+                           ``model.params`` and filled from the ckpt's ``model`` entry by
+                           ``vrl.models.families.hunyuan3d.model.load_dit``; called once per
+                           denoise step in ``Hunyuan3DModel.forward_step`` as
+                           ``transformer(x, t, contexts={"main": image_tokens})``. LoRA
+                           attaches to its ``Attention`` / ``CrossAttention`` linears
+                           ``to_q / to_k / to_v / out_proj``.
+    ShapeVAE               decoder side only: ``post_kl`` + latent transformer (its
+                           ``forward``) and ``geo_decoder`` (occupancy logit per query
+                           point). Built by ``load_vae``; queried on a dense grid by
+                           ``vrl.models.families.hunyuan3d.render.query_occupancy_grid``
+                           inside ``Hunyuan3DPipelineModel.decode_latents``.
+    SingleImageEncoder     the DINOv2-L conditioner (``DinoImageEncoder`` inside). Built from
+                           the DiT yaml's ``conditioner.params`` and the ckpt's
+                           ``conditioner`` entry by ``load_conditioner``; run by
+                           ``Hunyuan3DPipelineModel.encode_prompt`` to turn the reference
+                           image into ``[B, 1370, 1024]`` tokens.
+    ImageProcessorV2       upstream's input preprocessing (RGBA recenter on the alpha mask,
+                           white background, 512 px, [-1, 1]); run by ``encode_prompt``
+                           before the conditioner.
+
+Source: the ``hy3dshape`` package of that repository at
 commit ``82920d643c0dc2f7bfd7255f45f62d386edfe60c`` (Tencent Hunyuan 3D 2.1 Community
 License; see NOTICE beside this file). Upstream is a stand-alone package with its own
 loaders, loggers and CUDA-only attention contexts; a training stack needs only the
