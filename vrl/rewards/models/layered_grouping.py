@@ -42,6 +42,7 @@ import json
 import math
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,168 +51,209 @@ import numpy as np
 MIN_LAYER_PIXELS = 64
 
 
-def visible_regions(alphas: np.ndarray, *, threshold: float = 0.5) -> np.ndarray:
-    """Boolean ``[L, H, W]`` visible region per layer; layer 0 owns the rest."""
+@dataclass(frozen=True, eq=False)
+class LayerStack:
+    """RGBA layers ``[L, H, W, 4]`` in ``[0, 1]``, back to front, and the region each shows."""
 
-    solid = alphas >= threshold
-    front = np.zeros(alphas.shape[1:], dtype=bool)
-    regions = np.zeros_like(solid)
-    for k in range(alphas.shape[0] - 1, 0, -1):
-        regions[k] = solid[k] & ~front
-        front |= solid[k]
-    regions[0] = ~front
-    return regions
+    rgba: np.ndarray
+    regions: np.ndarray
 
+    @classmethod
+    def from_rgba(cls, rgba: np.ndarray) -> LayerStack:
+        """Compute each layer's visible region; layer 0 owns what no layer covers."""
 
-def alpha_over(layers: np.ndarray) -> np.ndarray:
-    """Composite ``[L, H, W, 4]`` straight-alpha layers back to front into ``[H, W, 3]``."""
+        if rgba.ndim != 4 or rgba.shape[-1] != 4 or rgba.shape[0] < 2:
+            raise ValueError("layers must be [L >= 2, H, W, 4]")
+        solid = rgba[..., 3] >= 0.5
+        front = np.zeros(rgba.shape[1:3], dtype=bool)
+        regions = np.zeros_like(solid)
+        for k in range(rgba.shape[0] - 1, 0, -1):
+            regions[k] = solid[k] & ~front
+            front |= solid[k]
+        regions[0] = ~front
+        return cls(rgba, regions)
 
-    out = np.zeros((*layers.shape[1:3], 3), dtype=np.float32)
-    for layer in layers:
-        a = layer[..., 3:4]
-        out = layer[..., :3] * a + out * (1.0 - a)
-    return out
+    @classmethod
+    def from_media(cls, media: Any) -> LayerStack:
+        """The layered executor's ``[L, 4, H, W]`` (or one-sample ``[1, L, 4, H, W]``) tensor."""
 
+        import torch
 
-def match_objects(
-    regions: np.ndarray, objects: Sequence[np.ndarray]
-) -> tuple[dict[int, int], float]:
-    """Object index -> matched layer, and the soft panoptic quality of the match."""
-
-    labeled = np.zeros(regions.shape[1:], dtype=bool)
-    for mask in objects:
-        labeled |= mask
-    layers = [k for k in range(1, regions.shape[0]) if regions[k].sum() >= MIN_LAYER_PIXELS]
-    object_sizes = [float(mask.sum()) for mask in objects]
-    layer_sizes = [float((regions[k] & labeled).sum()) for k in layers]
-    pairs = []
-    for i, mask in enumerate(objects):
-        for j, k in enumerate(layers):
-            inter = float((regions[k] & mask).sum())
-            if inter > 0:
-                pairs.append((inter / (object_sizes[i] + layer_sizes[j] - inter), i, j))
-    matches: dict[int, int] = {}
-    used: set[int] = set()
-    quality = 0.0
-    for iou, i, j in sorted(pairs, reverse=True):
-        if i in matches or j in used:
-            continue
-        matches[i] = layers[j]
-        used.add(j)
-        quality += (math.sqrt(object_sizes[i]) + math.sqrt(layer_sizes[j])) * iou
-    counted = [
-        size
-        for j, (k, size) in enumerate(zip(layers, layer_sizes, strict=True))
-        if j in used or size >= 0.5 * float(regions[k].sum())
-    ]
-    total = sum(map(math.sqrt, object_sizes)) + sum(map(math.sqrt, counted))
-    return matches, quality / total if total > 0 else 0.0
-
-
-def completion(layers: np.ndarray, truth: np.ndarray, inferable: np.ndarray) -> float:
-    """Agreement with the truth layers on hidden-but-inferable pixels (see the module doc)."""
-
-    truth_regions = visible_regions(truth[..., 3])
-    matches, _ = match_objects(visible_regions(layers[..., 3]), list(truth_regions[1:]))
-    total = weight = 0.0
-    for t in range(1, truth.shape[0]):
-        hidden = (truth[t, ..., 3] >= 0.5) & ~truth_regions[t] & inferable
-        count = float(hidden.sum())
-        if count == 0:
-            continue
-        k = matches.get(t - 1)
-        if k is not None:
-            rgb = np.abs(
-                layers[k, ..., :3] * layers[k, ..., 3:] - truth[t, ..., :3] * truth[t, ..., 3:]
+        if isinstance(media, np.ndarray):
+            media = torch.from_numpy(media)
+        if not isinstance(media, torch.Tensor):
+            raise TypeError(f"layered reward expected a layer tensor, got {type(media)}")
+        if media.ndim == 5:
+            if media.shape[0] != 1:
+                raise ValueError("layered reward scores one sample at a time")
+            media = media[0]
+        if media.ndim != 4 or media.shape[1] != 4:
+            raise ValueError(
+                f"layered reward expected [L, 4, H, W] layers, got {tuple(media.shape)}"
             )
-            alpha = np.abs(layers[k, ..., 3] - truth[t, ..., 3])
-            total += count * (
-                1.0 - 0.5 * float(rgb.mean(-1)[hidden].mean()) - 0.5 * float(alpha[hidden].mean())
+        layers = media.detach().cpu().float()
+        if media.dtype == torch.uint8 or float(layers.max()) > 1.0:
+            layers = layers / 255.0
+        return cls.from_rgba(layers.permute(0, 2, 3, 1).clamp(0.0, 1.0).numpy())
+
+    @classmethod
+    def from_directory(cls, root: Path, height: int, width: int) -> LayerStack:
+        """``layer_<i>.png`` files back to front, resized to ``height x width``."""
+
+        from PIL import Image
+
+        files = sorted(root.glob("layer_*.png"), key=lambda p: int(p.stem.split("_")[1]))
+        layers = []
+        for file in files:
+            with Image.open(file) as image:
+                rgba = image.convert("RGBA")
+                if rgba.size != (width, height):
+                    rgba = rgba.resize((width, height), Image.Resampling.BILINEAR)
+                layers.append(np.asarray(rgba, dtype=np.float32) / 255.0)
+        if len(layers) < 2:
+            raise ValueError(f"truth directory needs at least two layer_<i>.png files: {root}")
+        return cls.from_rgba(np.stack(layers))
+
+    def object_layers(self) -> list[int]:
+        """Indices of the layers in front of the background that show anything."""
+
+        return [
+            k for k in range(1, len(self.regions)) if self.regions[k].sum() >= MIN_LAYER_PIXELS
+        ]
+
+    def composite(self) -> np.ndarray:
+        """Alpha-over composite ``[H, W, 3]`` of the straight-alpha layers."""
+
+        out = np.zeros((*self.rgba.shape[1:3], 3), dtype=np.float32)
+        for layer in self.rgba:
+            alpha = layer[..., 3:4]
+            out = layer[..., :3] * alpha + out * (1.0 - alpha)
+        return out
+
+    def match(self, objects: Sequence[np.ndarray]) -> tuple[dict[int, int], float]:
+        """Object index -> matched layer, and the soft panoptic quality of the match."""
+
+        labeled = np.zeros(self.regions.shape[1:], dtype=bool)
+        for mask in objects:
+            labeled |= mask
+        layers = self.object_layers()
+        object_sizes = [float(mask.sum()) for mask in objects]
+        layer_sizes = [float((self.regions[k] & labeled).sum()) for k in layers]
+        pairs = []
+        for i, mask in enumerate(objects):
+            for j, k in enumerate(layers):
+                inter = float((self.regions[k] & mask).sum())
+                if inter > 0:
+                    pairs.append((inter / (object_sizes[i] + layer_sizes[j] - inter), i, j))
+        matches: dict[int, int] = {}
+        used: set[int] = set()
+        quality = 0.0
+        for iou, i, j in sorted(pairs, reverse=True):
+            if i in matches or j in used:
+                continue
+            matches[i] = layers[j]
+            used.add(j)
+            quality += (math.sqrt(object_sizes[i]) + math.sqrt(layer_sizes[j])) * iou
+        counted = [
+            size
+            for j, (k, size) in enumerate(zip(layers, layer_sizes, strict=True))
+            if j in used or size >= 0.5 * float(self.regions[k].sum())
+        ]
+        total = sum(map(math.sqrt, object_sizes)) + sum(map(math.sqrt, counted))
+        return matches, quality / total if total > 0 else 0.0
+
+
+@dataclass(frozen=True, eq=False)
+class LayeredReference:
+    """What a row's decomposition is scored against: its source, objects and truth layers."""
+
+    source: np.ndarray
+    objects: list[np.ndarray]
+    truth: LayerStack | None = None
+    inferable: np.ndarray | None = None
+
+    @classmethod
+    def from_metadata(
+        cls, metadata: Mapping[str, Any], height: int, width: int
+    ) -> LayeredReference:
+        """Read the row's reference image, ``instances`` masks and ``truth_dir`` layers.
+
+        The source is center-cropped to a square and resized as the model's
+        condition encoder does; the masks were cut from that same square.
+        """
+
+        from PIL import Image
+
+        references = list(metadata.get("reference_images") or [])
+        if len(references) != 1:
+            raise ValueError(
+                "layered reward needs exactly one reference image in the sample metadata"
             )
-        weight += count
-    return total / weight if weight else 0.0
+        with Image.open(Path(references[0])) as image:
+            rgb = image.convert("RGB")
+        side = min(rgb.size)
+        left, top = (rgb.size[0] - side) // 2, (rgb.size[1] - side) // 2
+        rgb = rgb.crop((left, top, left + side, top + side))
+        source = np.asarray(
+            rgb.resize((width, height), Image.Resampling.LANCZOS), dtype=np.float32
+        )
+        instances, truth_dir = metadata.get("instances"), metadata.get("truth_dir")
+        if instances is None and truth_dir is None:
+            raise ValueError(
+                "layered reward needs metadata.instances or metadata.truth_dir on the row"
+            )
+        truth = inferable = None
+        if truth_dir is not None:
+            root = Path(str(truth_dir))
+            truth = LayerStack.from_directory(root, height, width)
+            inferable = np.zeros((height, width), dtype=bool)
+            if (root / "inferable_mask.png").exists():
+                with Image.open(root / "inferable_mask.png") as image:
+                    gray = image.convert("L").resize((width, height), Image.Resampling.NEAREST)
+                inferable = np.asarray(gray) > 127
+        if instances is None:
+            objects = list(truth.regions[1:])
+        else:
+            with np.load(Path(str(instances))) as data:
+                masks = np.asarray(data["masks"]).astype(bool)
+            if masks.ndim != 3:
+                raise ValueError(f"instances file {instances} must hold masks [N, h, w]")
+            objects = [
+                np.asarray(
+                    Image.fromarray(mask.astype(np.uint8) * 255).resize(
+                        (width, height), Image.Resampling.NEAREST
+                    )
+                )
+                > 127
+                for mask in masks
+            ]
+        return cls(source / 255.0, [mask for mask in objects if mask.any()], truth, inferable)
 
+    def completion(self, layers: LayerStack) -> float:
+        """Agreement with the truth layers on hidden-but-inferable pixels (see the module doc)."""
 
-def layers_from_media(media: Any) -> np.ndarray:
-    """``[L, 4, H, W]`` (or a one-sample ``[1, L, 4, H, W]``) tensor to ``[L, H, W, 4]`` floats."""
-
-    import torch
-
-    if isinstance(media, np.ndarray):
-        media = torch.from_numpy(media)
-    if not isinstance(media, torch.Tensor):
-        raise TypeError(f"layered reward expected a layer tensor, got {type(media)}")
-    if media.ndim == 5:
-        if media.shape[0] != 1:
-            raise ValueError("layered reward scores one sample at a time")
-        media = media[0]
-    if media.ndim != 4 or media.shape[1] != 4:
-        raise ValueError(f"layered reward expected [L, 4, H, W] layers, got {tuple(media.shape)}")
-    layers = media.detach().cpu().float()
-    if layers.dtype == torch.uint8 or float(layers.max()) > 1.0:
-        layers = layers / 255.0
-    return layers.permute(0, 2, 3, 1).clamp(0.0, 1.0).numpy()
-
-
-def square_resize(image: Any, height: int, width: int) -> np.ndarray:
-    """Center-crop a PIL image to a square and resize to ``[height, width, 3]`` in ``[0, 1]``."""
-
-    from PIL import Image
-
-    rgb = image.convert("RGB")
-    w, h = rgb.size
-    side = min(w, h)
-    left, top = (w - side) // 2, (h - side) // 2
-    rgb = rgb.crop((left, top, left + side, top + side)).resize(
-        (width, height), Image.Resampling.LANCZOS
-    )
-    return np.asarray(rgb, dtype=np.float32) / 255.0
-
-
-def load_instances(path: str | Path, height: int, width: int) -> list[np.ndarray]:
-    """Non-empty boolean ``[height, width]`` masks from an ``.npz`` holding ``masks [N, h, w]``."""
-
-    from PIL import Image
-
-    with np.load(Path(path)) as data:
-        masks = np.asarray(data["masks"]).astype(bool)
-    if masks.ndim != 3:
-        raise ValueError(f"instances file {path} must hold masks [N, h, w], got {masks.shape}")
-    found = []
-    for mask in masks:
-        if mask.shape != (height, width):
-            image = Image.fromarray(mask.astype(np.uint8) * 255)
-            mask = np.asarray(image.resize((width, height), Image.Resampling.NEAREST)) > 127
-        if mask.any():
-            found.append(mask)
-    return found
-
-
-def load_truth(path: str | Path, height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
-    """Truth layers ``[L, H, W, 4]`` (``layer_<i>.png`` back to front) and the inferable mask."""
-
-    from PIL import Image
-
-    root = Path(path)
-    files = sorted(root.glob("layer_*.png"), key=lambda p: int(p.stem.split("_")[1]))
-    if len(files) < 2:
-        raise ValueError(f"truth directory needs at least two layer_<i>.png files: {root}")
-    layers = []
-    for file in files:
-        with Image.open(file) as image:
-            rgba = image.convert("RGBA")
-            if rgba.size != (width, height):
-                rgba = rgba.resize((width, height), Image.Resampling.BILINEAR)
-            layers.append(np.asarray(rgba, dtype=np.float32) / 255.0)
-    inferable = np.zeros((height, width), dtype=bool)
-    mask_file = root / "inferable_mask.png"
-    if mask_file.exists():
-        with Image.open(mask_file) as image:
-            gray = image.convert("L")
-            if gray.size != (width, height):
-                gray = gray.resize((width, height), Image.Resampling.NEAREST)
-            inferable = np.asarray(gray) > 127
-    return np.stack(layers), inferable
+        truth = self.truth
+        if truth is None:
+            return 0.0
+        matches, _ = layers.match(list(truth.regions[1:]))
+        total = weight = 0.0
+        for t in range(1, len(truth.rgba)):
+            hidden = (truth.rgba[t, ..., 3] >= 0.5) & ~truth.regions[t] & self.inferable
+            count = float(hidden.sum())
+            if count == 0:
+                continue
+            k = matches.get(t - 1)
+            if k is not None:
+                ours, theirs = layers.rgba[k], truth.rgba[t]
+                rgb = np.abs(ours[..., :3] * ours[..., 3:] - theirs[..., :3] * theirs[..., 3:])
+                alpha = np.abs(ours[..., 3] - theirs[..., 3])
+                total += count * (
+                    1.0
+                    - 0.5 * float(rgb.mean(-1)[hidden].mean())
+                    - 0.5 * float(alpha[hidden].mean())
+                )
+            weight += count
+        return total / weight if weight else 0.0
 
 
 class LayeredGroupingRewardModel:
@@ -225,40 +267,20 @@ class LayeredGroupingRewardModel:
         self._dump_dir = None if cfg.get("dump_dir") is None else str(cfg["dump_dir"])
         self._dumped = 0
 
-    def score_layers(
-        self,
-        layers: np.ndarray,
-        source: np.ndarray,
-        objects: Sequence[np.ndarray] | None,
-        *,
-        truth: tuple[np.ndarray, np.ndarray] | None = None,
-    ) -> dict[str, float]:
-        """Score ``[L, H, W, 4]`` layers in ``[0, 1]`` against an ``[H, W, 3]`` source.
+    def score(self, layers: LayerStack, reference: LayeredReference) -> dict[str, float]:
+        """The reward and its terms for ``layers`` against ``reference``."""
 
-        ``objects`` are the source's visible object masks; ``None`` takes them
-        from ``truth`` (layers and inferable mask, see ``load_truth``), which
-        also scores ``completion``.
-        """
-
-        if layers.ndim != 4 or layers.shape[-1] != 4 or layers.shape[0] < 2:
-            raise ValueError("layers must be [L >= 2, H, W, 4]")
-        if source.shape != (*layers.shape[1:3], 3):
+        if reference.source.shape != (*layers.rgba.shape[1:3], 3):
             raise ValueError("source must be [H, W, 3] matching the layers")
-        if objects is None:
-            if truth is None:
-                raise ValueError("layered reward needs object masks or truth layers")
-            objects = list(visible_regions(truth[0][..., 3])[1:])
-        objects = [mask for mask in objects if mask.any()]
-        regions = visible_regions(layers[..., 3])
-        _, grouping = match_objects(regions, objects)
+        _, grouping = layers.match(reference.objects)
         terms = {
             "grouping": grouping,
-            "completion": 0.0 if truth is None else completion(layers, *truth),
-            "fidelity": max(0.0, 1.0 - float(np.abs(alpha_over(layers) - source).mean())),
-            "objects": float(len(objects)),
-            "layers": float(
-                sum(regions[k].sum() >= MIN_LAYER_PIXELS for k in range(1, len(regions)))
+            "completion": reference.completion(layers),
+            "fidelity": max(
+                0.0, 1.0 - float(np.abs(layers.composite() - reference.source).mean())
             ),
+            "objects": float(len(reference.objects)),
+            "layers": float(len(layers.object_layers())),
         }
         total = (
             terms["grouping"] + terms["fidelity"] + self._completion_weight * terms["completion"]
@@ -272,41 +294,27 @@ class LayeredGroupingRewardModel:
 
     def __call__(self, artifact: Any) -> dict[str, float]:
         import torch
-        from PIL import Image
 
         path = str(artifact.path or "")
         media = (
             torch.load(path, map_location="cpu", weights_only=True)
             if path.endswith(".pt")
-            else None
+            else artifact.as_media()
         )
-        layers = layers_from_media(artifact.as_media() if media is None else media)
-        height, width = layers.shape[1:3]
-        metadata = dict(artifact.metadata or {})
-        references = list(metadata.get("reference_images") or [])
-        if len(references) != 1:
-            raise ValueError(
-                "layered reward needs exactly one reference image in the sample metadata"
-            )
-        with Image.open(Path(references[0])) as image:
-            source = square_resize(image, height, width)
-        instances, truth_dir = metadata.get("instances"), metadata.get("truth_dir")
-        if instances is None and truth_dir is None:
-            raise ValueError(
-                "layered reward needs metadata.instances or metadata.truth_dir on the row"
-            )
-        scores = self.score_layers(
-            layers,
-            source,
-            None if instances is None else load_instances(str(instances), height, width),
-            truth=None if truth_dir is None else load_truth(str(truth_dir), height, width),
-        )
+        layers = LayerStack.from_media(media)
+        height, width = layers.rgba.shape[1:3]
+        reference = LayeredReference.from_metadata(dict(artifact.metadata or {}), height, width)
+        scores = self.score(layers, reference)
         if self._dump_dir is not None:
-            self._dump(artifact, layers, source, scores)
+            self._dump(artifact, layers, reference, scores)
         return scores
 
     def _dump(
-        self, artifact: Any, layers: np.ndarray, source: np.ndarray, scores: Mapping[str, float]
+        self,
+        artifact: Any,
+        layers: LayerStack,
+        reference: LayeredReference,
+        scores: Mapping[str, float],
     ) -> None:
         from PIL import Image
 
@@ -316,23 +324,12 @@ class LayeredGroupingRewardModel:
         out = Path(self._dump_dir) / f"{int(time.time())}_{self._dumped:03d}_{sample_id}"
         out.mkdir(parents=True, exist_ok=True)
         self._dumped += 1
-        Image.fromarray((source * 255).round().astype(np.uint8)).save(out / "source.png")
-        for index, layer in enumerate(layers):
+        Image.fromarray((reference.source * 255).round().astype(np.uint8)).save(out / "source.png")
+        for index, layer in enumerate(layers.rgba):
             Image.fromarray((layer * 255).round().astype(np.uint8), "RGBA").save(
                 out / f"layer_{index}.png"
             )
         (out / "scores.json").write_text(json.dumps(dict(scores), indent=1) + "\n")
 
 
-__all__ = [
-    "MIN_LAYER_PIXELS",
-    "LayeredGroupingRewardModel",
-    "alpha_over",
-    "completion",
-    "layers_from_media",
-    "load_instances",
-    "load_truth",
-    "match_objects",
-    "square_resize",
-    "visible_regions",
-]
+__all__ = ["MIN_LAYER_PIXELS", "LayerStack", "LayeredGroupingRewardModel", "LayeredReference"]

@@ -10,9 +10,8 @@ from PIL import Image
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.layered_grouping import (
     LayeredGroupingRewardModel,
-    alpha_over,
-    layers_from_media,
-    visible_regions,
+    LayeredReference,
+    LayerStack,
 )
 
 H = W = 32
@@ -44,8 +43,9 @@ OBJECTS = [BALL & ~CUBE, CUBE]  # what the source shows of each
 
 
 def _grouping(layers):
-    model = LayeredGroupingRewardModel({})
-    return model.score_layers(layers, layers[0, ..., :3], OBJECTS)["grouping"]
+    stack = LayerStack.from_rgba(layers)
+    reference = LayeredReference(source=stack.composite(), objects=OBJECTS)
+    return LayeredGroupingRewardModel({}).score(stack, reference)["grouping"]
 
 
 def test_one_object_per_layer_scores_one_and_empty_layers_cost_nothing():
@@ -88,7 +88,9 @@ def _truth_dir(tmp_path, layers, inferable):
 
 def _artifact(tmp_path, layers, metadata):
     source = tmp_path / "source.png"
-    Image.fromarray((alpha_over(layers) * 255).round().astype(np.uint8)).save(source)
+    Image.fromarray(
+        (LayerStack.from_rgba(layers).composite() * 255).round().astype(np.uint8)
+    ).save(source)
     media = torch.from_numpy(layers).permute(0, 3, 1, 2).contiguous()
     return RewardInferenceArtifact(
         "a", "a", "", media=media, metadata={"reference_images": [str(source)], **metadata}
@@ -153,14 +155,15 @@ def test_media_decodes_to_last_channel_layers():
     media = torch.zeros(3, 4, 8, 6, dtype=torch.uint8)
     media[1, 3, 2:5, 1:4] = 255
     media[1, 0, 2:5, 1:4] = 255
-    layers = layers_from_media(media)
-    assert layers.shape == (3, 8, 6, 4)
-    assert layers[1, 3, 2].tolist() == [1.0, 0.0, 0.0, 1.0]
-    assert visible_regions(layers[..., 3])[1].sum() == 9
+    stack = LayerStack.from_media(media)
+    assert stack.rgba.shape == (3, 8, 6, 4)
+    assert stack.rgba[1, 3, 2].tolist() == [1.0, 0.0, 0.0, 1.0]
+    assert stack.regions[1].sum() == 9
+    assert LayerStack.from_media(media[None].float() / 255.0).rgba.shape == (3, 8, 6, 4)
     with pytest.raises(ValueError, match="one sample"):
-        layers_from_media(torch.zeros(2, 3, 4, 8, 6))
+        LayerStack.from_media(torch.zeros(2, 3, 4, 8, 6))
     with pytest.raises(ValueError, match=r"\[L, 4, H, W\]"):
-        layers_from_media(torch.zeros(3, 3, 8, 6))
+        LayerStack.from_media(torch.zeros(3, 3, 8, 6))
 
 
 def test_dump_dir_writes_each_scored_sample(tmp_path):
