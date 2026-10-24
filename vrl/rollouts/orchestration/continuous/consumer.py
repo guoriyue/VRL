@@ -23,7 +23,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
-from vrl.utils.stats import absorb, elapsed, gauge
+from vrl.utils.stats import absorb, gauge, timed
 
 
 class ContinuousRolloutConsumer:
@@ -58,54 +58,55 @@ class ContinuousRolloutConsumer:
         wait_timeout_s = self.settings.wait_timeout_s
         poll_interval_s = self.settings.queue_poll_interval_s
         deadline = time.monotonic() + wait_timeout_s
-        wait_start = time.perf_counter()
-        ready_groups_at_demand = sum(item is not None for item in prompt_batch.results)
+        gauge(
+            "continuous.ready_groups_at_demand",
+            float(sum(item is not None for item in prompt_batch.results)),
+        )
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
-        while True:
-            self._fail_fast_if_producer_stalled(
-                producer_state,
-                start_completed=start_completed,
-                start_errors=start_errors,
-            )
-            self.validate_ready_versions(
-                prompt_batch=prompt_batch,
-                current_policy_version=current_policy_version,
-            )
-            items = [item for item in prompt_batch.results if item is not None]
-            if len(items) == len(prompt_batch.prompts):
-                wait_s = time.perf_counter() - wait_start
-                return self._build_iteration(
+        with timed("continuous.queue_wait_s"):
+            while True:
+                self._fail_fast_if_producer_stalled(
+                    producer_state,
+                    start_completed=start_completed,
+                    start_errors=start_errors,
+                )
+                self.validate_ready_versions(
                     prompt_batch=prompt_batch,
-                    items=items,
                     current_policy_version=current_policy_version,
-                    queue_wait_s=wait_s,
-                    ready_groups_at_demand=ready_groups_at_demand,
                 )
-            remaining_s = deadline - time.monotonic()
-            if remaining_s <= 0:
-                ready_groups = sum(item is not None for item in prompt_batch.results)
-                oldest_age = max(
-                    (item.age_s for item in prompt_batch.results if item is not None),
-                    default=0.0,
-                )
-                message = (
-                    "continuous rollout consumer timed out waiting for "
-                    f"{len(prompt_batch.prompts)} same-policy groups after {wait_timeout_s}s "
-                    f"(prompt_batch_id={prompt_batch.batch_id}, "
-                    f"ready_groups={ready_groups}/{len(prompt_batch.prompts)}, "
-                    f"current_policy_version={current_policy_version}, "
-                    f"oldest_item_age_s={oldest_age})"
-                )
-                if producer_state is not None:
-                    message += (
-                        f" (producer: submitted={producer_state.submitted_count}, "
-                        f"completed={producer_state.completed_count}, "
-                        f"errors={producer_state.error_count}, "
-                        f"last_error={producer_state.last_error})"
+                items = [item for item in prompt_batch.results if item is not None]
+                if len(items) == len(prompt_batch.prompts):
+                    break
+                remaining_s = deadline - time.monotonic()
+                if remaining_s <= 0:
+                    ready_groups = sum(item is not None for item in prompt_batch.results)
+                    oldest_age = max(
+                        (item.age_s for item in prompt_batch.results if item is not None),
+                        default=0.0,
                     )
-                raise TimeoutError(message)
-            await asyncio.sleep(min(poll_interval_s, remaining_s))
+                    message = (
+                        "continuous rollout consumer timed out waiting for "
+                        f"{len(prompt_batch.prompts)} same-policy groups after {wait_timeout_s}s "
+                        f"(prompt_batch_id={prompt_batch.batch_id}, "
+                        f"ready_groups={ready_groups}/{len(prompt_batch.prompts)}, "
+                        f"current_policy_version={current_policy_version}, "
+                        f"oldest_item_age_s={oldest_age})"
+                    )
+                    if producer_state is not None:
+                        message += (
+                            f" (producer: submitted={producer_state.submitted_count}, "
+                            f"completed={producer_state.completed_count}, "
+                            f"errors={producer_state.error_count}, "
+                            f"last_error={producer_state.last_error})"
+                        )
+                    raise TimeoutError(message)
+                await asyncio.sleep(min(poll_interval_s, remaining_s))
+        return self._build_iteration(
+            prompt_batch=prompt_batch,
+            items=items,
+            current_policy_version=current_policy_version,
+        )
 
     def _fail_fast_if_producer_stalled(
         self,
@@ -186,8 +187,6 @@ class ContinuousRolloutConsumer:
         prompt_batch: PromptBatch,
         items: list[ScoredRollout],
         current_policy_version: int,
-        queue_wait_s: float,
-        ready_groups_at_demand: int,
     ) -> RolloutIteration:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
@@ -200,7 +199,6 @@ class ContinuousRolloutConsumer:
         version = prompt_batch.policy_version
         staleness = current_policy_version - version
         item_age_s = max(item.age_s for item in items)
-        elapsed("continuous.queue_wait_s", float(queue_wait_s))
         # Fold in the per-item collect stats (each collect call attached its
         # timings to exactly one item) so the iteration reports cumulative
         # generation/reward/build time, matching the strict schedule's
@@ -211,7 +209,6 @@ class ContinuousRolloutConsumer:
         gauge("continuous.rollout_policy_version", float(version))
         gauge("continuous.stale_policy_versions", float(staleness))
         gauge("continuous.item_age_s", float(item_age_s))
-        gauge("continuous.ready_groups_at_demand", float(ready_groups_at_demand))
         # Report the same batch identity used to select this iteration.
         gauge("continuous.batch_id", float(prompt_batch.batch_id))
         return RolloutIteration(batches=batches)
