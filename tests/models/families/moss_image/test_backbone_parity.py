@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -327,3 +328,36 @@ def test_moss_transformer_checkpointing_wraps_kept_blocks_and_skips() -> None:
     assert len(wrapped) == n_kept * TINY_MOSS_LATENT_SHAPE[0]
     assert latents.grad is not None and latents.grad.abs().sum() > 0
 
+
+@pytest.mark.gpu
+def test_moss_transformer_rows_do_not_depend_on_the_batch_they_run_in() -> None:
+    """A row's prediction is bitwise the same at batch 4 and alone.
+
+    Rollouts sample four rows per forward while replay runs one, so any batched
+    bf16 GEMM in the transformer shifts the replayed log-prob before the first
+    update. At the released width the batched timestep modulation rounded
+    differently from the one-row call (up to 3e-2 on real weights).
+    """
+    torch.manual_seed(0)
+    transformer = build_tiny_transformer(
+        "moss_image", dim=3072, num_heads=24, freq_dim=256, num_layers=1
+    ).to("cuda", torch.bfloat16)
+    batch = 4
+    latents = torch.randn(batch, *TINY_MOSS_LATENT_SHAPE[1:], device="cuda")
+    text = torch.randn(batch, 4, TINY_MOSS_TEXT_DIM, device="cuda", dtype=torch.bfloat16)
+    mask = torch.ones(batch, 4, dtype=torch.bool, device="cuda")
+    timestep = torch.full((batch,), 900.0, device="cuda")
+
+    def predict(rows: slice) -> torch.Tensor:
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            return transformer(
+                latents[rows].to(torch.bfloat16),
+                timestep[rows],
+                text[rows],
+                mask[rows],
+                return_dict=False,
+            )[0]
+
+    batched = predict(slice(None))
+    alone = torch.cat([predict(slice(row, row + 1)) for row in range(batch)])
+    assert torch.equal(batched, alone)

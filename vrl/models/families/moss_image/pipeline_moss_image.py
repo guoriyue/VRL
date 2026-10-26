@@ -44,7 +44,10 @@ Edits against that file, all else verbatim apart from formatting:
 - the VAE-input denormalization and unpatchify that ``__call__`` did inline are the module
   function ``latents_to_vae_input``;
 - ``MOSSImageTransformer`` honors ModelMixin gradient checkpointing (per-block
-  ``_gradient_checkpointing_func``) so a 512px CFG replay fits one 32 GB card.
+  ``_gradient_checkpointing_func``) so a 512px CFG replay fits one 32 GB card;
+- ``MOSSImageTransformer.forward`` computes the timestep embedding and modulations per
+  row, inside the per-sample loop, instead of for the whole batch, so a row's prediction
+  does not depend on the batch it runs in (a four-row rollout replayed one row at a time).
 
 Upstream sampling recipe, which the family reproduces: CFG 3.0, 50 flow-matching Euler
 steps with shift 5 snapped to the 1000-point training grid, and the unconditional branch
@@ -286,15 +289,19 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin):
         freq = 10000 ** (-torch.arange(half, device=times.device, dtype=torch.float64) / half)
         phase = times.double()[:, None] * freq
         embedding = torch.cat((phase.cos(), phase.sin()), -1).float()
-        time = self.time_embedding(embedding.to(self.time_embedding[0].weight.dtype)).float()
-        mod = self.shared_block_modulation(
-            time.to(self.shared_block_modulation.weight.dtype)
-        ).view(batch, 6, -1)
-        head = self.video_head_modulation(time.to(self.video_head_modulation.weight.dtype)).view(
-            batch, 2, -1
-        )
         outputs = []
         for index in range(batch):
+            # One row at a time like the blocks: a batched bf16 GEMM rounds the
+            # modulation differently from the one-row call.
+            time = self.time_embedding(
+                embedding[index : index + 1].to(self.time_embedding[0].weight.dtype)
+            ).float()
+            mod = self.shared_block_modulation(
+                time.to(self.shared_block_modulation.weight.dtype)
+            ).view(1, 6, -1)
+            head = self.video_head_modulation(
+                time.to(self.video_head_modulation.weight.dtype)
+            ).view(1, 2, -1)
             context = encoder_hidden_states[index : index + 1, mask[index].bool()]
             if context.shape[1] == 0:
                 raise ValueError("Each sample needs at least one valid text token.")
@@ -312,15 +319,13 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin):
             for layer_index, layer in enumerate(self.layers):
                 if layer_index not in skip_layers:
                     if use_checkpoint:
-                        x = self._gradient_checkpointing_func(
-                            layer, x, rope, mod[index : index + 1]
-                        )
+                        x = self._gradient_checkpointing_func(layer, x, rope, mod)
                     else:
-                        x = layer(x, rope, mod[index : index + 1])
+                        x = layer(x, rope, mod)
             x = self.final_norm_video(
                 x[:, : height * width].to(self.final_norm_video.weight.dtype)
             )
-            x = x * (1 + head[index : index + 1, 1, None]) + head[index : index + 1, 0, None]
+            x = x * (1 + head[:, 1, None]) + head[:, 0, None]
             x = self.final_linear_video(x.to(self.final_linear_video.weight.dtype))
             outputs.append(x.transpose(1, 2).reshape(1, -1, height, width))
         sample = torch.cat(outputs)
