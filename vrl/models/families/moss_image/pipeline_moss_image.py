@@ -42,7 +42,9 @@ Edits against that file, all else verbatim apart from formatting:
 - ``MOSSImagePipeline.encode_prompt`` takes an explicit ``device`` so the frozen encoder
   can run on the host while the DiT lives on the GPU;
 - the VAE-input denormalization and unpatchify that ``__call__`` did inline are the module
-  function ``latents_to_vae_input``.
+  function ``latents_to_vae_input``;
+- ``MOSSImageTransformer`` honors ModelMixin gradient checkpointing (per-block
+  ``_gradient_checkpointing_func``) so a 512px CFG replay fits one 32 GB card.
 
 Upstream sampling recipe, which the family reproduces: CFG 3.0, 50 flow-matching Euler
 steps with shift 5 snapped to the 1000-point training grid, and the unconditional branch
@@ -219,6 +221,8 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin):
     padded tokens cannot influence either text or joint attention.
     """
 
+    _supports_gradient_checkpointing = True
+
     @register_to_config
     def __init__(
         self,
@@ -247,6 +251,7 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin):
         self.final_norm_video = _RMSNorm(dim)
         self.final_linear_video = nn.Linear(dim, latent_channels, bias=False)
         self.video_head_modulation = nn.Linear(dim, 2 * dim)
+        self.gradient_checkpointing = False
 
     def forward(
         self,
@@ -299,9 +304,19 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin):
             rope = self.rope(height, width, context.shape[1], hidden_states.device).to(video.dtype)
             text = self.text_embedder(context, rope[:, height * width :])
             x = torch.cat((video, text), 1)
+            use_checkpoint = (
+                torch.is_grad_enabled()
+                and getattr(self, "gradient_checkpointing", False)
+                and self._gradient_checkpointing_func is not None
+            )
             for layer_index, layer in enumerate(self.layers):
                 if layer_index not in skip_layers:
-                    x = layer(x, rope, mod[index : index + 1])
+                    if use_checkpoint:
+                        x = self._gradient_checkpointing_func(
+                            layer, x, rope, mod[index : index + 1]
+                        )
+                    else:
+                        x = layer(x, rope, mod[index : index + 1])
             x = self.final_norm_video(
                 x[:, : height * width].to(self.final_norm_video.weight.dtype)
             )

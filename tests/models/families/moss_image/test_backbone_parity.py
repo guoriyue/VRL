@@ -293,3 +293,37 @@ def test_moss_replay_through_a_built_trajectory_matches_the_rollout_forward() ->
         sampled = rollout.forward_step(state, 0)["noise_pred"]
 
     torch.testing.assert_close(replayed, sampled)
+
+
+def test_moss_transformer_checkpointing_wraps_kept_blocks_and_skips() -> None:
+    """enable_gradient_checkpointing must actually wrap each kept ``_Block``;
+    skip_layers still omits the released uncond block. Without this the 512px
+    CFG LoRA replay fills a 32 GB card (measured 30.41 GiB OOM)."""
+    transformer = build_tiny_transformer("moss_image")
+    transformer.enable_gradient_checkpointing()
+    assert transformer.gradient_checkpointing is True
+    wrapped: list[int] = []
+    real = transformer._gradient_checkpointing_func
+
+    def _spy(module, *args):
+        wrapped.append(id(module))
+        return real(module, *args)
+
+    transformer._gradient_checkpointing_func = _spy
+    latents = torch.randn(TINY_MOSS_LATENT_SHAPE, requires_grad=True)
+    text = torch.randn(TINY_MOSS_LATENT_SHAPE[0], 4, TINY_MOSS_TEXT_DIM)
+    mask = torch.ones(TINY_MOSS_LATENT_SHAPE[0], 4, dtype=torch.bool)
+    out = transformer(
+        latents,
+        torch.tensor([500.0]),
+        text,
+        mask,
+        skip_layers=UNCOND_SKIP_LAYERS,
+        return_dict=False,
+    )[0]
+    out.float().sum().backward()
+    n_kept = transformer.config.num_layers - len(UNCOND_SKIP_LAYERS)
+    # Per-sample Python loop: one wrap per kept block per batch row.
+    assert len(wrapped) == n_kept * TINY_MOSS_LATENT_SHAPE[0]
+    assert latents.grad is not None and latents.grad.abs().sum() > 0
+
