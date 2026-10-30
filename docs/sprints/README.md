@@ -26,4 +26,4 @@ Lifecycle invariants:
 
 Current program entry point: [VRL implementation and research sprint backlog](planned/SPRINT_pytorch2026_execution_program.md). It links the focused conference-review work, dependency order and existing owner plans.
 
-Scheduling experiment: [replay forward/backward overlap and delayed dW](planned/SPRINT_replay_forward_backward_overlap.md) — current implementation, prerequisites and remaining CUDA qualification.
+Scheduling experiment: [replay forward/backward overlap and delayed dW](planned/SPRINT_replay_forward_backward_overlap.md) — 128px/512px CUDA update checks passed; exclusive measurements do not justify production integration.

@@ -9,11 +9,69 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from copy import deepcopy
 from typing import Any
 from unittest.mock import patch
 
 import torch
 import torch.nn.functional as F
+
+
+def cuda_overlap_summary(trace_path) -> dict[str, Any]:
+    """Attribute device kernel intervals via profiler External ids, not host ranges."""
+    import bisect
+    import json
+    from collections import defaultdict
+
+    from vrl.utils.profiling import TimeIntervals
+
+    events = json.loads(trace_path.read_text())["traceEvents"]
+    scopes = sorted(
+        (event["ts"], event["ts"] + event["dur"], event["name"].removeprefix("probe.replay_"))
+        for event in events
+        if event.get("cat") == "user_annotation"
+        and event.get("name") in {"probe.replay_forward", "probe.replay_backward"}
+    )
+    starts = [start for start, _, _ in scopes]
+    external_stages = {}
+    for event in events:
+        if event.get("cat") != "cpu_op":
+            continue
+        index = bisect.bisect_right(starts, event["ts"]) - 1
+        external = event.get("args", {}).get("External id")
+        if external is not None and index >= 0 and event["ts"] <= scopes[index][1]:
+            external_stages[external] = scopes[index][2]
+    intervals = defaultdict(list)
+    for event in events:
+        if event.get("cat") == "kernel":
+            stage = external_stages.get(event.get("args", {}).get("External id"), "other")
+            intervals[stage].append((event["ts"], event["ts"] + event["dur"]))
+    forward = TimeIntervals(intervals["forward"])
+    backward = TimeIntervals(intervals["backward"])
+    return {
+        "counts": {stage: len(values) for stage, values in intervals.items()},
+        "forward_active_ms": forward.duration / 1000,
+        "backward_active_ms": backward.duration / 1000,
+        "forward_backward_overlap_ms": forward.overlap(backward) / 1000,
+        "has_forward_and_backward_kernels": bool(intervals["forward"] and intervals["backward"]),
+        "scope": "GPU kernel interval unions; instrumented trace, not update latency",
+    }
+
+
+class _StreamLoss:
+    """Keep the trainer's scalar normalization on the replay's CUDA stream."""
+
+    def __init__(self, tensor, stream):
+        self.tensor = tensor
+        self.stream = stream
+
+    def __mul__(self, value):
+        with torch.cuda.stream(self.stream):
+            return _StreamLoss(self.tensor * value, self.stream)
+
+    def __truediv__(self, value):
+        with torch.cuda.stream(self.stream):
+            return _StreamLoss(self.tensor / value, self.stream)
 
 
 class _DeferredLinear(torch.autograd.Function):
@@ -51,8 +109,8 @@ class _DeferredLinear(torch.autograd.Function):
 def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
     """Temporarily schedule replay; always join work and restore patched methods.
 
-    ``serial`` is the unmodified baseline. ``streams`` overlaps one forward
-    with the preceding backward, while backwards accumulate in original order.
+    ``serial`` is the unmodified baseline. ``streams`` schedules private-leaf
+    replicas, while backwards accumulate into the original parameters in order.
     ``deferred_wgrad`` postpones trainable plain Linear weight gradients until
     the real trainer's clipping/optimizer boundary. Neither arm is distributed
     support or a claim that the GPU actually executes kernels concurrently.
@@ -82,6 +140,19 @@ def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
         raise ValueError("replay overlap experiment cannot share streamed model state")
     if any(isinstance(m, torch.nn.Dropout) and m.p > 0 for m in trainer.model.modules()):
         raise ValueError("replay overlap experiment requires deterministic forwards (no dropout)")
+    if mode == "streams":
+        from vrl.trainers.strategy import SingleProcessStrategy
+
+        if type(trainer._strategy) is not SingleProcessStrategy:
+            raise ValueError(
+                "explicit-gradient stream experiment requires the native SingleProcessStrategy"
+            )
+        if any(
+            p._backward_hooks or p._post_accumulate_grad_hooks
+            for p in trainer.model.parameters()
+            if p.requires_grad
+        ):
+            raise ValueError("explicit-gradient stream experiment cannot bypass parameter hooks")
     if mode == "streams" and trainer.device.type != "cuda":
         raise ValueError("streams schedule requires CUDA")
 
@@ -92,12 +163,38 @@ def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
     previous_backward: torch.cuda.Event | None = None
     active_stream: torch.cuda.Stream | None = None
     compute_loss = trainer._compute_replay_loss
-    backward = trainer._backward
+    parameters = [p for p in trainer.model.parameters() if p.requires_grad]
     clip_and_step = trainer._clip_and_step
+    original_model = trainer.model
+    replicas = []
+    replica_parameters = []
+    stepped = False
+    if streams:
+        # Each stream needs its own trainable leaves and checkpoint module
+        # state. Share frozen weights, but never shared AccumulateGrad nodes.
+        frozen = {id(p): p for p in original_model.parameters() if not p.requires_grad}
+        for stream in streams:
+            stream.wait_stream(torch.cuda.current_stream(trainer.device))
+            with torch.cuda.stream(stream):
+                replica = deepcopy(original_model, memo=frozen.copy())
+                replica.train()
+            original_named = dict(original_model.named_parameters())
+            replica_named = dict(replica.named_parameters())
+            if original_named.keys() != replica_named.keys() or any(
+                (replica_named[name] is parameter) == parameter.requires_grad
+                for name, parameter in original_named.items()
+            ):
+                raise ValueError("replica must share frozen weights and isolate trainable leaves")
+            replicas.append(replica)
+            replica_parameters.append([p for p in replica.parameters() if p.requires_grad])
+        stats["private_trainable_leaves"] = sum(p.numel() for p in parameters) * len(streams)
 
     def compute(*args, **kwargs):
         nonlocal active_stream
-        active_stream = streams[stats["forward_calls"] % 2]
+        if stepped:
+            raise ValueError("stream replicas support one optimizer update per scope")
+        index = stats["forward_calls"] % 2
+        active_stream = streams[index]
         stats["forward_calls"] += 1
         caller = torch.cuda.current_stream(trainer.device)
         active_stream.wait_stream(caller)
@@ -117,15 +214,19 @@ def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
         with (
             torch.cuda.stream(active_stream),
             torch.profiler.record_function("probe.replay_forward"),
+            patch.object(trainer, "model", replicas[index]),
         ):
             loss, metrics = compute_loss(*args, **kwargs)
-        # Normalization remains in the trainer on its caller stream.
-        caller.wait_stream(active_stream)
-        loss.record_stream(caller)
-        return loss, metrics
+        # A root loss op on the caller stream causes autograd to join backward
+        # there before returning. The next forward would then wait for all of
+        # the preceding backward, even with independent gradient collection.
+        return _StreamLoss(loss, active_stream), metrics
 
     def run_backward(loss):
         nonlocal previous_backward
+        if not isinstance(loss, _StreamLoss):
+            raise TypeError("stream backward requires the stream-owned replay loss")
+        loss = loss.tensor
         if active_stream is None:
             raise RuntimeError("backward without a scheduled replay forward")
         active_stream.wait_stream(torch.cuda.current_stream(trainer.device))
@@ -138,15 +239,31 @@ def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
             torch.profiler.record_function("probe.replay_backward"),
         ):
             loss.record_stream(active_stream)
-            backward(loss)
+            # Each replica owns its AccumulateGrad nodes. Collect its gradients,
+            # then accumulate into optimizer-owned Parameters in original order.
+            leaves = replica_parameters[(stats["forward_calls"] - 1) % 2]
+            gradients = torch.autograd.grad(loss, leaves, allow_unused=True)
+            with torch.no_grad():
+                for parameter, gradient in zip(parameters, gradients, strict=True):
+                    if gradient is None:
+                        continue
+                    if parameter.grad is None:
+                        parameter.grad = gradient.detach()
+                    else:
+                        parameter.grad.record_stream(active_stream)
+                        parameter.grad.add_(gradient)
             previous_backward = torch.cuda.Event()
             previous_backward.record(active_stream)
 
     def finish_update(optimizer):
+        nonlocal stepped
         if streams:
             caller = torch.cuda.current_stream(trainer.device)
             for stream in streams:
                 caller.wait_stream(stream)
+            for parameter in parameters:
+                if parameter.grad is not None:
+                    parameter.grad.record_stream(caller)
         if pending:
             stats["queued_bytes_peak"] = max(
                 stats["queued_bytes_peak"],
@@ -172,7 +289,9 @@ def replay_schedule(trainer: Any, *, mode: str) -> Iterator[dict[str, Any]]:
                         else:
                             bias.grad.add_(grad_bias)
             pending.clear()
-        return clip_and_step(optimizer)
+        result = clip_and_step(optimizer)
+        stepped = True
+        return result
 
     with ExitStack() as stack:
         if mode == "streams":
@@ -254,6 +373,8 @@ def compare_updates(
     import statistics
     import time
 
+    import numpy as np
+
     if warmup < 0 or repeats < 1 or not modes or len(set(modes)) != len(modes):
         raise ValueError("need warmup >= 0, repeats >= 1 and distinct nonempty modes")
     if "serial" not in modes or modes[0] != "serial" or atol < 0 or rtol < 0:
@@ -293,6 +414,7 @@ def compare_updates(
     algorithm_state = copy.deepcopy(trainer.algorithm.__dict__)
     parity_passed = trainer._replay_parity_passed
     python_rng = random.getstate()
+    numpy_rng = np.random.get_state()
     cpu_rng = torch.get_rng_state()
     cuda_rng = torch.cuda.get_rng_state(device) if device.type == "cuda" else None
 
@@ -308,6 +430,7 @@ def compare_updates(
         trainer.algorithm.__dict__.update(copy.deepcopy(algorithm_state))
         trainer._replay_parity_passed = parity_passed
         random.setstate(python_rng)
+        np.random.set_state(numpy_rng)
         torch.set_rng_state(cpu_rng)
         if cuda_rng is not None:
             torch.cuda.set_rng_state(cuda_rng, device)
@@ -355,6 +478,7 @@ def compare_updates(
                     {
                         "gradients": gradients,
                         "parameters": parameters,
+                        "buffers": dict(trainer.model.named_buffers()),
                         "optimizer": optimizer.state_dict(),
                         "loss": metrics.loss,
                         "grad_norm": metrics.grad_norm,
@@ -411,25 +535,16 @@ def compare_updates(
                     # must not hide a later stream/lifetime race; copies and
                     # assertions happen after the timer and peak sampling.
                     actual_state = snapshot(
-                        {"parameters": parameters, "optimizer": optimizer.state_dict()}
+                        {
+                            "parameters": parameters,
+                            "buffers": dict(trainer.model.named_buffers()),
+                            "optimizer": optimizer.state_dict(),
+                        }
                     )
                     expected_state = {key: reference[key] for key in actual_state}
                     torch.testing.assert_close(
                         actual_state, expected_state, atol=atol, rtol=rtol, equal_nan=False
                     )
-                if trace_dir is not None:
-                    reset()
-                    activities = [torch.profiler.ProfilerActivity.CPU]
-                    if device.type == "cuda":
-                        activities.append(torch.profiler.ProfilerActivity.CUDA)
-                    with (
-                        torch.profiler.profile(activities=activities) as prof,
-                        replay_schedule(trainer, mode=mode),
-                    ):
-                        asyncio.run(trainer.train_on_rollout_batch(batch))
-                        if device.type == "cuda":
-                            torch.cuda.synchronize(device)
-                    prof.export_chrome_trace(str(trace_dir / f"{mode}.trace.json"))
                 report["arms"][mode] = {
                     "correctness_passed": True,
                     "gradient_max_abs": gradient_max_abs,
@@ -448,6 +563,34 @@ def compare_updates(
                 report["error"] = f"{mode}: {type(error).__name__}: {error}"
                 report["arms"][mode] = {"correctness_passed": False, "error": str(error)}
                 raise UpdateComparisonError(report) from error
+
+        # Capture after every timing arm, so profiler allocation/destruction
+        # cannot contaminate the next arm's latency or allocator history.
+        if trace_dir is not None:
+            for mode in modes:
+                try:
+                    reset()
+                    activities = [torch.profiler.ProfilerActivity.CPU]
+                    if device.type == "cuda":
+                        activities.append(torch.profiler.ProfilerActivity.CUDA)
+                    with (
+                        torch.profiler.profile(activities=activities) as prof,
+                        replay_schedule(trainer, mode=mode),
+                    ):
+                        asyncio.run(trainer.train_on_rollout_batch(batch))
+                        if device.type == "cuda":
+                            torch.cuda.synchronize(device)
+                    prof.export_chrome_trace(str(trace_dir / f"{mode}.trace.json"))
+                    del prof
+                    if mode == "streams":
+                        report["arms"][mode]["cuda_overlap"] = cuda_overlap_summary(
+                            trace_dir / f"{mode}.trace.json"
+                        )
+                except Exception as error:
+                    report["passed"] = False
+                    report["error"] = f"{mode} trace: {type(error).__name__}: {error}"
+                    report["arms"][mode]["trace_error"] = str(error)
+                    raise UpdateComparisonError(report) from error
 
     finally:
         reset()

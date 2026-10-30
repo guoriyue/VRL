@@ -13,7 +13,6 @@ import importlib.util
 import json
 import os
 import platform
-import random
 import subprocess
 import time
 from pathlib import Path
@@ -99,7 +98,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--atol", type=float, default=1e-6)
     parser.add_argument("--rtol", type=float, default=1e-4)
     parser.add_argument("--trace", action="store_true")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--seed", type=int, default=None, help="override trainer.seed for this probe"
+    )
     args = parser.parse_args(argv)
     if args.artifact_dir is None:
         parser.error("--artifact-dir is required; reports never overwrite an existing directory")
@@ -135,7 +136,7 @@ def main(argv: list[str] | None = None) -> None:
         "overrides": args.overrides,
         "preflight": preflight,
         "reward_source": "synthetic sample-index scores (not quality evaluation)",
-        "initialization_seed": args.seed,
+        "seed_override": args.seed,
         "execution_environment": {
             name: os.environ.get(name)
             for name in (
@@ -184,8 +185,14 @@ def main(argv: list[str] | None = None) -> None:
         from vrl.models.precision import apply_float32_precision
 
         apply_float32_precision(built.precision.rollout.float32_precision)
-        random.seed(args.seed)
-        torch.manual_seed(args.seed)
+        from vrl.run import OnlineRunConfig
+
+        run_config = OnlineRunConfig.from_root(built.root)
+        if args.seed is not None:
+            run_config = replace(run_config, seed=args.seed)
+        run_config.initialize_process_rng()
+        report["initialization_seed"] = run_config.seed
+        report["deterministic_algorithms"] = torch.are_deterministic_algorithms_enabled()
         inputs = prepare_inputs(args, built.root)
         if inputs.quantization is not None or inputs.compiled:
             raise ValueError(

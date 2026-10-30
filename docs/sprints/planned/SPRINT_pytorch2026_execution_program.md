@@ -93,4 +93,4 @@ Use the [sprint lifecycle](../README.md): only executable active plans live here
 
 ## 6. Replay 重叠执行试点（2026-10-29）
 
-[Forward/backward 重叠与延后 dW](SPRINT_replay_forward_backward_overlap.md) 记录本次 DeepSeek 调度借鉴的独立实现、命令和硬件验收门槛。它衔接 PT26-00 验收和 PT26-07 通信测量，保留原 owner；生产路径尚未启用。
+[Forward/backward 重叠与延后 dW](SPRINT_replay_forward_backward_overlap.md) 记录本次 DeepSeek 调度借鉴的独立实现、命令和硬件验收门槛。128px/512px CUDA 更新一致性通过，但独占性能与 trace 未证明可采用的净收益，因此不进入生产集成。它衔接 PT26-00 验收和 PT26-07 通信测量，保留原 owner。

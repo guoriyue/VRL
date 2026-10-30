@@ -58,7 +58,7 @@ def test_invalid_recipe_writes_a_failed_verdict(tmp_path):
 
 
 @pytest.mark.gpu
-def test_cuda_streams_and_checkpointed_dw_preserve_the_real_update(monkeypatch, tmp_path):
+def test_cuda_streams_and_checkpointed_dw_preserve_the_real_update(monkeypatch, tmp_path, recwarn):
     cfg = tiny_sana_online_config(
         tmp_path,
         overrides=(
@@ -96,6 +96,8 @@ def test_cuda_streams_and_checkpointed_dw_preserve_the_real_update(monkeypatch, 
     assert all(not arm["seconds"] for arm in report["arms"].values())
     assert set(report["arms"]) == {"serial", "streams", "deferred_wgrad"}
     assert report["arms"]["streams"]["schedule"]["forward_calls"] >= 2
+    assert report["arms"]["streams"]["schedule"]["private_trainable_leaves"] > 0
+    assert not any("AccumulateGrad" in str(w.message) for w in recwarn)
     assert report["update_device"].startswith("cuda")
 
 
@@ -136,3 +138,50 @@ def test_nonzero_lora_survives_rollout_to_replay_and_delayed_dw(monkeypatch, tmp
     deferred = report["arms"]["deferred_wgrad"]["schedule"]["deferred_linears"]
     assert deferred and all("lora_" in name for name in deferred)
     assert (out / "deferred_wgrad.trace.json").is_file()
+
+
+def test_probe_honors_recipe_rng_policy_before_model_construction(monkeypatch, tmp_path):
+    import random
+
+    import numpy as np
+    import torch
+
+    cfg = tiny_sana_online_config(
+        tmp_path,
+        overrides=(
+            "trainer.seed=123",
+            "trainer.deterministic=true",
+            "actor.ppo_epochs=1",
+            "actor.ema.enable=false",
+            "algorithm.kl_coef=0.0",
+        ),
+    )
+    path = tmp_path / "deterministic.yaml"
+    OmegaConf.save(cfg, path)
+    enabled = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    cudnn = (torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark)
+    rng = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+    def before_build(args, root):
+        assert torch.are_deterministic_algorithms_enabled()
+        torch.testing.assert_close(
+            torch.rand(3), torch.rand(3, generator=torch.Generator().manual_seed(123))
+        )
+        np.testing.assert_array_equal(np.random.rand(3), np.random.RandomState(123).rand(3))
+        assert random.random() == random.Random(123).random()
+        raise RuntimeError("stop before model construction")
+
+    monkeypatch.setattr(replay_overlap_probe, "prepare_inputs", before_build)
+    try:
+        with pytest.raises(RuntimeError, match="stop before model construction"):
+            replay_overlap_probe.main(
+                ["--config", str(path), "--artifact-dir", str(tmp_path / "probe")]
+            )
+    finally:
+        random.setstate(rng[0])
+        np.random.set_state(rng[1])
+        torch.set_rng_state(rng[2])
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+        torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark = cudnn

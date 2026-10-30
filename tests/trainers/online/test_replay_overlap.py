@@ -3,13 +3,40 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 import torch
 
 from tests.rollouts.collector._helpers import IndexReward
 from tests.trainers.online._helpers import real_trainer
-from vrl.scripts.perf.replay_overlap import compare_updates, replay_schedule
+from vrl.scripts.perf.replay_overlap import (
+    compare_updates,
+    cuda_overlap_summary,
+    replay_schedule,
+)
+
+
+def test_overlap_evidence_uses_kernel_unions_and_ignores_gpu_annotations(tmp_path):
+    # GPU annotations can duplicate the host scope names, at different times.
+    # They must not truncate host attribution or inflate kernel overlap.
+    events = [
+        {"cat": "user_annotation", "name": "probe.replay_forward", "ts": 0, "dur": 20},
+        {"cat": "user_annotation", "name": "probe.replay_backward", "ts": 20, "dur": 20},
+        {"cat": "gpu_user_annotation", "name": "probe.replay_forward", "ts": 25, "dur": 1},
+        {"cat": "cpu_op", "ts": 5, "args": {"External id": 1}},
+        {"cat": "cpu_op", "ts": 30, "args": {"External id": 2}},
+        {"cat": "kernel", "ts": 100, "dur": 20, "args": {"External id": 1}},
+        {"cat": "kernel", "ts": 105, "dur": 10, "args": {"External id": 1}},
+        {"cat": "kernel", "ts": 110, "dur": 20, "args": {"External id": 2}},
+    ]
+    path = tmp_path / "streams.trace.json"
+    path.write_text(json.dumps({"traceEvents": events}))
+    result = cuda_overlap_summary(path)
+    assert result["has_forward_and_backward_kernels"]
+    assert result["forward_active_ms"] == 0.02
+    assert result["backward_active_ms"] == 0.02
+    assert result["forward_backward_overlap_ms"] == 0.01
 
 
 def test_deferred_weight_gradients_match_the_real_grpo_update(monkeypatch, tmp_path):
@@ -118,6 +145,43 @@ def test_unsupported_stream_arm_fails_before_warmup_mutates_weights(monkeypatch,
         )
     for name, parameter in tb.trainable_parameters().items():
         torch.testing.assert_close(parameter, before[name], rtol=0, atol=0)
+
+
+def test_comparison_rejects_buffer_mutation_even_when_gradients_match(monkeypatch, tmp_path):
+    from vrl.scripts.perf import replay_overlap
+
+    tb = real_trainer(
+        monkeypatch,
+        tmp_path,
+        reward=IndexReward(),
+        overrides=(
+            "actor.training_microbatch_size=1",
+            "actor.ppo_epochs=1",
+            "actor.ema.enable=false",
+            "algorithm.kl_coef=0.0",
+        ),
+    )
+    batch = asyncio.run(tb.trainer.collect_training_batch(["a cat"]))
+    monkeypatch.setattr(tb.trainer._rollout_runtime, "weight_syncer", None)
+    tb.model.transformer.register_buffer("probe_running_state", torch.zeros(()))
+    actual = replay_overlap._DeferredLinear.backward
+
+    def corrupt_buffer(ctx, grad_output):
+        tb.model.transformer.probe_running_state.add_(1)
+        return actual(ctx, grad_output)
+
+    monkeypatch.setattr(replay_overlap._DeferredLinear, "backward", corrupt_buffer)
+    with pytest.raises(replay_overlap.UpdateComparisonError, match="buffers"):
+        compare_updates(
+            tb.trainer,
+            batch,
+            modes=("serial", "deferred_wgrad"),
+            warmup=0,
+            repeats=1,
+            atol=1e-6,
+            rtol=1e-4,
+        )
+    assert tb.model.transformer.probe_running_state.item() == 0
 
 
 def test_autocast_delayed_dw_updates_fp32_masters_and_preserves_input_gradient(
