@@ -90,3 +90,7 @@ The local review inputs are `~/Desktop/pytorch2026-vrl-review/recommendations.js
 Coverage of the ten actionable review recommendations is explicit: **1 → PT26-01; 2 → PT26-03; 3 → PT26-04 plus the HSDP/CFG owner triggers; 4 → PT26-05; 5 → PT26-06; 6 → PT26-07; 7 → PT26-08 and transport owner; 8 → PT26-09; 9 → PT26-10; 10 → PT26-11.** PT26-00, PT26-02 and PT26-12 cover acceptance, the newly identified prefix gap and bounded materials follow-up.
 
 Use the [sprint lifecycle](../README.md): only executable active plans live here. When a focused sprint's final action lands, remove its file and replace this index link with the remaining owner's plan or remove the completed row in the same commit. Keep only measurements that support a current decision; do not append completed-run archives or DONE banners. A conditional experiment can finish with a no-go decision; unresolved hardware or missing evidence is not a passing result.
+
+## 6. Replay 重叠执行试点（2026-10-29）
+
+[Forward/backward 重叠与延后 dW](SPRINT_replay_forward_backward_overlap.md) 记录本次 DeepSeek 调度借鉴的独立实现、命令和硬件验收门槛。它衔接 PT26-00 验收和 PT26-07 通信测量，保留原 owner；生产路径尚未启用。

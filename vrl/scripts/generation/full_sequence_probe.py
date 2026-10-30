@@ -42,6 +42,7 @@ import contextlib
 import json
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -185,13 +186,24 @@ def _compare_calls(
     return {"first_divergent_module": first, "blocks": blocks}
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
-    started = time.perf_counter()
-    artifact_dir = Path(args.artifact_dir) if args.artifact_dir else None
-    if artifact_dir is not None:
-        artifact_dir.mkdir(parents=True, exist_ok=False)
+@dataclass(slots=True)
+class ProbeInputs:
+    """One recipe's prepared rollout, shared by forward and training probes."""
 
+    root: Any
+    entry: Any
+    model: Any
+    request: Any
+    params: Any
+    loop_config: Any
+    state: Any
+    replay_rows: int
+    quantization: Any
+    compiled: bool
+
+
+def prepare_inputs(args: argparse.Namespace, root: Any = None) -> ProbeInputs:
+    """Build and condition the recipe through the production family/executor APIs."""
     from dataclasses import replace
 
     import torch
@@ -200,24 +212,17 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import parse_config
     from vrl.generation.steps.denoise.config import DenoiseLoopConfig
-    from vrl.generation.steps.denoise.loop import run_denoise_loop
     from vrl.generation.types import GenerationInput, GenerationRequest
-    from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.semantics import task_type_for
     from vrl.rollouts.collector import RolloutCollectorConfig
-    from vrl.trainers.core.types import ReplayParityConfig
     from vrl.trainers.online.config import OnlineBatchConfig
     from vrl.utils.config import import_from_path
 
-    root = parse_config(load_config(args.config, overrides=args.overrides))
+    if root is None:
+        root = parse_config(load_config(args.config, overrides=args.overrides))
     entry = get_model_family_entry(str(root.model.family))
     batch_config = OnlineBatchConfig.from_root(root)
-    replay_parity = (
-        root.trainer.replay_parity if root.trainer is not None else None
-    ) or ReplayParityConfig()
-    gate = float(replay_parity.max_abs_logprob_diff)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     build = entry.resolve_model_build(
         root, device, precision=PrecisionPolicy.from_section(root.precision)
@@ -300,6 +305,45 @@ def main(argv: list[str] | None = None) -> None:
                 encoded=encoded, generation_request=request, batch=batch
             ),
         )
+
+    return ProbeInputs(
+        root,
+        entry,
+        model,
+        request,
+        params,
+        loop_config,
+        state,
+        replay_rows,
+        quantization,
+        compiled,
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    started = time.perf_counter()
+    artifact_dir = Path(args.artifact_dir) if args.artifact_dir else None
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=False)
+
+    import torch
+
+    from vrl.generation.steps.denoise.loop import run_denoise_loop
+    from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.trainers.core.types import ReplayParityConfig
+
+    inputs = prepare_inputs(args)
+    entry, model = inputs.entry, inputs.model
+    params, state, loop_config = inputs.params, inputs.state, inputs.loop_config
+    quantization, compiled = inputs.quantization, inputs.compiled
+    transformer = model.transformer
+    rollout_rows, replay_rows = loop_config.sample_count, inputs.replay_rows
+    device = next(transformer.parameters()).device
+    replay_parity = (
+        inputs.root.trainer.replay_parity if inputs.root.trainer is not None else None
+    ) or ReplayParityConfig()
+    gate = float(replay_parity.max_abs_logprob_diff)
 
     # Per-module hooks are closures dynamo guards on, so every hooked block
     # would recompile until the recompile limit drops it to eager: a compiled
