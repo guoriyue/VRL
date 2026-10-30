@@ -266,7 +266,7 @@ _TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
     # a multiple of 8 (dim 16 / 2 heads); 24 blocks so the released negative-branch
     # skip index 22 exists and the production default runs unchanged.
     "moss_image": (
-        "vrl.models.families.moss_image.pipeline_moss_image:MOSSImageTransformer",
+        "vrl.models.families.moss_image.upstream:MOSSImageTransformer",
         dict(
             dim=16,
             ffn_dim=32,
