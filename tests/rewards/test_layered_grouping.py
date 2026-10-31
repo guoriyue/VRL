@@ -77,6 +77,45 @@ def test_a_layer_of_unannotated_pixels_costs_nothing():
     assert _grouping(_stack([BALL & ~half, CUBE, half | plant], [RED, BLUE, RED])) < 0.9
 
 
+def test_padding_an_unmatched_fragment_with_void_cannot_raise_grouping():
+    fragment = _box(4, 20, 4, 9) & ~CUBE
+    void = ~np.logical_or.reduce(OBJECTS)
+    split = _grouping(_stack([BALL & ~fragment, CUBE, fragment], [RED, BLUE, RED]))
+    padded = _grouping(_stack([BALL & ~fragment, CUBE, fragment | void], [RED, BLUE, RED]))
+    assert padded == pytest.approx(split)
+    assert padded < 1.0
+
+
+def test_a_tiny_annotated_object_gets_credit_below_the_display_cutoff():
+    tiny = _box(0, 2, 0, 4)
+    objects = [*OBJECTS, tiny]
+    complete = LayerStack.from_rgba(_stack([BALL, CUBE, tiny], [RED, BLUE, RED]))
+    missing = LayerStack.from_rgba(_stack([BALL, CUBE], [RED, BLUE]))
+    assert complete.match(objects)[1] == pytest.approx(1.0)
+    assert missing.match(objects)[1] < complete.match(objects)[1]
+
+
+def test_global_assignment_maximizes_weighted_quality_instead_of_greedy_iou():
+    first, second, mixed, remainder = [np.zeros((H, W), bool) for _ in range(4)]
+    first.flat[:400] = True
+    second.flat[400:560] = True
+    mixed.flat[:240] = True
+    mixed.flat[400:560] = True
+    remainder[:] = first & ~mixed
+    stack = LayerStack.from_rgba(_stack([mixed, remainder], [RED, BLUE]))
+    matches, score = stack.match([first, second])
+    assert matches == {0: 2, 1: 1}
+    assert score == pytest.approx(0.4)
+    # Rectangular assignment, absent objects, and layer order must be safe too.
+    absent = _box(28, 32, 0, 4)
+    assert stack.match([first, second, absent])[1] < score
+    reversed_stack = LayerStack.from_rgba(_stack([remainder, mixed], [BLUE, RED]))
+    assert reversed_stack.match([first, second])[1] == pytest.approx(score)
+    assert stack.match([]) == ({}, 0.0)
+    assert stack.match([EMPTY]) == ({}, 0.0)
+    assert LayerStack.from_rgba(_stack([EMPTY], [RED])).match(OBJECTS) == ({}, 0.0)
+
+
 def _truth_dir(tmp_path, layers, inferable):
     for index, layer in enumerate(layers):
         Image.fromarray((layer * 255).round().astype(np.uint8), "RGBA").save(

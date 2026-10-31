@@ -15,6 +15,7 @@ dependencies = [
     "torch>=2.13.0,<2.14",
     "triton>=3.0.0",
     "numpy>=1.26.0",
+    "scipy>=1.11.0",       # optimal one-to-one object/layer assignment in the CPU reward
     "einops>=0.7.0",
     "pyyaml>=6.0",
     "omegaconf>=2.3.0",
