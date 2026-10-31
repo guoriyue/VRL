@@ -3,7 +3,8 @@
 # sampling layers are the only family-specific parts. The checkpoint is
 # guidance-distilled (20_step_no_cfg keeps guidance_scale at 1.0) and generates
 # at 24 fps only. Not validated: no run of this file has completed (the 144 GB
-# checkpoint needs a multi-GPU FSDP deployment).
+# checkpoint needs a multi-GPU FSDP deployment held resident; the `_single_gpu`
+# variant beside it is the one-card residency the probe runs on).
 defaults:
   - /recipe/online/denoise_grpo
   - /model/minimax_h3/h3

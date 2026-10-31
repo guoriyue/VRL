@@ -70,7 +70,7 @@ positioning and roadmap.
 | **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2.5** | text -> world | full_sequence / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
-| **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: needs multi-GPU FSDP; CPU tiny-real parity only; diffusers>=0.40) |
+| **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: multi-GPU FSDP, or one 32 GB card through the `_single_gpu` recipe's streamed policy and host conditioner; CPU tiny-real parity only until the probe in `docs/minimax_h3.md` runs; diffusers>=0.40) |
 | **VDN-H3** (VideoDeltaNet on MiniMax-H3) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (hybrid window-softmax + linear attention grafted on the H3 backbone; 8-NFE distilled artifact; vendored submodule; CPU tiny-real only) |
 
 `FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing

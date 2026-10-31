@@ -5,9 +5,12 @@
 # (runtime.py). The audio rows ride along as a deterministic side stream and are
 # not part of the policy action (model.py).
 #
-# Size: 33B transformer + 32B Qwen3-VL conditioner (~144 GB bf16). Single-card
-# runs are out of reach; this preset is the LoRA shape a multi-GPU FSDP
-# deployment starts from. Requires diffusers>=0.40.0 (MiniMaxH3Transformer3DModel).
+# Size: 33B transformer + 32B Qwen3-VL conditioner (~144 GB bf16). This preset
+# is the LoRA shape; residency is the experiment's: a multi-GPU FSDP deployment
+# holds both resident, one 32 GB card streams the policy (model.offload) and
+# keeps the conditioner on the host (model.memory.cpu_resident), see
+# experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu.
+# Requires diffusers>=0.40.0 (MiniMaxH3Transformer3DModel).
 # License: MiniMax-H3 Community License -- check its geographic and use
 # restrictions before deploying the weights.
 model:

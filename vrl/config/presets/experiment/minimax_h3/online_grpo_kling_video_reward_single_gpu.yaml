@@ -1,0 +1,42 @@
+# MiniMax-H3 T2V GRPO on one 32 GB card: the residency plan that lets the released
+# 144 GB checkpoint roll out and replay on a single RTX 5090 with 91 GB of host RAM.
+#
+# - The 33B transformer streams its frozen blocks from the host per call
+#   (model.offload, actor.offload). pin_host is off: a pinned copy is 66 GB of
+#   locked RAM next to the 67 GB conditioner, while the loader's file-backed
+#   weights stay evictable page cache, at about a third of the copy bandwidth.
+# - The Qwen3-VL-32B conditioner stays on the host (model.memory.cpu_resident)
+#   and encodes each prompt there: one 32B CPU forward per prompt, against
+#   minutes of denoising per clip.
+# - Both VAEs sit on the card in fp32 (the video VAE is 10.4 GB).
+# - The canvas drops to 640x384 (about 9.7k packed rows at 124 frames) so the
+#   activations fit beside the streamed policy; 768p is the deployment canvas.
+#
+# Validation: the full-sequence probe on this file is the family's integration
+# check (docs/minimax_h3.md). No training step has run on it.
+#
+# Usage (run under a host-memory cap: the two file-backed models exceed the RAM):
+#   CUDA_VISIBLE_DEVICES=0 systemd-run --user --scope -p MemoryMax=80G \
+#     vrl-train --config experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu
+defaults:
+  - /experiment/minimax_h3/online_grpo_kling_video_reward
+  - _self_
+
+model:
+  offload:
+    pin_host: false
+  memory:
+    cpu_resident: [text_encoder]
+
+sampling:
+  width: 640
+  height: 384
+
+actor:
+  offload:
+    pin_host: false
+  gradient_checkpointing: full
+  training_microbatch_size: 1
+
+trainer:
+  output_dir: outputs/minimax_h3_kling_video_reward_single_gpu
