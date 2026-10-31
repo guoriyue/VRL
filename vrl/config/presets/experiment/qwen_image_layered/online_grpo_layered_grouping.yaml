@@ -83,3 +83,10 @@ trainer:
   output_dir: outputs/layered_grpo/coco_grouping
   total_epochs: 1000
   save_freq: 2
+  # Eager bf16 rollout (generation batch 4) against replay (microbatch 2)
+  # measured at most 5.2e-6 over 284 updates of the 2026-10 layered runs. Gate
+  # every update at twice that, an order below the 1e-4 ratio clip: drift
+  # that appears only once the adapter has moved must still stop the run.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-5
+    every_update: true
