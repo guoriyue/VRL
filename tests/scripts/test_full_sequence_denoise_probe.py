@@ -24,5 +24,21 @@ def test_probe_replays_a_recipe_rollout_at_the_trainer_batch(monkeypatch, tmp_pa
     assert (report["rollout_batch"], report["replay_batch"]) == (2, 1)
     assert [step["step"] for step in report["steps"]] == [0, 1]
     assert report["max_logprob_abs"] <= report["max_abs_logprob_diff_gate"]
-    assert "first_divergent_module" in report["steps"][0]
+    assert report["module_hooks"] and "first_divergent_module" in report["steps"][0]
     assert (tmp_path / "probe" / "image.png").is_file()
+
+
+def test_probe_without_module_hooks_compares_per_step_only(monkeypatch, tmp_path) -> None:
+    cfg = tiny_sana_online_config(tmp_path, overrides=("actor.training_microbatch_size=1",))
+    TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
+    config = tmp_path / "resolved.yaml"
+    OmegaConf.save(cfg, config)
+
+    full_sequence_probe.main(
+        ["--config", str(config), "--artifact-dir", str(tmp_path / "probe"), "--no-module-hooks"]
+    )
+
+    report = json.loads((tmp_path / "probe" / "result.json").read_text())
+    assert report["passed"] and not report["module_hooks"]
+    assert "first_divergent_module" not in report["steps"][0]
+    assert all("logprob_max_abs" in step for step in report["steps"])

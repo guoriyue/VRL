@@ -25,7 +25,8 @@ The probe
   the trainer replays its unquantized policy;
 - names the first module whose step-0 output differs between the two sides
   (forward hooks on row 0; skipped under ``torch.compile``, whose guards would
-  recompile every hooked block);
+  recompile every hooked block, and under ``--no-module-hooks``, for a packed
+  sequence whose per-module row-0 outputs would not fit next to the model);
 - reports ``|Δlogprob|`` per step, which separates an op that is itself
   imprecise from late small-sigma steps amplifying a tiny difference, and fails
   when the maximum exceeds the replay gate.
@@ -78,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact-dir",
         default=None,
         help="new directory for the decoded image/video and result.json",
+    )
+    parser.add_argument(
+        "--no-module-hooks",
+        action="store_true",
+        help="compare the two sides per step only, without holding every module's "
+        "step-0 row-0 output (a long packed sequence times every block does not fit)",
     )
     return parser
 
@@ -296,8 +303,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # Per-module hooks are closures dynamo guards on, so every hooked block
     # would recompile until the recompile limit drops it to eager: a compiled
-    # run is compared per step only.
-    recorder = _Recorder(transformer, rows=rollout_rows, hooks=not compiled)
+    # run is compared per step only, as is a run that opted out of the hooks.
+    module_hooks = not compiled and not args.no_module_hooks
+    recorder = _Recorder(transformer, rows=rollout_rows, hooks=module_hooks)
     rollout_noise: dict[int, Any] = {}
 
     def forward_step(step_state: Any, step_idx: int) -> dict[str, Any]:
@@ -381,7 +389,7 @@ def main(argv: list[str] | None = None) -> None:
                     .max()
                     .item()
                 )
-            if step_idx == 0:
+            if step_idx == 0 and module_hooks:
                 entry_report.update(
                     _compare_calls(step0_calls, recorder.take(), recorder.block_names)
                 )
@@ -418,6 +426,7 @@ def main(argv: list[str] | None = None) -> None:
             "rollout_batch": rollout_rows,
             "replay_batch": replay_rows,
             "compiled": compiled,
+            "module_hooks": module_hooks,
             "quantization": None if quantization is None else quantization.format,
             "max_abs_logprob_diff_gate": gate,
             "max_logprob_abs": max_logprob_abs,
