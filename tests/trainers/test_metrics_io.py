@@ -251,21 +251,32 @@ def test_online_metric_row_rejects_invalid_integer_fields(
         OnlineMetricRow.from_step_metrics(epoch, metrics)  # type: ignore[arg-type]
 
 
-def test_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> None:
-    """Appending new-schema rows under an old header silently shifts columns."""
+def test_metrics_csv_resume_migrates_rows_to_a_schema_with_added_columns(tmp_path) -> None:
+    """Old rows are re-laid out by name, so new-schema appends stay aligned."""
 
     path = tmp_path / "metrics.csv"
-    columns = ("epoch", "loss", "approx_kl")
+    path.write_text("epoch,loss,approx_kl\n0,1.0,0.1\n1,0.9,0.2\n2,0.8,0.3\n")
 
-    MetricsCSV(path, columns, resume_at=None)
-    MetricsCSV(path, columns, resume_at=("epoch", 0))
+    csv_file = MetricsCSV(
+        path,
+        ("epoch", "loss", "active_clip_fraction", "approx_kl"),
+        resume_at=("epoch", 2),
+    )
+    csv_file.append("2,0.7,0.5,0.4\n")
+
+    assert path.read_text() == (
+        "epoch,loss,active_clip_fraction,approx_kl\n0,1.0,nan,0.1\n1,0.9,nan,0.2\n2,0.7,0.5,0.4\n"
+    )
+
+
+def test_metrics_csv_rejects_resume_across_reordered_columns(tmp_path) -> None:
+    """The same column set in another order is not an additive migration."""
+
+    path = tmp_path / "metrics.csv"
+    path.write_text("epoch,loss,approx_kl\n0,1.0,0.1\n")
 
     with pytest.raises(ValueError, match="different metrics schema"):
-        MetricsCSV(
-            path,
-            ("epoch", "loss", "active_clip_fraction", "approx_kl"),
-            resume_at=("epoch", 0),
-        )
+        MetricsCSV(path, ("epoch", "approx_kl", "loss", "grad_norm"), resume_at=("epoch", 0))
 
 
 @pytest.mark.parametrize(

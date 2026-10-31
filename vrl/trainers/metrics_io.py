@@ -274,6 +274,12 @@ class MetricsCSV:
 
         Later rows describe updates absent from the checkpoint and will be
         recomputed after resume. Replace the aligned file atomically.
+
+        A file written before the schema gained columns is migrated: its
+        columns must appear in the new schema in the same order, and each
+        retained row is re-laid out by column name with ``nan`` in the added
+        columns. A renamed, removed or reordered column would misalign the
+        rows, so it still fails.
         """
         path = self.path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,24 +314,45 @@ class MetricsCSV:
         text = path.read_text(encoding="utf-8")
         complete_text = text if text.endswith("\n") else text.rpartition("\n")[0] + "\n"
         lines = io.StringIO(complete_text).readlines()
-        existing_header = lines[0] if lines else ""
-        if existing_header.rstrip("\r\n") != normalized_header.rstrip("\n"):
+        existing_columns = tuple(next(csv.reader([lines[0]]))) if lines else ()
+        remaining = iter(column_names)
+        # ``name in remaining`` consumes the iterator: an ordered-subsequence test.
+        additive = (
+            bool(existing_columns)
+            and len(existing_columns) == len(set(existing_columns))
+            and all(name in remaining for name in existing_columns)
+        )
+        if not additive:
             raise ValueError(
                 f"{path} was written by a different metrics schema; appending "
                 "would silently misalign columns. Move the old file aside or "
                 "start a fresh output_dir.",
             )
+        migrated = existing_columns != column_names
+        if migrated:
+            existing = set(existing_columns)
+            added = [name for name in column_names if name not in existing]
+            logger.warning(
+                "Migrating %s to the current metrics schema; rows written before it "
+                "carry nan in the added column(s): %s",
+                path,
+                ", ".join(added),
+            )
+            if position_column not in existing_columns:
+                raise ValueError(
+                    f"metrics CSV is missing resume column {position_column!r}: {path}"
+                )
 
-        position_index = column_names.index(position_column)
+        position_index = existing_columns.index(position_column)
         retained_lines: list[str] = []
         previous_position = -1
         truncated_rows = 0
         for line_number, line in enumerate(lines[1:], start=2):
             values = next(csv.reader([line]))
-            if len(values) != len(column_names):
+            if len(values) != len(existing_columns):
                 raise ValueError(
                     f"metrics CSV row {line_number} has {len(values)} columns; "
-                    f"expected {len(column_names)}: {path}",
+                    f"expected {len(existing_columns)}: {path}",
                 )
             raw_position = values[position_index]
             try:
@@ -342,6 +369,13 @@ class MetricsCSV:
                 )
             previous_position = position
             if position < resume_position:
+                if migrated:
+                    by_name = dict(zip(existing_columns, values, strict=True))
+                    row = io.StringIO()
+                    csv.writer(row, lineterminator="\n").writerow(
+                        by_name.get(name, "nan") for name in column_names
+                    )
+                    line = row.getvalue()
                 retained_lines.append(line)
             else:
                 truncated_rows += 1
