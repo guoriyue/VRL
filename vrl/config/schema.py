@@ -643,6 +643,8 @@ class TrainingSection(ConfigBase):
     strategy: Literal["single_process", "fsdp", "ddp"] = "single_process"
     num_nodes: int = 1
     gpus_per_node: int = 1
+    # Allow uneven rollout durations before ranks rendezvous for reward statistics.
+    collective_timeout_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     fsdp: FSDPConfig | None = None
     ddp: DDPConfig | None = None
 

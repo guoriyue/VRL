@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 import pytest
 import torch
@@ -138,6 +139,7 @@ class _FakeTorchDistributed:
         self._fail_subgroup = fail_subgroup
         self.group = SimpleNamespace(WORLD=None)
         self.init_env: dict[str, str] = {}
+        self.timeouts: list[object] = []
         monkeypatch.setattr(
             os,
             "environ",
@@ -154,12 +156,14 @@ class _FakeTorchDistributed:
         monkeypatch.setattr(torch.cuda, "set_device", lambda device: None)
 
     def _init(self, **kwargs):
+        self.timeouts.append(kwargs.get("timeout"))
         self.events.append(f"init:{kwargs['backend']}")
         self.init_env = {key: os.environ[key] for key in _FLIGHT_RECORDER_ENV if key in os.environ}
         self.live = True
         self.group.WORLD = "world-group"
 
     def _new_group(self, **kwargs):
+        self.timeouts.append(kwargs.get("timeout"))
         if self._fail_subgroup:
             raise RuntimeError("gloo subgroup failed")
         self.events.append(f"subgroup:{kwargs['backend']}")
@@ -190,6 +194,20 @@ def test_process_group_lives_until_its_owner_shuts_it_down(monkeypatch, tmp_path
 
     assert fake.events == ["init:nccl", "subgroup:gloo", "destroy"]
     assert TrainerProcessGroup.cpu_group() is None
+
+
+def test_uneven_rollout_timeout_reaches_both_training_groups(monkeypatch, tmp_path) -> None:
+    fake = _FakeTorchDistributed(monkeypatch)
+    root = parse_config(
+        _cfg({"strategy": "fsdp", "gpus_per_node": 2, "collective_timeout_s": 3600})
+    )
+    context = DistributedTrainingContext.from_root(
+        root,
+        device=torch.device("cpu"),
+        env={"RANK": "1", "LOCAL_RANK": "1", "WORLD_SIZE": "2"},
+    )
+    with TrainerProcessGroup.open(context, output_dir=tmp_path):
+        assert fake.timeouts == [timedelta(hours=1), timedelta(hours=1)]
 
 
 def test_an_nccl_group_dumps_its_flight_recorder_under_the_run_directory(

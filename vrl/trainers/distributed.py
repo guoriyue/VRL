@@ -57,6 +57,7 @@ class DistributedTrainingContext:
     # Ranks per context-parallel group (fsdp mesh ["dp_shard", "cp"]). Groups are
     # contiguous: ranks 0..cp_size-1 share one sample's sequence, and so on.
     cp_size: int = 1
+    collective_timeout_s: float | None = None
 
     def __post_init__(self) -> None:
         if self.cp_size < 1 or self.world_size % self.cp_size:
@@ -195,6 +196,7 @@ class DistributedTrainingContext:
                 world_size=world_size,
                 device=torch.device(f"cuda:{device_index}"),
                 cp_size=cp_size,
+                collective_timeout_s=training.collective_timeout_s,
             )
 
         # Schema (TrainingSection.strategy Literal) rejects other values before we get
@@ -263,9 +265,13 @@ class TrainerProcessGroup(DefaultProcessGroup):
                 dump_dir = Path(output_dir) / "nccl_flight_recorder"
                 dump_dir.mkdir(parents=True, exist_ok=True)
                 os.environ["TORCH_FR_DUMP_TEMP_FILE"] = f"{dump_dir}/rank_"
-        # Symmetric runs keep torch's default timeout and its exact call shape;
-        # only context-parallel runs lengthen it (see collective_timeout).
-        timeout_kwargs = {"timeout": collective_timeout(context)} if context.cp_size > 1 else {}
+        # Uneven rollout durations can delay reward-statistics rendezvous even
+        # without context parallelism. Preserve torch defaults unless configured.
+        timeout_kwargs = (
+            {"timeout": collective_timeout(context)}
+            if context.cp_size > 1 or context.collective_timeout_s is not None
+            else {}
+        )
         owner = cls._create(
             backend=backend,
             rank=context.rank,
@@ -338,14 +344,16 @@ class TrainerProcessGroup(DefaultProcessGroup):
 def collective_timeout(context: DistributedTrainingContext) -> timedelta:
     """How long a rank may wait in a collective before the group gives up.
 
-    Symmetric ranks reach every collective together, so torch's default is
-    fine. Context-parallel followers wait in the batch broadcast for the whole
+    An explicit timeout covers uneven rollout durations across data-parallel
+    ranks. Context-parallel followers wait in the batch broadcast for the whole
     of the leader's rollout collection (Wan 1.3B: ~35 min for six groups plus
     reward scoring), which exceeds the 30-minute default and killed the first
     cp=2 run; a run-length timeout keeps a genuinely dead peer detectable while
     never racing a healthy rollout.
     """
 
+    if context.collective_timeout_s is not None:
+        return timedelta(seconds=context.collective_timeout_s)
     if context.cp_size > 1:
         return timedelta(hours=12)
     from torch.distributed import default_pg_timeout
