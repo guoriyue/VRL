@@ -33,6 +33,11 @@ its own threshold and is unchanged.
 Same image, same score: there is no sampling anywhere. Absolute numbers are not
 comparable to published GenEval tables because the detector differs;
 before/after comparisons on one detector are.
+
+An environment that reads a scene with this model gets the boxes the verdict
+counted (``detections``) and a failed verdict in words (``explain_verdict``);
+``color_inset`` reads a box's colour away from its edges, where a neighbour
+can sit inside the detection box.
 """
 
 from __future__ import annotations
@@ -82,6 +87,57 @@ class GenEvalVerdict:
             "geneval_owl_strict": self.strict,
         }
 
+    def explain(self, spec: Mapping[str, Any]) -> str | None:
+        """``why`` in words against ``spec``, or None when the verdict passed."""
+
+        return explain_verdict(self.why, spec)
+
+
+def explain_verdict(why: str, spec: Mapping[str, Any]) -> str | None:
+    """A verdict's ``why`` as a clause about what the detector sees against ``spec``; None for ``ok``.
+
+    ``missing:car;color:vase!=blue`` becomes "no car can be seen, the vase
+    is not blue"; the clause completes "After the previous edit, ...". The
+    grammar is ``judge``'s: ``missing:<class>``, ``color:<class>!=<color>``,
+    ``position:<relation>`` and ``exclude:<class>>=<count>``, joined by ``;``.
+    """
+
+    if why == "ok":
+        return None
+    include = [dict(item) for item in spec.get("include", [])]
+    clauses = []
+    for failure in why.split(";"):
+        kind, _, detail = failure.partition(":")
+        if kind == "missing":
+            count = max(
+                (int(i.get("count", 1)) for i in include if i["class"] == detail), default=1
+            )
+            clauses.append(
+                f"fewer than {count} {detail}s can be seen"
+                if count > 1
+                else f"no {detail} can be seen"
+            )
+        elif kind == "color":
+            cls, _, color = detail.partition("!=")
+            clauses.append(f"the {cls} is not {color}")
+        elif kind == "position":
+            placed = next((i for i in include if i.get("position", [None])[0] == detail), None)
+            if placed is None:
+                clauses.append(f"the position {detail} is not met")
+            else:
+                anchor = include[int(placed["position"][1])]["class"]
+                clauses.append(f"the {placed['class']} is not {detail} the {anchor}")
+        elif kind == "exclude":
+            cls, _, count = detail.partition(">=")
+            clauses.append(
+                f"a {cls} is still visible"
+                if int(count) == 1
+                else f"there are still {count} or more {cls}s"
+            )
+        else:
+            clauses.append(failure)
+    return ", ".join(dict.fromkeys(clauses))
+
 
 class GenEvalOwlRewardModel(LazyTorchModule):
     """Per-artifact GenEval verdict from ``metadata.geneval`` with OWLv2 + CLIP."""
@@ -107,6 +163,12 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         ):
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must satisfy 0.0 <= {name} <= 1.0")
+        # The colour of a box is read this fraction of its width and height
+        # inside it, on every side: a yellow car next to a green umbrella reads
+        # as green with the umbrella's edge in the crop, and as yellow without it.
+        self._color_inset = float(cfg.get("color_inset", 0.0))
+        if not 0.0 <= self._color_inset < 0.5:
+            raise ValueError("color_inset must satisfy 0.0 <= color_inset < 0.5")
         self._query_template = str(cfg.get("query_template", "a photo of a {cls}"))
         self._color_template = str(cfg.get("color_template", "a photo of a {color} {cls}"))
         self._metadata_key = str(cfg.get("metadata_key", "geneval"))
@@ -171,10 +233,7 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         classes = sorted({str(item["class"]) for item in include + exclude})
         raw = self._detect([image], classes)[0]
         dense_dets = {cls: nms(dets, self._nms_iou) for cls, dets in raw.items()}
-        strict_dets = {
-            cls: nms([d for d in dets if d[1] >= self._detection_threshold], self._nms_iou)
-            for cls, dets in raw.items()
-        }
+        strict_dets = self._above_threshold(raw)
 
         satisfied = 0
         total = 0
@@ -267,6 +326,19 @@ class GenEvalOwlRewardModel(LazyTorchModule):
             why=";".join(failures) or "ok",
         )
 
+    def detections(self, image: Any, classes: list[str]) -> dict[str, list[Detection]]:
+        """Each class's instances the verdict counts: above ``detection_threshold``, best first, after NMS."""
+
+        return self._above_threshold(self._detect([image], classes)[0])
+
+    def _above_threshold(
+        self, raw: Mapping[str, Sequence[Detection]]
+    ) -> dict[str, list[Detection]]:
+        return {
+            cls: nms([d for d in dets if d[1] >= self._detection_threshold], self._nms_iou)
+            for cls, dets in raw.items()
+        }
+
     def _soft_detection(self, score: float) -> float:
         """Detection confidence in ``[0, 1]``, saturating at twice the verdict floor."""
 
@@ -358,6 +430,10 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         are the same failure to the verdict and different numbers here.
         """
 
+        if self._color_inset:
+            x0, y0, x1, y1 = box
+            dx, dy = self._color_inset * (x1 - x0), self._color_inset * (y1 - y0)
+            box = (x0 + dx, y0 + dy, x1 - dx, y1 - dy)
         if self._color_fn is not None:
             # Test seam: a label is read as a certain classification, a mapping
             # as the distribution itself.
@@ -489,6 +565,7 @@ __all__ = [
     "GENEVAL_COLORS",
     "GenEvalOwlRewardModel",
     "GenEvalVerdict",
+    "explain_verdict",
     "nms",
     "relative_position",
     "relative_position_margin",

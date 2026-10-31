@@ -6,7 +6,12 @@ import pytest
 from PIL import Image
 
 from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
-from vrl.rewards.models.geneval_owl import GenEvalOwlRewardModel, nms, relative_position
+from vrl.rewards.models.geneval_owl import (
+    GenEvalOwlRewardModel,
+    explain_verdict,
+    nms,
+    relative_position,
+)
 from vrl.rewards.types import RewardSample
 
 _IMAGE = Image.new("RGB", (64, 64), color=(128, 128, 128))
@@ -225,3 +230,69 @@ def test_dense_exclude_falls_as_the_forbidden_instance_gets_confident() -> None:
 
     assert (two.strict, faint_third.strict) == (1.0, 1.0)
     assert faint_third.dense < two.dense == pytest.approx(1.0)
+
+
+def test_color_inset_reads_the_colour_inside_the_box_away_from_its_neighbours() -> None:
+    seen = []
+
+    def color_fn(image, box, cls):
+        seen.append(box)
+        return "yellow"
+
+    spec = {"include": [{"class": "car", "count": 1, "color": "yellow"}]}
+    detections = {"car": [((400, 100, 700, 600), 0.9)]}
+    model = GenEvalOwlRewardModel(
+        {"device": "cpu", "detector": lambda images, classes: [detections], "color_fn": color_fn}
+    )
+    model_inset = GenEvalOwlRewardModel(
+        {
+            "device": "cpu",
+            "detector": lambda images, classes: [detections],
+            "color_fn": color_fn,
+            "color_inset": 0.1,
+        }
+    )
+    assert model.judge(_IMAGE, spec).why == "ok" and seen[0] == (400, 100, 700, 600)
+    seen.clear()
+    assert model_inset.judge(_IMAGE, spec).why == "ok"
+    # The verdict and the dense score each read the colour, both inside the box.
+    assert seen and all(box == (430, 150, 670, 550) for box in seen)
+    with pytest.raises(ValueError, match="color_inset"):
+        GenEvalOwlRewardModel({"device": "cpu", "color_inset": 0.5})
+
+
+def test_detections_are_the_boxes_the_verdict_counts() -> None:
+    model = _model(
+        {
+            "car": [((0, 0, 10, 10), 0.9), ((1, 1, 10, 10), 0.8), ((20, 20, 30, 30), 0.1)],
+            "boat": [],
+        }
+    )
+    found = model.detections(_IMAGE, ["car", "boat"])
+    # The near-duplicate is suppressed and the faint one is below the verdict floor.
+    assert found == {"car": [((0, 0, 10, 10), 0.9)], "boat": []}
+    assert model.judge(_IMAGE, {"include": [{"class": "car", "count": 2}]}).why == "missing:car"
+
+
+def test_explain_verdict_puts_a_failed_verdict_into_words() -> None:
+    spec = {
+        "include": [
+            {"class": "vase", "count": 3, "color": "blue"},
+            {"class": "car", "count": 1, "position": ["right of", 0]},
+        ],
+        "exclude": [{"class": "vase", "count": 4}, {"class": "boat", "count": 1}],
+    }
+    why = "missing:vase;color:vase!=blue;position:right of;exclude:vase>=4;exclude:boat>=1"
+    assert explain_verdict(why, spec) == (
+        "fewer than 3 vases can be seen, the vase is not blue, the car is not right of the vase, "
+        "there are still 4 or more vases, a boat is still visible"
+    )
+    assert explain_verdict("missing:car", {"include": [{"class": "car"}]}) == "no car can be seen"
+    verdict = _model({"car": []}).judge(_IMAGE, {"include": [{"class": "car"}]})
+    assert verdict.explain({"include": [{"class": "car"}]}) == "no car can be seen"
+    assert (
+        _model({"car": [((0, 0, 5, 5), 0.9)]})
+        .judge(_IMAGE, {"include": [{"class": "car"}]})
+        .explain({"include": [{"class": "car"}]})
+        is None
+    )

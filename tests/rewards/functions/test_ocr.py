@@ -335,3 +335,15 @@ async def test_video_ocr_keeps_flow_grpo_video_edit_distance_behavior(engine_cls
     score = (await reward.score_batch([sample])).scores[0]
 
     assert score == pytest.approx(0.875)
+
+
+@_ENGINE_PROTOCOLS
+def test_read_lines_returns_the_recognized_text_in_reading_order(engine_cls) -> None:
+    import numpy as np
+    from PIL import Image
+
+    from vrl.rewards.models.ocr import OCRRewardModel
+
+    model = OCRRewardModel({"engine": engine_cls([["BAKERY", "open"], []])})
+    assert model.read_lines(Image.new("RGB", (8, 8), "white")) == ("BAKERY", "open")
+    assert model.read_lines(np.zeros((8, 8, 3), dtype=np.uint8)) == ()

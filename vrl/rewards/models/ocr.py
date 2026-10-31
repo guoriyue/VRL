@@ -8,7 +8,8 @@ single image whose text contains the target gets full credit, as upstream).
 The PaddleOCR engine is lazy-loaded and injectable via ``worker_config["engine"]``
 (or by assigning ``model._engine`` directly) so tests can supply a fake engine.
 Returns edit similarity under ``ocr`` and the fraction of sampled frames whose
-whole recognized text equals the target under ``ocr_match``.
+whole recognized text equals the target under ``ocr_match``; ``read_lines``
+is the text itself, for an environment that admits a scene by what it says.
 """
 
 from __future__ import annotations
@@ -91,6 +92,17 @@ class OCRRewardModel:
             return
         self._engine = _build_paddle_ocr()
 
+    def read_lines(self, frame: Any) -> tuple[str, ...]:
+        """The text lines PaddleOCR reads in one frame (a PIL image or an HxWxC ``uint8`` array), in reading order."""
+
+        import numpy as np
+
+        return tuple(line.text for line in self._lines(np.asarray(frame)))
+
+    def _lines(self, frame: Any) -> tuple[_OcrLine, ...]:
+        self._ensure_loaded()
+        return _extract_ocr_lines(_run_paddle_ocr(self._engine, frame))
+
     def __call__(self, artifact: Any) -> dict[str, float]:
         import numpy as np
         import torch
@@ -151,7 +163,7 @@ class OCRRewardModel:
         best_lines: tuple[_OcrLine, ...] = ()
 
         for frame in frames:
-            lines = _extract_ocr_lines(_run_paddle_ocr(self._engine, frame))
+            lines = self._lines(frame)
             recognized = normalize_ocr_text("".join(line.text for line in lines))
             # flow_grpo: the substring shortcut is image-only; video frames are
             # scored by edit distance alone.

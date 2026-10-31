@@ -11,7 +11,7 @@ from PIL import Image
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.text_regions import TextRegionsRewardModel
+from vrl.rewards.models.text_regions import TextRegionsRewardModel, has_word
 from vrl.rewards.types import RewardSample
 
 
@@ -350,3 +350,25 @@ def test_english_word_matching_rejects_unsupported_target_scripts_before_ocr():
     model = TextRegionsRewardModel({"engine": MustNotRun(), "word_matching": "english"})
     with pytest.raises(ValueError, match="ASCII alphabetic or numeric targets"):
         model(artifact)
+
+
+def test_read_scores_a_decoded_image_as_the_artifact_path_does():
+    class Engine:
+        def predict(self, frame):
+            return {"rec_texts": ["Wait here."], "rec_scores": [0.9]}
+
+    layout = {
+        "width": 20,
+        "height": 20,
+        "regions": [{"region_id": "a", "text": "Wait here!", "box": [0, 0, 20, 20]}],
+    }
+    image = Image.new("RGB", (20, 20), "white")
+    model = TextRegionsRewardModel({"engine": Engine(), "punctuation": "ignore"})
+    scores, diagnostics = model.read(image, layout)
+    assert scores == model(
+        RewardInferenceArtifact("a", "a", "", media=image, metadata={"text_layout": layout})
+    )
+    assert diagnostics["regions"][0]["recognized"] == "Wait here."
+    assert model.normalize("Wait  here.") == "Wait here" and has_word("Wait here", "wait")
+    with pytest.raises(ValueError, match="declared canvas"):
+        model.read(Image.new("RGB", (10, 10)), layout)
