@@ -6,8 +6,8 @@ row-timestep statics build the packed sequence, the real
 ``MiniMaxH3Transformer3DModel`` runs the joint forward, the real
 ``MiniMaxH3Scheduler`` pair supplies both schedules, the real Qwen3-VL stack
 conditions, and both real VAEs decode. What this cannot say is anything about
-the numbers a trained checkpoint produces: the released weights need a
-multi-GPU deployment, see the family preset.
+the numbers a trained checkpoint produces: that is the full-sequence probe on
+the released weights, see ``docs/minimax_h3.md``.
 """
 
 from __future__ import annotations
@@ -252,6 +252,32 @@ def test_forward_step_runs_one_joint_forward_and_reports_the_negated_video_veloc
         patch_size=TINY_MINIMAX_H3_PATCH_SIZE,
     )
     torch.testing.assert_close(out["noise_pred"], expected)
+
+
+def test_host_streamed_blocks_reproduce_the_resident_forward() -> None:
+    """``model.offload`` on this transformer: the refiner and main block lists both
+    stream, and the joint forward is the resident one bit for bit."""
+
+    import copy
+
+    from tests.models.steps.denoise.fixtures import build_tiny_minimax_h3_transformer
+    from vrl.nn.offload import HostStreaming
+
+    model = _model()
+    resident = build_tiny_minimax_h3_transformer(num_layers=2, num_refiner_layers=2)
+    resident.requires_grad_(False)
+    model._set_transformer(resident)
+    with torch.no_grad():
+        expected = model.forward_step(_sampling_state(model), 0)["noise_pred"]
+
+    streamed = copy.deepcopy(resident)
+    streaming = HostStreaming.install(streamed, device="cpu")
+    model._set_transformer(streamed)
+    with torch.no_grad():
+        actual = model.forward_step(_sampling_state(model), 0)["noise_pred"]
+
+    assert len(streaming.blocks) == 2 + 2  # transformer_blocks + token_refiner.refiner_blocks
+    assert torch.equal(actual, expected)
 
 
 def test_audio_side_stream_advances_one_step_behind_the_loop_and_is_reentrant() -> None:

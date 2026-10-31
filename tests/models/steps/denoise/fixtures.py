@@ -598,8 +598,10 @@ def build_tiny_minimax_h3_processor(tokenizer: Any) -> Any:
     )
 
 
-def build_tiny_minimax_h3_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``MiniMaxH3Transformer3DModel`` (~9K params): one block, one refiner."""
+def build_tiny_minimax_h3_transformer(
+    *, seed: int = 0, num_layers: int = 1, num_refiner_layers: int = 1
+) -> Any:
+    """Tiny real ``MiniMaxH3Transformer3DModel`` (~9K params): one block and one refiner by default."""
 
     from diffusers import MiniMaxH3Transformer3DModel
 
@@ -608,8 +610,8 @@ def build_tiny_minimax_h3_transformer(*, seed: int = 0) -> Any:
         num_attention_heads=2,
         attention_head_dim=8,
         hidden_size=16,
-        num_layers=1,
-        num_refiner_layers=1,
+        num_layers=num_layers,
+        num_refiner_layers=num_refiner_layers,
         ffn_dim=32,
         in_channels=TINY_MINIMAX_H3_LATENT_CHANNELS,
         audio_in_channels=TINY_MINIMAX_H3_AUDIO_LATENT_CHANNELS,

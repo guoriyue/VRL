@@ -631,12 +631,13 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
     also exports the trajectory tensors replay reads back.
     """
 
-    # ``from_build`` is family-owned (modular pipeline, not ``DiffusionPipeline``);
-    # the declaration below is what it applies to the frozen conditioner.
-    # Qwen3-VL-32B co-resides with the transformer: a deployment that can hold
-    # the 33B policy holds the encoder too, and parking it would put a 32B
-    # forward on the CPU per prompt.
-    _prompt_encoder_on_cpu: bool = False
+    # ``from_build`` is family-owned (modular pipeline, not ``DiffusionPipeline``).
+    # The frozen components follow the shared placement rule: the compute
+    # device unless ``model.memory.cpu_resident`` names them. A multi-GPU
+    # deployment that holds the 33B policy holds the Qwen3-VL-32B conditioner
+    # too; one 32 GB card streams the policy (``model.offload``) and runs the
+    # conditioner on the host (``cpu_resident: [text_encoder]``), one 32B CPU
+    # forward per prompt.
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> MiniMaxH3PipelineModel:
@@ -667,17 +668,31 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
             scheduler=flow_scheduler_cls.from_config(dict(pipeline.scheduler.config)),
             audio_scheduler=pipeline.audio_scheduler,
         )
-        encoder_device = "cpu" if cls._prompt_encoder_on_cpu else build.device
-        components.text_encoder.requires_grad_(False)
-        components.text_encoder.to(encoder_device, dtype=prompt_encoder_dtype)
-        for vae in (components.vae, components.audio_vae):
-            vae.requires_grad_(False)
-            vae.to(build.device, dtype=torch.float32)
+        cls.freeze_pipeline_components(components)
+        # The shared rule casts every frozen module but ``vae`` to the encoder
+        # dtype; H3 ships a second fp32 fidelity boundary, the audio VAE, so it
+        # stays out of the rule and is placed by hand at the dtype it loaded in.
+        cpu_resident = cls.place_pipeline_components(
+            components,
+            build,
+            prompt_encoder_dtype=prompt_encoder_dtype,
+            trainable=("transformer", "audio_vae"),
+        )
+        components.audio_vae.to(
+            "cpu" if "audio_vae" in cpu_resident else build.device, dtype=torch.float32
+        )
         logger.info(
             "loaded MiniMax-H3 generator %s",
-            kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
+            kv(
+                path=build.model_name_or_path,
+                device=build.device,
+                dtype=build.parameter_dtype,
+                cpu_resident=sorted(cpu_resident),
+            ),
         )
-        return cls(pipeline=components, device=build.device)
+        model = cls(pipeline=components, device=build.device)
+        model._cpu_resident = cpu_resident
+        return model
 
     @property
     def audio_scheduler(self) -> Any:

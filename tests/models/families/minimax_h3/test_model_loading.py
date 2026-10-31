@@ -9,6 +9,7 @@ the two schedulers from their subfolders and nothing else.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -100,8 +101,6 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
 ) -> None:
     """A real modular snapshot, loaded through diffusers by the family's own path."""
 
-    from dataclasses import replace
-
     from diffusers import MiniMaxH3Transformer3DModel
 
     from tests.models.steps.denoise.fixtures import write_tiny_minimax_h3_snapshot
@@ -132,6 +131,60 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
     assert model.audio_scheduler.config.shift == 3.0
     # The shell exposes every frozen module for the offload discipline.
     assert set(model.pipeline.components) == {"transformer", "vae", "audio_vae", "text_encoder"}
+
+
+def test_from_build_places_frozen_components_by_the_shared_rule(monkeypatch) -> None:
+    """``model.memory.cpu_resident`` parks the conditioner; both VAEs stay fp32 wherever they go.
+
+    The one-card deployment: the 32B conditioner runs on the host while the
+    policy streams (``model.offload``). The audio VAE is outside the shared
+    cast-to-encoder-dtype rule, so it never passes through bf16 on its way to
+    fp32.
+    """
+
+    import diffusers
+
+    from tests.models.steps.denoise.fixtures import RecordingModule
+
+    class _ModularPipeline:
+        def __init__(self) -> None:
+            self.transformer = RecordingModule()
+            self.vae = RecordingModule()
+            self.audio_vae = RecordingModule()
+            self.text_encoder = RecordingModule()
+            self.tokenizer = object()
+            self.processor = object()
+            self.scheduler = diffusers.MiniMaxH3Scheduler(shift=12.0)
+            self.audio_scheduler = diffusers.MiniMaxH3Scheduler(shift=3.0)
+            self.loaded: dict[str, Any] | None = None
+
+        def load_components(self, **kwargs: Any) -> None:
+            self.loaded = kwargs
+
+        @property
+        def components(self) -> dict[str, Any]:
+            return {
+                name: getattr(self, name)
+                for name in ("transformer", "vae", "audio_vae", "text_encoder")
+            }
+
+    pipeline = _ModularPipeline()
+    monkeypatch.setattr(
+        diffusers.ModularPipeline, "from_pretrained", staticmethod(lambda *a, **k: pipeline)
+    )
+    build = replace(_build(rollout=True), generation_memory={"cpu_resident": ("text_encoder",)})
+
+    model = MiniMaxH3PipelineModel.from_build(build)
+
+    assert pipeline.loaded["torch_dtype"]["audio_vae"] == torch.float32
+    assert pipeline.text_encoder.to_calls == [("cpu", torch.bfloat16)]
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+    assert pipeline.audio_vae.to_calls == [("cuda:0", torch.float32)]
+    assert pipeline.transformer.to_calls == []
+    for name in ("vae", "audio_vae", "text_encoder"):
+        assert pipeline.components[name].requires_grad_enabled is False, name
+    assert pipeline.transformer.requires_grad_enabled is None
+    assert model._cpu_resident == frozenset({"text_encoder"})
 
 
 def test_replay_model_loads_transformer_and_both_schedulers_only(monkeypatch) -> None:
