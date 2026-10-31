@@ -1,0 +1,150 @@
+{
+  "passed": true,
+  "scope": "First 16 saved PNG stacks, matched by source pixels and sample index; equality does not establish latent equality.",
+  "records": [
+    {
+      "source": "654da9533f8fe14063b34ab35cf976668ce4a98d93f04c78459fc69891cdacc6",
+      "sample": 0,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.021033567580590693,
+      "supervised": 1.0
+    },
+    {
+      "source": "654da9533f8fe14063b34ab35cf976668ce4a98d93f04c78459fc69891cdacc6",
+      "sample": 1,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.019613479489340408,
+      "supervised": 1.0
+    },
+    {
+      "source": "654da9533f8fe14063b34ab35cf976668ce4a98d93f04c78459fc69891cdacc6",
+      "sample": 2,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.019637663633998156,
+      "supervised": 1.0
+    },
+    {
+      "source": "654da9533f8fe14063b34ab35cf976668ce4a98d93f04c78459fc69891cdacc6",
+      "sample": 3,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.018366401127183546,
+      "supervised": 1.0
+    },
+    {
+      "source": "265286d769b7fa15647a151a96f5aefe3a3fcbac6cf92da984145fb595870015",
+      "sample": 0,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.015724607501508198,
+      "supervised": 1.0
+    },
+    {
+      "source": "265286d769b7fa15647a151a96f5aefe3a3fcbac6cf92da984145fb595870015",
+      "sample": 1,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.019084593754676422,
+      "supervised": 1.0
+    },
+    {
+      "source": "265286d769b7fa15647a151a96f5aefe3a3fcbac6cf92da984145fb595870015",
+      "sample": 2,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.013877572975445568,
+      "supervised": 1.0
+    },
+    {
+      "source": "265286d769b7fa15647a151a96f5aefe3a3fcbac6cf92da984145fb595870015",
+      "sample": 3,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.011154095616441777,
+      "supervised": 1.0
+    },
+    {
+      "source": "d776d6fbe463739f9152f091190a941fd8d435c75e3db64e9c15a71e4a763878",
+      "sample": 0,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.2147387944468637,
+      "supervised": 1.0
+    },
+    {
+      "source": "d776d6fbe463739f9152f091190a941fd8d435c75e3db64e9c15a71e4a763878",
+      "sample": 1,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.5954463977871162,
+      "supervised": 1.0
+    },
+    {
+      "source": "d776d6fbe463739f9152f091190a941fd8d435c75e3db64e9c15a71e4a763878",
+      "sample": 2,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.2612025130088551,
+      "supervised": 1.0
+    },
+    {
+      "source": "d776d6fbe463739f9152f091190a941fd8d435c75e3db64e9c15a71e4a763878",
+      "sample": 3,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.16114334621268359,
+      "supervised": 1.0
+    },
+    {
+      "source": "f0f9c765d8b5a09c48e5127f0c21a58ca2601ea9a4c22e1cbebd65f75d32f7fe",
+      "sample": 0,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.0,
+      "supervised": 0.0
+    },
+    {
+      "source": "f0f9c765d8b5a09c48e5127f0c21a58ca2601ea9a4c22e1cbebd65f75d32f7fe",
+      "sample": 1,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.0,
+      "supervised": 0.0
+    },
+    {
+      "source": "f0f9c765d8b5a09c48e5127f0c21a58ca2601ea9a4c22e1cbebd65f75d32f7fe",
+      "sample": 2,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.0,
+      "supervised": 0.0
+    },
+    {
+      "source": "f0f9c765d8b5a09c48e5127f0c21a58ca2601ea9a4c22e1cbebd65f75d32f7fe",
+      "sample": 3,
+      "saved_layers_exact": true,
+      "old_terms_exact": true,
+      "reward_formula_residual": 0.0,
+      "excess": 0.0,
+      "supervised": 0.0
+    }
+  ]
+}

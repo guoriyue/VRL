@@ -1,0 +1,131 @@
+algorithm:
+  kind: grpo
+  clip_ratio: 0.0001
+  kl_coef: 0.04
+  eps: 0.01
+  adv_clip_max: 5.0
+  global_std: false
+  flow_kl_use_dt: false
+precision:
+  float32_precision: tf32
+  training:
+    dtype: bf16
+    outer_autocast: true
+actor:
+  optim:
+    lr: 5.0e-05
+    eps: 1.0e-12
+  drop_zero_advantage: true
+  timestep_fraction: 1.0
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 8
+  prompts_per_collection: 1
+  gradient_checkpointing: full_cpu
+  offload: false
+  training_microbatch_size: 1
+  timestep_selection: sde_window
+rollout:
+  n_samples_per_prompt: 4
+  prompts_per_batch: 1
+  denoise_mode: sde
+  noise_level: 0.5
+  samples_per_generation_batch: 1
+  sde:
+    type: flow_grpo
+    window_size: 4
+    window_range:
+    - 0
+    - 4
+  trajectory_storage:
+    device: cpu
+    dtype: preserve
+distributed:
+  resources:
+    rollout:
+      num_gpus: 1
+      parking:
+        mechanism: move
+    reward:
+      parking:
+        mechanism: reload
+    trainer:
+      parking:
+        mechanism: move
+        disk_directory: /mnt/nvme/layering_additive_excess_20261031/trainer-parking
+  rollout:
+    cpus_per_worker: 4.0
+    worker_rpc_timeout_s: 1800
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      precision_policy: none
+      shard_trainable_only: false
+      reshard_after_forward: true
+      cpu_offload: false
+    collective_timeout_s: 3600
+trainer:
+  rollout_orchestration:
+    schedule_mode: strict_on_policy
+  entrypoint: vrl.scripts.common.online:run_online_recipe
+  total_epochs: 35
+  output_dir: /mnt/nvme/layering_additive_excess_20261031/train
+  save_freq: 7
+  resume_from: /mnt/nvme/layering/checkpoint-28-fsdp4-adam-reset-20261029
+model:
+  family: qwen_image_layered
+  path: Qwen/Qwen-Image-Layered
+  revision: 8f0ca708dfff6ba1dd5f2d85d78f8c108a040bcf
+  memory:
+    cpu_resident:
+    - text_encoder
+    vae_decode:
+      tiling: true
+      slicing: true
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+    - to_k
+    - to_q
+    - to_v
+    - add_k_proj
+    - add_q_proj
+    - add_v_proj
+    - to_add_out
+    path: null
+    parameter_dtype: float32
+  torch_compile:
+    enable: false
+  offload: true
+  local_files_only: true
+sampling:
+  num_steps: 30
+  guidance_scale: 1.0
+  width: 640
+  height: 640
+  layers: 9
+  input_mode: rgb
+reward:
+  components:
+    layered_grouping: 1.0
+  kwargs:
+    layered_grouping:
+      completion_weight: 0.0
+      grouping_mode: partition
+      integrity_mode: reference
+      integrity_weight: 1.0
+      dump_dir: /mnt/nvme/layering_additive_excess_20261031/rollouts
+      excess_weight: 1.0
+data:
+  loader: prompt_manifest
+  manifest: /mnt/nvme/layering_annotation_pair_20261030/reviewed.jsonl
+  artifact_data_root: data/external/coco/val2017
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: sequential_window

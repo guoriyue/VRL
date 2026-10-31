@@ -1,0 +1,53 @@
+# Four colocated ranks: one prompt x eight samples per rank, four prompts globally.
+# The frozen BF16 transformer is sharded for training; each rollout streams its
+# frozen blocks from one shared pinned host copy. Run with torchrun, four ranks.
+defaults:
+  - /experiment/qwen_image_layered/online_grpo_layered_grouping
+
+actor:
+  offload: false
+  # Eleven-layer checkpoint inputs plus the resident FSDP shard exceed 24 GB.
+  # Keep sharded weights on GPU and store checkpoint inputs in pinned host RAM.
+  gradient_checkpointing: full_cpu
+  training_microbatch_size: 1
+  prompts_per_collection: 1
+
+model:
+  local_files_only: true
+
+rollout:
+  prompts_per_batch: 1
+  # The uploaded mix includes 11-layer rows; keep rollout and replay at one
+  # sample per call for 24 GB headroom and matching GEMM batch shapes.
+  samples_per_generation_batch: 1
+  trajectory_storage:
+    device: cpu
+    dtype: preserve
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      precision_policy: none
+      shard_trainable_only: false
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    trainer:
+      parking:
+        mechanism: move
+        disk_directory: /mnt/nvme/layering/trainer-parking
+    rollout:
+      num_gpus: 1
+      parking:
+        mechanism: move
+  rollout:
+    cpus_per_worker: 4.0
+    worker_rpc_timeout_s: 1800
+
+trainer:
+  output_dir: /mnt/nvme/layering/train
+  total_epochs: 44
+  save_freq: 2

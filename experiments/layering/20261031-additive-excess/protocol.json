@@ -1,0 +1,49 @@
+{
+  "status": "prepared_not_launched",
+  "question": "Does an independent full-reference excess-alpha penalty improve hidden-copy suppression and heldout layering?",
+  "repo": "/mnt/nvme/VRL-layering-excess-20261031",
+  "command": [
+    "/mnt/nvme/venv-layering/bin/torchrun",
+    "--standalone",
+    "--nproc-per-node=4",
+    "-m",
+    "vrl.scripts.train",
+    "--config",
+    "experiment/qwen_image_layered/online_grpo_dense_control",
+    "model.lora.path=null",
+    "trainer.resume_from=/mnt/nvme/layering/checkpoint-28-fsdp4-adam-reset-20261029",
+    "trainer.total_epochs=35",
+    "trainer.output_dir=/mnt/nvme/layering_additive_excess_20261031/train",
+    "data.manifest=/mnt/nvme/layering_annotation_pair_20261030/reviewed.jsonl",
+    "distributed.resources.trainer.parking.disk_directory=/mnt/nvme/layering_additive_excess_20261031/trainer-parking",
+    "reward.kwargs.layered_grouping.dump_dir=/mnt/nvme/layering_additive_excess_20261031/rollouts",
+    "trainer.save_freq=7",
+    "algorithm.global_std=false",
+    "algorithm.eps=0.01",
+    "sampling.num_steps=30",
+    "distributed.training.collective_timeout_s=3600",
+    "reward.kwargs.layered_grouping.grouping_mode=partition",
+    "reward.kwargs.layered_grouping.integrity_mode=reference",
+    "reward.kwargs.layered_grouping.integrity_weight=1.0",
+    "reward.kwargs.layered_grouping.completion_weight=0.0",
+    "reward.kwargs.layered_grouping.excess_weight=1.0"
+  ],
+  "only_config_differences": [
+    "distributed.resources.trainer.parking.disk_directory",
+    "reward.kwargs.layered_grouping.dump_dir",
+    "reward.kwargs.layered_grouping.excess_weight",
+    "trainer.output_dir"
+  ],
+  "control": "/mnt/nvme/layering_annotation_pair_20261030/reviewed",
+  "manifest": "/mnt/nvme/layering_annotation_pair_20261030/reviewed.jsonl",
+  "manifest_sha256": "bcc1a8dd16bdc8463c5bcdd5696e52215f44ada295c57274deb11fffe8d6b302",
+  "updates": 7,
+  "automatic_longtrain": false,
+  "pending": [
+    "Verify production rollout/replay path under isolated source with new reward.",
+    "Freeze executable source and dependencies.",
+    "Run after current shared-GPU-lock owner completes.",
+    "Export exact live weights and evaluate fixed 49 cases using unchanged evaluation scoring."
+  ],
+  "limitation": "No direct hidden-content supervision on visible-only real photos; bounded reward ablation, not a proven solution."
+}

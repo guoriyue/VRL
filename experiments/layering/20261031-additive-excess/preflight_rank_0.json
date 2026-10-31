@@ -1,0 +1,29 @@
+{
+  "reward_module": "/mnt/nvme/VRL-layering-excess-20261031/vrl/rewards/models/layered_grouping.py",
+  "reward_artifact_exact": true,
+  "old_reward": 2.4716369304226493,
+  "new_reward": 2.323105177004603,
+  "excess": 0.14853175341804625,
+  "complete_truth": true,
+  "conditioning_exact": {
+    "condition_latents": true,
+    "prompt_embeds": true,
+    "prompt_embeds_mask": true
+  },
+  "num_steps": 30,
+  "logprob_abs_diff_per_stochastic_step": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "max_abs_logprob_diff": 0.0,
+  "gate": 0.01,
+  "passed": true,
+  "sampling_note": "Production SDE and held-out Heun use different integrators; conditioning is checked exactly and production log-probability is replayed at microbatch one.",
+  "reference_image": "/mnt/nvme/layering_broad_objects_20261025/scenes/varied_2_23/source.png",
+  "prompt": "a clean, well composed image",
+  "layers": 5,
+  "seed": 4401,
+  "peak_allocated_bytes": 3890176000
+}

@@ -1,0 +1,264 @@
+{
+  "scope": "Completed single-seed, seven-update annotation-only RL pair. Each arm evaluated on 34 main cases and 15 additional controlled layouts. Additional layouts share five source assets; main natural layouts share three. PNG first-batch equality is verified but does not prove latent equality. Numerical improvement is not semantic certification.",
+  "initial_candidate_alignment": true,
+  "main": {
+    "original": {
+      "natural": {
+        "scenes": 9,
+        "total_complete_pure_objects": 9,
+        "total_objects": 18,
+        "means": {
+          "background_share": 0.008154434780410157,
+          "clean_background": 0.9509861056263698,
+          "complete_pure_objects": 1.0,
+          "full_object_quality_diagnostic": 0.47827937301483797,
+          "merge_layers": 0.0,
+          "objects": 2.0,
+          "single_object_removal_quality": 0.9628098416341566,
+          "target_removal_quality": 0.9749591055835697
+        }
+      },
+      "coco": {
+        "scenes": 15,
+        "total_complete_pure_objects": 19,
+        "total_objects": 158,
+        "means": {
+          "background_share": 0.12249743466480996,
+          "complete_pure_objects": 1.2666666666666666,
+          "merge_layers": 1.9333333333333333,
+          "objects": 10.533333333333333
+        }
+      },
+      "rendered": {
+        "scenes": 8,
+        "total_complete_pure_objects": 36,
+        "total_objects": 44,
+        "means": {
+          "background_share": 0.053366013809310886,
+          "clean_background": 0.9915038667889396,
+          "complete_pure_objects": 4.5,
+          "full_object_quality_diagnostic": 0.8604581346350211,
+          "merge_layers": 0.25,
+          "objects": 5.5,
+          "single_object_removal_quality": 0.9833903861653,
+          "target_removal_quality": 0.9876598935445079
+        }
+      },
+      "luma": {
+        "scenes": 2,
+        "total_complete_pure_objects": 11,
+        "total_objects": 17,
+        "means": {
+          "background_share": 0.007042950367039896,
+          "complete_pure_objects": 5.5,
+          "merge_layers": 1.5,
+          "objects": 8.5
+        }
+      }
+    },
+    "reviewed": {
+      "natural": {
+        "scenes": 9,
+        "total_complete_pure_objects": 9,
+        "total_objects": 18,
+        "means": {
+          "background_share": 0.008524056267852758,
+          "clean_background": 0.9510724150652093,
+          "complete_pure_objects": 1.0,
+          "full_object_quality_diagnostic": 0.49409153023679614,
+          "merge_layers": 0.0,
+          "objects": 2.0,
+          "single_object_removal_quality": 0.9657120178215874,
+          "target_removal_quality": 0.9764918696065976
+        }
+      },
+      "coco": {
+        "scenes": 15,
+        "total_complete_pure_objects": 17,
+        "total_objects": 158,
+        "means": {
+          "background_share": 0.16310818389564277,
+          "complete_pure_objects": 1.1333333333333333,
+          "merge_layers": 1.9333333333333333,
+          "objects": 10.533333333333333
+        }
+      },
+      "rendered": {
+        "scenes": 8,
+        "total_complete_pure_objects": 36,
+        "total_objects": 44,
+        "means": {
+          "background_share": 0.05401958501193825,
+          "clean_background": 0.9916998396208221,
+          "complete_pure_objects": 4.5,
+          "full_object_quality_diagnostic": 0.8596359873746116,
+          "merge_layers": 0.25,
+          "objects": 5.5,
+          "single_object_removal_quality": 0.9836385392533654,
+          "target_removal_quality": 0.9879149486264329
+        }
+      },
+      "luma": {
+        "scenes": 2,
+        "total_complete_pure_objects": 11,
+        "total_objects": 17,
+        "means": {
+          "background_share": 0.007309222345663432,
+          "complete_pure_objects": 5.5,
+          "merge_layers": 1.5,
+          "objects": 8.5
+        }
+      }
+    }
+  },
+  "fresh_summary": {
+    "baseline": {
+      "scenes": 15,
+      "sources": 5,
+      "objects": 30,
+      "complete_objects": 24,
+      "split_objects": 6,
+      "majority_background_objects": 0,
+      "full_object_quality_diagnostic": 0.7110511274894887,
+      "single_object_removal_quality": 0.941259179146257,
+      "movement_gain": 0.7634868032368884,
+      "background_share": 0.005203046750230144,
+      "excess_opacity": 0.31261111705874406
+    },
+    "original": {
+      "scenes": 15,
+      "sources": 5,
+      "objects": 30,
+      "complete_objects": 25,
+      "split_objects": 5,
+      "majority_background_objects": 0,
+      "full_object_quality_diagnostic": 0.7272097188574608,
+      "single_object_removal_quality": 0.9484792492723755,
+      "movement_gain": 0.7808577511875782,
+      "background_share": 0.007488486858114446,
+      "excess_opacity": 0.26870316779240966
+    },
+    "reviewed": {
+      "scenes": 15,
+      "sources": 5,
+      "objects": 30,
+      "complete_objects": 26,
+      "split_objects": 4,
+      "majority_background_objects": 0,
+      "full_object_quality_diagnostic": 0.7480495645391353,
+      "single_object_removal_quality": 0.9527491257448786,
+      "movement_gain": 0.7994099120336423,
+      "background_share": 0.006836250853539995,
+      "excess_opacity": 0.24068959808597962
+    }
+  },
+  "fresh_by_source": [
+    {
+      "source_id": "00028268",
+      "baseline": {
+        "layouts": 3,
+        "complete": 4,
+        "full_quality": 0.6431809263615225,
+        "movement": 0.6976106718126119
+      },
+      "original": {
+        "layouts": 3,
+        "complete": 5,
+        "full_quality": 0.7032534588202806,
+        "movement": 0.7504205310128226
+      },
+      "reviewed": {
+        "layouts": 3,
+        "complete": 5,
+        "full_quality": 0.7041462897507996,
+        "movement": 0.7510026383766816
+      }
+    },
+    {
+      "source_id": "00048952",
+      "baseline": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.8794652165538069,
+        "movement": 0.8481618611602224
+      },
+      "original": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.9282642653849249,
+        "movement": 0.9121364979456709
+      },
+      "reviewed": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.929250304975256,
+        "movement": 0.9124796243976562
+      }
+    },
+    {
+      "source_id": "00061181",
+      "baseline": {
+        "layouts": 3,
+        "complete": 3,
+        "full_quality": 0.5807208031763076,
+        "movement": 0.6929487961834454
+      },
+      "original": {
+        "layouts": 3,
+        "complete": 3,
+        "full_quality": 0.5636262540220939,
+        "movement": 0.6671854416546916
+      },
+      "reviewed": {
+        "layouts": 3,
+        "complete": 4,
+        "full_quality": 0.6592254273039049,
+        "movement": 0.752604249769466
+      }
+    },
+    {
+      "source_id": "00106567",
+      "baseline": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.6760381617502802,
+        "movement": 0.7594776494952412
+      },
+      "original": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.6757537860618039,
+        "movement": 0.7648223452382742
+      },
+      "reviewed": {
+        "layouts": 3,
+        "complete": 6,
+        "full_quality": 0.6769381246316254,
+        "movement": 0.7669818963658235
+      }
+    },
+    {
+      "source_id": "00117949",
+      "baseline": {
+        "layouts": 3,
+        "complete": 5,
+        "full_quality": 0.7758505296055271,
+        "movement": 0.8192350375329203
+      },
+      "original": {
+        "layouts": 3,
+        "complete": 5,
+        "full_quality": 0.7651508299982006,
+        "movement": 0.8097239400864306
+      },
+      "reviewed": {
+        "layouts": 3,
+        "complete": 5,
+        "full_quality": 0.7706876760340909,
+        "movement": 0.8139811512585842
+      }
+    }
+  ],
+  "decision": "Neither arm qualifies for long training: both regress on main COCO object completeness and rendered quality versus checkpoint 28. Reviewed annotations improve several controlled edit metrics relative to original annotations, without demonstrating broad benefit.",
+  "next_evidence": "Complete queued layer-budget evaluation and inspect paired structural failures before selecting a new reward or optimization intervention."
+}

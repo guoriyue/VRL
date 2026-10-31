@@ -1,0 +1,27 @@
+# Short pure-RL continuation. Full-layer truth is explicitly marked per row;
+# partial COCO occlusion truth never scores unmatched objects or clean background.
+defaults:
+  - /experiment/qwen_image_layered/online_grpo_layered_grouping_fsdp_4x_l4
+
+data:
+  manifest: /mnt/nvme/layering_integrity_20261025/train_integrity.jsonl
+
+reward:
+  kwargs:
+    layered_grouping:
+      integrity_weight: 1.0
+      dump_dir: /mnt/nvme/layering_integrity_20261025/rollouts
+
+rollout:
+  n_samples_per_prompt: 4
+
+distributed:
+  resources:
+    trainer:
+      parking:
+        disk_directory: /mnt/nvme/layering_integrity_20261025/trainer-parking
+
+trainer:
+  output_dir: /mnt/nvme/layering_integrity_20261025/train
+  total_epochs: 32
+  save_freq: 2

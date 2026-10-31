@@ -1,0 +1,24 @@
+# Paired annotation experiment; runner overrides each arm's paths.
+defaults:
+  - /experiment/qwen_image_layered/online_grpo_natural_pilot
+
+data:
+  manifest: /mnt/nvme/layering_dense_20261025/expanded/train.jsonl
+  sampler:
+    type: sequential_window
+
+reward:
+  kwargs:
+    layered_grouping:
+      dump_dir: /mnt/nvme/layering_dense_20261025/expanded/rollouts
+
+distributed:
+  resources:
+    trainer:
+      parking:
+        disk_directory: /mnt/nvme/layering_dense_20261025/trainer-parking
+
+trainer:
+  output_dir: /mnt/nvme/layering_dense_20261025/expanded/train
+  total_epochs: 36
+  save_freq: 4
