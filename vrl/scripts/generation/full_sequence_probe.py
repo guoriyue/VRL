@@ -29,7 +29,15 @@ The probe
   sequence whose per-module row-0 outputs would not fit next to the model);
 - reports ``|Δlogprob|`` per step, which separates an op that is itself
   imprecise from late small-sigma steps amplifying a tiny difference, and fails
-  when the maximum exceeds the replay gate.
+  when the maximum exceeds the replay gate;
+- recomputes every step's transition density in float64 from the replay's
+  noise prediction, and tests the rollout's standardized residuals
+  ``(x_{t-1} - mean) / scale`` of every SDE-window step against N(0, 1): the
+  sampler must draw from the density the log-prob describes;
+- with ``--block-audit``, runs the first repeated block on its replay step-0
+  inputs once as the policy runs it and once in float64 (float64 attention
+  through a reference ``scaled_dot_product_attention``), and compares the
+  outputs and the gradient of the trainable tensors.
 
 Inductor switches stay environment variables (``TORCHINDUCTOR_DETERMINISTIC=1``,
 ``TORCHINDUCTOR_SPLIT_REDUCTIONS=0``).
@@ -86,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="compare the two sides per step only, without holding every module's "
         "step-0 row-0 output (a long packed sequence times every block does not fit)",
+    )
+    parser.add_argument(
+        "--block-audit",
+        action="store_true",
+        help="compare the first repeated block's forward and trainable gradient with a "
+        "float64 reference (holds a float64 copy of the block and its activations; "
+        "run it with a replay batch of 1)",
     )
     return parser
 
@@ -184,6 +199,253 @@ def _compare_calls(
         if name in block_names:
             blocks.append({"block": name, "max_abs": diff})
     return {"first_divergent_module": first, "blocks": blocks}
+
+
+def _residual_stats(reference: Any, action: Any, *, sde_type: str) -> dict[str, Any]:
+    """Moments of the standardized residual of one sampled step against N(0, 1).
+
+    ``reference`` is the float64 transition of the rollout's own noise
+    prediction, so ``action`` was drawn from exactly this Gaussian. Over ``n``
+    iid N(0, 1) draws the sample mean has standard deviation ``1/sqrt(n)`` and
+    the mean square ``sqrt(2/n)``; both bounds sit at six of those.
+    """
+
+    scale = reference.std_dev_t
+    if sde_type != "cps":
+        scale = scale * reference.sqrt_neg_dt
+    if not bool((scale > 0).all()):
+        return {"skipped": "zero noise scale"}
+    z = (action.double() - reference.prev_sample_mean) / scale
+    n = z.numel()
+    mean = z.mean().item()
+    mean_square = z.square().mean().item()
+    mean_bound = 6.0 / n**0.5
+    mean_square_bound = 6.0 * (2.0 / n) ** 0.5
+    return {
+        "n": n,
+        "mean": mean,
+        "mean_square": mean_square,
+        "mean_bound": mean_bound,
+        "mean_square_bound": mean_square_bound,
+        "passed": abs(mean) <= mean_bound and abs(mean_square - 1.0) <= mean_square_bound,
+    }
+
+
+def _map_tensors(value: Any, fn: Any) -> Any:
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        return fn(value)
+    if isinstance(value, (tuple, list)):
+        return type(value)(_map_tensors(item, fn) for item in value)
+    if isinstance(value, dict):
+        return {key: _map_tensors(item, fn) for key, item in value.items()}
+    return value
+
+
+def _float64(tensor: Any) -> Any:
+    import torch
+
+    if tensor.is_complex():
+        return tensor.to(torch.complex128)
+    return tensor.to(torch.float64) if tensor.is_floating_point() else tensor
+
+
+@contextlib.contextmanager
+def _reference_attention(*, query_chunk: int = 512) -> Iterator[list[int]]:
+    """Route ``F.scaled_dot_product_attention`` through float64 softmax attention.
+
+    Query chunks keep the score matrix of a long packed sequence to
+    ``heads x query_chunk x keys``; each chunk is checkpointed so backward
+    recomputes it instead of holding every chunk's probabilities. Yields a
+    one-element call count, so a block whose attention bypasses SDPA (a flash
+    library backend) is caught instead of compared against itself.
+    """
+
+    import torch
+    import torch.nn.functional as F
+    from torch.utils.checkpoint import checkpoint
+
+    native = F.scaled_dot_product_attention
+    calls = [0]
+
+    def chunk_attention(query: Any, key: Any, value: Any, mask: Any, scale: float) -> Any:
+        scores = (query @ key.transpose(-2, -1)) * scale
+        if mask is not None:
+            if mask.dtype == torch.bool:
+                scores = scores.masked_fill(~mask, float("-inf"))
+            else:
+                scores = scores + mask.to(scores.dtype)
+        return scores.softmax(dim=-1) @ value
+
+    def reference(
+        query: Any,
+        key: Any,
+        value: Any,
+        attn_mask: Any = None,
+        dropout_p: float = 0.0,
+        is_causal: bool = False,
+        scale: float | None = None,
+        enable_gqa: bool = False,
+    ) -> Any:
+        if dropout_p or is_causal or enable_gqa:
+            raise NotImplementedError("reference attention covers non-causal, dropout-free SDPA")
+        calls[0] += 1
+        q, k, v = (_float64(t) for t in (query, key, value))
+        scale = q.shape[-1] ** -0.5 if scale is None else scale
+        chunks = []
+        for start in range(0, q.shape[-2], query_chunk):
+            rows = slice(start, start + query_chunk)
+            mask = attn_mask
+            if mask is not None and mask.ndim >= 2 and mask.shape[-2] > 1:
+                mask = mask[..., rows, :]
+            chunks.append(
+                checkpoint(
+                    chunk_attention, q[..., rows, :], k, v, mask, scale, use_reentrant=False
+                )
+            )
+        return torch.cat(chunks, dim=-2).to(query.dtype)
+
+    F.scaled_dot_product_attention = reference
+    try:
+        yield calls
+    finally:
+        F.scaled_dot_product_attention = native
+
+
+@contextlib.contextmanager
+def _unstreamed(block: Any) -> Iterator[None]:
+    """Let ``functional_call`` run a host-streamed block over the state it swaps in.
+
+    A streamed block's ``__call__`` (``vrl.nn.offload.block_streaming``) swaps
+    in its own device copies unless ``_streaming_active`` says it is already
+    inside its streamed call.
+    """
+
+    if getattr(block, "_streaming", None) is None:
+        yield
+        return
+    block._streaming_active = True
+    try:
+        yield
+    finally:
+        block._streaming_active = False
+
+
+class _BlockInputs:
+    """The inputs of the first repeated block's call while enabled."""
+
+    def __init__(self, root: Any) -> None:
+        from vrl.nn.optimization.regional_compile import repeated_block_lists
+
+        lists = repeated_block_lists(root)
+        if not lists:
+            raise SystemExit(
+                f"[probe] --block-audit: {type(root).__name__} has no repeated blocks"
+            )
+        list_name, blocks = next(iter(lists.items()))
+        self.name = f"{list_name}.0"
+        self.block = blocks[0]
+        self.enabled = False
+        self.inputs: tuple[Any, Any] | None = None
+        self._handle = self.block.register_forward_pre_hook(self._capture, with_kwargs=True)
+
+    def _capture(self, _module: Any, args: Any, kwargs: Any) -> None:
+        if self.enabled and self.inputs is None:
+            self.inputs = _map_tensors((args, kwargs), lambda t: t.detach().clone())
+
+    def remove(self) -> None:
+        self._handle.remove()
+
+
+def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str, Any]:
+    """One block's forward and trainable gradient, policy numerics against float64.
+
+    Both sides run the block through ``functional_call`` over device copies of
+    its own tensors, the policy side under the model's autocast as
+    ``forward_step`` runs it, the reference side in float64 with autocast off.
+    The scalar whose gradient is compared projects every output on one fixed
+    Gaussian direction, so every output element reaches the gradient.
+    """
+
+    import torch
+
+    from vrl.models.precision import model_autocast
+
+    block = captured.block
+    if captured.inputs is None:
+        raise SystemExit(f"[probe] FAIL: {captured.name} was not called at replay step 0")
+    if block.training and any(
+        isinstance(module, torch.nn.modules.dropout._DropoutNd) and module.p > 0
+        for module in block.modules()
+    ):
+        raise SystemExit("[probe] --block-audit: dropout is active, so the two calls would differ")
+    args, kwargs = captured.inputs
+    tensors = {**dict(block.named_parameters()), **dict(block.named_buffers())}
+    trainable = [name for name in tensors if "lora_" in name] or [
+        name for name, _ in block.named_parameters()
+    ]
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    projections: list[Any] = []
+
+    def run(cast: Any) -> tuple[list[Any], Any]:
+        state = {}
+        for name, tensor in tensors.items():
+            tensor = cast(tensor.detach().to(device))
+            state[name] = tensor.requires_grad_() if name in trainable else tensor
+        with _unstreamed(block):
+            outputs = torch.func.functional_call(
+                block, state, _map_tensors(args, cast), _map_tensors(kwargs, cast)
+            )
+        outputs = [
+            output
+            for output in (outputs if isinstance(outputs, (tuple, list)) else (outputs,))
+            if isinstance(output, torch.Tensor) and output.is_floating_point()
+        ]
+        if not projections:
+            projections.extend(
+                torch.randn(output.shape, generator=generator, dtype=torch.float64).to(device)
+                for output in outputs
+            )
+        scalar = sum(
+            (output.double() * direction).sum()
+            for output, direction in zip(outputs, projections, strict=True)
+        )
+        grads = torch.autograd.grad(scalar, [state[name] for name in trainable])
+        return [output.detach().double() for output in outputs], torch.cat(
+            [grad.double().flatten() for grad in grads]
+        )
+
+    with model_autocast(model, device):
+        policy_outputs, policy_grad = run(lambda t: t)
+    with torch.autocast(device_type=device.type, enabled=False), _reference_attention() as calls:
+        reference_outputs, reference_grad = run(_float64)
+    if not calls[0]:
+        raise SystemExit(
+            f"[probe] FAIL: {captured.name} attention does not call "
+            "F.scaled_dot_product_attention, so the float64 reference would not cover it"
+        )
+
+    def relative(a: Any, b: Any) -> float:
+        return ((a - b).norm() / b.norm()).item()
+
+    return {
+        "block": captured.name,
+        "reference_dtype": "float64",
+        "attention_calls": calls[0],
+        "trainable_tensors": len(trainable),
+        "trainable_numel": policy_grad.numel(),
+        "forward_rel_l2": [
+            relative(a, b) for a, b in zip(policy_outputs, reference_outputs, strict=True)
+        ],
+        "grad_rel_l2": relative(policy_grad, reference_grad),
+        "grad_cosine": torch.nn.functional.cosine_similarity(
+            policy_grad, reference_grad, dim=0
+        ).item(),
+        "peak_allocated_bytes": torch.cuda.max_memory_allocated(device)
+        if device.type == "cuda"
+        else None,
+    }
 
 
 @dataclass(slots=True)
@@ -350,6 +612,9 @@ def main(argv: list[str] | None = None) -> None:
     # run is compared per step only, as is a run that opted out of the hooks.
     module_hooks = not compiled and not args.no_module_hooks
     recorder = _Recorder(transformer, rows=rollout_rows, hooks=module_hooks)
+    if args.block_audit and compiled:
+        raise SystemExit("[probe] --block-audit hooks a block, which a compiled run would retrace")
+    block_inputs = _BlockInputs(transformer) if args.block_audit else None
     rollout_noise: dict[int, Any] = {}
 
     def forward_step(step_state: Any, step_idx: int) -> dict[str, Any]:
@@ -403,10 +668,14 @@ def main(argv: list[str] | None = None) -> None:
             )
             recorder.rows = replay_rows
             recorder.enabled = step_idx == 0
+            if block_inputs is not None:
+                block_inputs.enabled = step_idx == 0
             # The trainer's own index mapping: most families rebuild a one-step
             # state (index 0), Cosmos keeps the full table.
             out = model.forward_step(restored, model._replay_forward_step_index(step_idx))
             recorder.enabled = False
+            if block_inputs is not None:
+                block_inputs.enabled = False
             sde = sde_step_with_logprob(
                 scheduler,
                 out["noise_pred"].float(),
@@ -426,6 +695,40 @@ def main(argv: list[str] | None = None) -> None:
                 "logprob_mean_abs": logprob_diff.mean().item(),
                 "bitwise_logprob": bool(torch.equal(sde.log_prob, rollout_log_prob)),
             }
+            density = sde_step_with_logprob(
+                scheduler,
+                out["noise_pred"].float(),
+                result.timesteps[0, step_idx].unsqueeze(0),
+                observation.float(),
+                prev_sample=result.actions[:replay_rows, step_idx].float(),
+                noise_level=loop_config.sde.noise_level,
+                sde_type=loop_config.sde.sde_type,
+                step_index=step_idx,
+                math_dtype=torch.float64,
+            )
+            entry_report["density_fp64_max_abs"] = (
+                (sde.log_prob.double() - density.log_prob).abs().max().item()
+            )
+            window = loop_config.sde_window
+            if step_idx in rollout_noise and (window is None or window[0] <= step_idx < window[1]):
+                if getattr(scheduler, "_vrl_edm_sigma_domain", False):
+                    entry_report["residual"] = {"skipped": "EDM sigma domain"}
+                else:
+                    sampled = sde_step_with_logprob(
+                        scheduler,
+                        rollout_noise[step_idx],
+                        result.timesteps[0, step_idx].unsqueeze(0),
+                        result.observations[:, step_idx].float(),
+                        prev_sample=result.actions[:, step_idx].float(),
+                        noise_level=loop_config.sde.noise_level,
+                        sde_type=loop_config.sde.sde_type,
+                        step_index=step_idx,
+                        math_dtype=torch.float64,
+                        return_dt=True,
+                    )
+                    entry_report["residual"] = _residual_stats(
+                        sampled, result.actions[:, step_idx], sde_type=loop_config.sde.sde_type
+                    )
             if step_idx in rollout_noise:
                 entry_report["noise_pred_max_abs"] = (
                     (out["noise_pred"].float() - rollout_noise[step_idx][:replay_rows])
@@ -439,15 +742,41 @@ def main(argv: list[str] | None = None) -> None:
                 )
             report_steps.append(entry_report)
             first = entry_report.get("first_divergent_module")
+            residual = entry_report.get("residual", {})
             print(
                 f"[probe] step {step_idx}: |Δlogprob|={entry_report['logprob_max_abs']:.3e}"
+                f" fp64 density={entry_report['density_fp64_max_abs']:.3e}"
+                + (
+                    f" z mean={residual['mean']:+.2e} E[z^2]-1={residual['mean_square'] - 1:+.2e}"
+                    if "mean" in residual
+                    else ""
+                )
                 + (f" first={first['module']} ({first['max_abs']:.3e})" if first else "")
             )
     recorder.remove()
+    block_audit = None
+    if block_inputs is not None:
+        block_inputs.remove()
+        block_audit = _audit_block(model, block_inputs, device=device)
+        print(
+            f"[probe] block audit {block_audit['block']}: forward rel l2 "
+            + ", ".join(f"{value:.3e}" for value in block_audit["forward_rel_l2"])
+            + f"; grad rel l2 {block_audit['grad_rel_l2']:.3e}"
+            f" cosine {block_audit['grad_cosine']:.6f}"
+            f" over {block_audit['trainable_numel']} elements"
+        )
 
     max_logprob_abs = max(step["logprob_max_abs"] for step in report_steps)
-    passed = max_logprob_abs <= gate
+    residuals_passed = all(
+        step["residual"].get("passed", True) for step in report_steps if "residual" in step
+    )
+    passed = max_logprob_abs <= gate and residuals_passed
     print(f"[probe] max |Δlogprob| = {max_logprob_abs:.3e} (gate {gate:.3e})")
+    print(
+        "[probe] max fp64 density |Δlogprob| = "
+        f"{max(step['density_fp64_max_abs'] for step in report_steps):.3e}; "
+        f"residuals {'N(0, 1)' if residuals_passed else 'NOT N(0, 1)'}"
+    )
     if artifact_dir is not None:
         from vrl.utils.media import write_mp4, write_png
 
@@ -477,6 +806,7 @@ def main(argv: list[str] | None = None) -> None:
             "mean_logprob_abs": sum(step["logprob_mean_abs"] for step in report_steps)
             / len(report_steps),
             "steps": report_steps,
+            "block_audit": block_audit,
             "decoded_shape": list(image.shape),
             "decoded_std": image_std,
             "seconds_including_load": time.perf_counter() - started,
@@ -485,6 +815,8 @@ def main(argv: list[str] | None = None) -> None:
             else None,
         }
         (artifact_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+    if not residuals_passed:
+        raise SystemExit("[probe] FAIL: sampled residuals are not N(0, 1)")
     if not passed:
         raise SystemExit("[probe] FAIL: replay |Δlogprob| exceeds the replay gate")
     print(f"[probe] PASS: {entry.family} rollout and replay verified")
