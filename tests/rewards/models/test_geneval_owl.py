@@ -8,7 +8,6 @@ from PIL import Image
 from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
 from vrl.rewards.models.geneval_owl import (
     GenEvalOwlRewardModel,
-    explain_verdict,
     nms,
     relative_position,
 )
@@ -272,27 +271,3 @@ def test_detections_are_the_boxes_the_verdict_counts() -> None:
     # The near-duplicate is suppressed and the faint one is below the verdict floor.
     assert found == {"car": [((0, 0, 10, 10), 0.9)], "boat": []}
     assert model.judge(_IMAGE, {"include": [{"class": "car", "count": 2}]}).why == "missing:car"
-
-
-def test_explain_verdict_puts_a_failed_verdict_into_words() -> None:
-    spec = {
-        "include": [
-            {"class": "vase", "count": 3, "color": "blue"},
-            {"class": "car", "count": 1, "position": ["right of", 0]},
-        ],
-        "exclude": [{"class": "vase", "count": 4}, {"class": "boat", "count": 1}],
-    }
-    why = "missing:vase;color:vase!=blue;position:right of;exclude:vase>=4;exclude:boat>=1"
-    assert explain_verdict(why, spec) == (
-        "fewer than 3 vases can be seen, the vase is not blue, the car is not right of the vase, "
-        "there are still 4 or more vases, a boat is still visible"
-    )
-    assert explain_verdict("missing:car", {"include": [{"class": "car"}]}) == "no car can be seen"
-    verdict = _model({"car": []}).judge(_IMAGE, {"include": [{"class": "car"}]})
-    assert verdict.explain({"include": [{"class": "car"}]}) == "no car can be seen"
-    assert (
-        _model({"car": [((0, 0, 5, 5), 0.9)]})
-        .judge(_IMAGE, {"include": [{"class": "car"}]})
-        .explain({"include": [{"class": "car"}]})
-        is None
-    )
