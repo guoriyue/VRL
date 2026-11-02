@@ -39,7 +39,10 @@ The probe
 - with ``--block-audit``, runs the first repeated block on its replay step-0
   inputs once as the policy runs it and once in float64 (float64 attention
   through a reference ``scaled_dot_product_attention``), and compares the
-  outputs and the gradient of the trainable tensors.
+  outputs and the gradient of the trainable tensors against a float64 noise
+  floor; every policy attention call is also compared with float64 attention
+  over its own inputs, which fails a wrong kernel apart from how sensitive the
+  attention is to the policy dtype's rounding of q and k.
 
 Inductor switches stay environment variables (``TORCHINDUCTOR_DETERMINISTIC=1``,
 ``TORCHINDUCTOR_SPLIT_REDUCTIONS=0``).
@@ -56,6 +59,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+# A correct low-precision attention kernel differs from exact softmax attention
+# over its own (already rounded) inputs by its output rounding: ~2e-3 relative
+# L2 in bf16 (unit roundoff 2^-8 = 3.9e-3). Five times the unit roundoff leaves
+# that margin and still fails a kernel that computes something else.
+ATTENTION_KERNEL_MAX_REL_L2 = 2e-2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -253,32 +262,73 @@ def _float64(tensor: Any) -> Any:
     return tensor.to(torch.float64) if tensor.is_floating_point() else tensor
 
 
-@contextlib.contextmanager
-def _reference_attention(*, query_chunk: int = 512) -> Iterator[list[int]]:
-    """Route ``F.scaled_dot_product_attention`` through float64 softmax attention.
+def _exact_attention(
+    query: Any,
+    key: Any,
+    value: Any,
+    attn_mask: Any,
+    scale: float | None,
+    *,
+    query_chunk: int,
+    checkpointed: bool,
+) -> tuple[Any, Any]:
+    """Float64 softmax attention over query chunks; returns ``(output, max |logit|)``.
 
     Query chunks keep the score matrix of a long packed sequence to
-    ``heads x query_chunk x keys``; each chunk is checkpointed so backward
-    recomputes it instead of holding every chunk's probabilities. Yields a
-    one-element call count, so a block whose attention bypasses SDPA (a flash
-    library backend) is caught instead of compared against itself.
+    ``heads x query_chunk x keys``; ``checkpointed`` makes backward recompute
+    each chunk instead of holding every chunk's probabilities.
     """
 
     import torch
-    import torch.nn.functional as F
     from torch.utils.checkpoint import checkpoint
 
-    native = F.scaled_dot_product_attention
-    calls = [0]
-
-    def chunk_attention(query: Any, key: Any, value: Any, mask: Any, scale: float) -> Any:
-        scores = (query @ key.transpose(-2, -1)) * scale
+    def chunk_attention(q: Any, k: Any, v: Any, mask: Any, scale: float) -> tuple[Any, Any]:
+        scores = (q @ k.transpose(-2, -1)) * scale
+        logit_max = scores.detach().abs().amax()
         if mask is not None:
             if mask.dtype == torch.bool:
                 scores = scores.masked_fill(~mask, float("-inf"))
             else:
                 scores = scores + mask.to(scores.dtype)
-        return scores.softmax(dim=-1) @ value
+        return scores.softmax(dim=-1) @ v, logit_max
+
+    q, k, v = (_float64(t) for t in (query, key, value))
+    scale = q.shape[-1] ** -0.5 if scale is None else scale
+    chunks, logit_max = [], torch.zeros((), dtype=torch.float64, device=q.device)
+    for start in range(0, q.shape[-2], query_chunk):
+        rows = slice(start, start + query_chunk)
+        mask = attn_mask
+        if mask is not None and mask.ndim >= 2 and mask.shape[-2] > 1:
+            mask = mask[..., rows, :]
+        if checkpointed:
+            out, chunk_max = checkpoint(
+                chunk_attention, q[..., rows, :], k, v, mask, scale, use_reentrant=False
+            )
+        else:
+            out, chunk_max = chunk_attention(q[..., rows, :], k, v, mask, scale)
+        chunks.append(out)
+        logit_max = torch.maximum(logit_max, chunk_max)
+    return torch.cat(chunks, dim=-2), logit_max
+
+
+def _sdpa_arguments(dropout_p: float, is_causal: bool, enable_gqa: bool) -> None:
+    if dropout_p or is_causal or enable_gqa:
+        raise NotImplementedError("reference attention covers non-causal, dropout-free SDPA")
+
+
+@contextlib.contextmanager
+def _reference_attention(*, query_chunk: int = 512) -> Iterator[list[float]]:
+    """Route ``F.scaled_dot_product_attention`` through float64 softmax attention.
+
+    Yields the max |logit| of every call, so a block whose attention bypasses
+    SDPA (a flash library backend) is caught instead of compared against
+    itself.
+    """
+
+    import torch.nn.functional as F
+
+    native = F.scaled_dot_product_attention
+    logit_maxima: list[float] = []
 
     def reference(
         query: Any,
@@ -290,27 +340,58 @@ def _reference_attention(*, query_chunk: int = 512) -> Iterator[list[int]]:
         scale: float | None = None,
         enable_gqa: bool = False,
     ) -> Any:
-        if dropout_p or is_causal or enable_gqa:
-            raise NotImplementedError("reference attention covers non-causal, dropout-free SDPA")
-        calls[0] += 1
-        q, k, v = (_float64(t) for t in (query, key, value))
-        scale = q.shape[-1] ** -0.5 if scale is None else scale
-        chunks = []
-        for start in range(0, q.shape[-2], query_chunk):
-            rows = slice(start, start + query_chunk)
-            mask = attn_mask
-            if mask is not None and mask.ndim >= 2 and mask.shape[-2] > 1:
-                mask = mask[..., rows, :]
-            chunks.append(
-                checkpoint(
-                    chunk_attention, q[..., rows, :], k, v, mask, scale, use_reentrant=False
-                )
-            )
-        return torch.cat(chunks, dim=-2).to(query.dtype)
+        _sdpa_arguments(dropout_p, is_causal, enable_gqa)
+        out, logit_max = _exact_attention(
+            query, key, value, attn_mask, scale, query_chunk=query_chunk, checkpointed=True
+        )
+        logit_maxima.append(logit_max.item())
+        return out.to(query.dtype)
 
     F.scaled_dot_product_attention = reference
     try:
-        yield calls
+        yield logit_maxima
+    finally:
+        F.scaled_dot_product_attention = native
+
+
+@contextlib.contextmanager
+def _audited_attention(*, query_chunk: int = 512) -> Iterator[list[float]]:
+    """Run native SDPA and record its error against float64 on the same inputs.
+
+    The policy's kernel receives inputs already rounded to the policy dtype;
+    comparing its output with exact softmax attention over exactly those
+    inputs measures the kernel alone, apart from how sensitive the attention
+    is to that rounding. Yields the relative L2 error of every call.
+    """
+
+    import torch
+    import torch.nn.functional as F
+
+    native = F.scaled_dot_product_attention
+    errors: list[float] = []
+
+    def audited(
+        query: Any,
+        key: Any,
+        value: Any,
+        attn_mask: Any = None,
+        dropout_p: float = 0.0,
+        is_causal: bool = False,
+        scale: float | None = None,
+        enable_gqa: bool = False,
+    ) -> Any:
+        _sdpa_arguments(dropout_p, is_causal, enable_gqa)
+        out = native(query, key, value, attn_mask=attn_mask, scale=scale)
+        with torch.no_grad():
+            exact, _ = _exact_attention(
+                query, key, value, attn_mask, scale, query_chunk=query_chunk, checkpointed=False
+            )
+            errors.append(((out.detach().double() - exact).norm() / exact.norm()).item())
+        return out
+
+    F.scaled_dot_product_attention = audited
+    try:
+        yield errors
     finally:
         F.scaled_dot_product_attention = native
 
@@ -429,9 +510,9 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
             [grad.double().flatten() for grad in grads]
         )
 
-    with model_autocast(model, device):
+    with model_autocast(model, device), _audited_attention() as kernel_errors:
         policy_outputs, policy_grad = run(lambda t: t)
-    with torch.autocast(device_type=device.type, enabled=False), _reference_attention() as calls:
+    with torch.autocast(device_type=device.type, enabled=False), _reference_attention() as logits:
         reference_outputs, reference_grad = run(_float64)
         jitter = torch.Generator(device=device).manual_seed(1)
 
@@ -443,7 +524,7 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
             return tensor * (1 + 2**-9 * noise)
 
         floor_outputs, floor_grad = run(perturbed)
-    if not calls[0]:
+    if not logits:
         raise SystemExit(
             f"[probe] FAIL: {captured.name} attention does not call "
             "F.scaled_dot_product_attention, so the float64 reference would not cover it"
@@ -461,7 +542,11 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
     return {
         "block": captured.name,
         "reference_dtype": "float64",
-        "attention_calls": calls[0],
+        # The reference and floor runs both record; the first half is the reference.
+        "attention_calls": len(kernel_errors),
+        "attention_max_logit": logits[: len(kernel_errors)],
+        "attention_kernel_rel_l2": kernel_errors,
+        "attention_kernel_passed": max(kernel_errors) <= ATTENTION_KERNEL_MAX_REL_L2,
         "trainable_tensors": len(trainable),
         "trainable_numel": policy_grad.numel(),
         "forward_rel_l2": forward,
@@ -808,12 +893,19 @@ def main(argv: list[str] | None = None) -> None:
             f" (floor {block_audit['grad_floor_cosine']:.6f})"
             f" over {block_audit['trainable_numel']} elements"
         )
+        print(
+            "[probe] block audit attention: kernel rel l2 vs float64 on its own inputs "
+            + ", ".join(f"{value:.3e}" for value in block_audit["attention_kernel_rel_l2"])
+            + f" (bound {ATTENTION_KERNEL_MAX_REL_L2:.0e}); max |logit| "
+            + ", ".join(f"{value:.4g}" for value in block_audit["attention_max_logit"])
+        )
 
     max_logprob_abs = max(step["logprob_max_abs"] for step in report_steps if step["trained"])
     residuals_passed = all(
         step["residual"].get("passed", True) for step in report_steps if "residual" in step
     )
-    passed = max_logprob_abs <= gate and residuals_passed
+    kernel_passed = block_audit is None or block_audit["attention_kernel_passed"]
+    passed = max_logprob_abs <= gate and residuals_passed and kernel_passed
     print(f"[probe] max |Δlogprob| = {max_logprob_abs:.3e} over trained steps (gate {gate:.3e})")
     print(
         "[probe] max fp64 density |Δlogprob| = "
@@ -864,6 +956,10 @@ def main(argv: list[str] | None = None) -> None:
         (artifact_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")
     if not residuals_passed:
         raise SystemExit("[probe] FAIL: sampled residuals are not N(0, 1)")
+    if not kernel_passed:
+        raise SystemExit(
+            "[probe] FAIL: an attention kernel disagrees with float64 on its own inputs"
+        )
     if not passed:
         raise SystemExit("[probe] FAIL: replay |Δlogprob| exceeds the replay gate")
     print(f"[probe] PASS: {entry.family} rollout and replay verified")
