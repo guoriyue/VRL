@@ -373,6 +373,17 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
         return tuple(int(p) for p in self.transformer.config.patch_size)
 
     # ---- schedule ----
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap every policy core's blocks to ``FusedMiniMaxH3TransformerBlock``."""
+
+        del build
+        from vrl.models.families.minimax_h3.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no MiniMaxH3TransformerBlock"
+            )
+
     def set_num_steps(self, n: int) -> None:
         """``n`` model evaluations: the H3 grid holds ``n + 1`` sigmas (terminal 0 included)."""
 
