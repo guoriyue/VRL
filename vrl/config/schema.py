@@ -467,13 +467,13 @@ class ActorSection(ConfigBase):
     optimizer_steps_per_batch: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
     # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
-    gradient_checkpointing: Literal["off", "full", "full_cpu", "selective"] | StrictBool | None = (
-        None
-    )
+    gradient_checkpointing: (
+        Literal["off", "full", "full_cpu", "selective", "selective_attention"] | StrictBool | None
+    ) = None
 
     @property
     def gradient_checkpointing_mode(self) -> str:
-        """The effective checkpointing mode: off | full | full_cpu | selective.
+        """The effective checkpointing mode: off | full | full_cpu | selective | selective_attention.
 
         Absence means off. Back-compat: the historical knob was a bool (True ->
         full, False -> off); strings select the policy explicitly.
@@ -487,11 +487,11 @@ class ActorSection(ConfigBase):
             return "off"
         if text in ("true", "full", "1"):
             return "full"
-        if text in ("selective", "full_cpu"):
+        if text in ("selective", "selective_attention", "full_cpu"):
             return text
         raise ValueError(
-            f"actor.gradient_checkpointing={value!r} invalid; "
-            "use off | full | full_cpu | selective (or a bool: true=full, false=off)",
+            f"actor.gradient_checkpointing={value!r} invalid; use off | full | full_cpu | "
+            "selective | selective_attention (or a bool: true=full, false=off)",
         )
 
     # The offline trainers count actual training batches per optimizer update.

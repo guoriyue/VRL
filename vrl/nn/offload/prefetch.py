@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import torch
+from torch.utils._python_dispatch import _disable_current_modes
 
 
 class Prefetcher:
@@ -56,8 +57,19 @@ class Prefetcher:
         return upcoming if 0 <= upcoming < count else None
 
     def acquire(self, index: int) -> dict[str, torch.Tensor]:
-        """Device copies of unit ``index``, ready on the current stream; the next unit's copy under way."""
+        """Device copies of unit ``index``, ready on the current stream; the next unit's copy under way.
 
+        The copies run with every dispatch mode set aside: they move weights
+        and are no part of the computation that reads them, while selective
+        activation checkpointing counts each op of a block's forward to replay
+        its cache in the recompute, which prefetches a different neighbour
+        (and none at the passes' ends) and so issues different copies.
+        """
+
+        with _disable_current_modes():
+            return self._acquire(index)
+
+    def _acquire(self, index: int) -> dict[str, torch.Tensor]:
         if self._ahead is not None and self._ahead[0] == index:
             _, copies, ready = self._ahead
             self.hits += 1

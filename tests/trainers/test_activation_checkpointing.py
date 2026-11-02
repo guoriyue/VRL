@@ -169,3 +169,52 @@ def test_root_compile_traces_selective_checkpointing_to_eager_gradients() -> Non
 
     for left, right in zip(eager.parameters(), compiled_root.parameters(), strict=True):
         torch.testing.assert_close(right.grad, left.grad, rtol=1e-5, atol=1e-6)
+
+
+class _AttentionBlock(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.qkv = torch.nn.Linear(8, 24)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        q, k, v = self.qkv(x).unflatten(-1, (3, 2, 4)).permute(2, 0, 3, 1, 4)
+        return x + torch.nn.functional.scaled_dot_product_attention(q, k, v).transpose(
+            1, 2
+        ).flatten(2)
+
+
+class _CountAttention(torch.utils._python_dispatch.TorchDispatchMode):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        if func is torch.ops.aten._scaled_dot_product_flash_attention_for_cpu.default:
+            self.calls += 1
+        return func(*args, **(kwargs or {}))
+
+
+def test_attention_saving_checkpoint_recomputes_everything_but_attention() -> None:
+    from vrl.trainers.activation_checkpointing import attention_saving_checkpoint_func
+
+    torch.manual_seed(0)
+    blocks = torch.nn.ModuleList([_AttentionBlock() for _ in range(3)])
+    x = torch.randn(2, 6, 8, requires_grad=True)
+
+    def run(func):
+        out = x
+        for block in blocks:
+            out = block(out) if func is None else func(block, out)
+        return out
+
+    run(None).square().sum().backward()
+    expected = [x.grad.clone(), *(p.grad.clone() for p in blocks.parameters())]
+    x.grad = None
+    blocks.zero_grad(set_to_none=True)
+    out = run(attention_saving_checkpoint_func)
+    with _CountAttention() as counter:
+        out.square().sum().backward()
+    assert counter.calls == 0
+    actual = [x.grad, *(p.grad for p in blocks.parameters())]
+    for got, want in zip(actual, expected, strict=True):
+        torch.testing.assert_close(got, want)

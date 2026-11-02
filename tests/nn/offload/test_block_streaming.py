@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import os
 import shutil
 from pathlib import Path
@@ -10,7 +11,11 @@ from pathlib import Path
 import pytest
 import torch
 from torch import nn
-from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    checkpoint,
+    create_selective_checkpoint_contexts,
+)
 
 from vrl.nn.offload import HostStreaming
 
@@ -191,3 +196,41 @@ def test_cuda_prefetch_matches_the_resident_policy(pin_host: bool, tmp_path: Pat
         assert streaming.counters["prefetch_hits"] > 0
     finally:
         shutil.rmtree(share, ignore_errors=True)
+
+
+@pytest.mark.gpu
+def test_selective_checkpointing_replays_streamed_blocks_on_cuda() -> None:
+    """Prefetch copies are no ops of a block: SAC replays the forward's ops by
+    count in the recompute, which prefetches a different neighbour."""
+
+    torch.manual_seed(4)
+    plain = _Policy().cuda()
+    streamed = copy.deepcopy(plain).cpu()
+    HostStreaming.install(streamed, device="cuda", pin_host=False)
+
+    def save_gemms(ctx, op, *args, **kwargs):
+        if op is torch.ops.aten.addmm.default:
+            return CheckpointPolicy.MUST_SAVE
+        return CheckpointPolicy.PREFER_RECOMPUTE
+
+    def run(policy: _Policy, x: torch.Tensor) -> torch.Tensor:
+        out = x
+        for block in policy.blocks:
+            out = checkpoint(
+                block.__call__,
+                out,
+                use_reentrant=False,
+                context_fn=functools.partial(create_selective_checkpoint_contexts, save_gemms),
+            )
+        return out
+
+    x = torch.randn(2, 4, device="cuda", requires_grad=True)
+    x_plain = x.detach().clone().requires_grad_(True)
+    run(streamed, x).sum().backward()
+    run(plain, x_plain).sum().backward()
+    torch.testing.assert_close(x.grad, x_plain.grad)
+    for (name, parameter), (_, reference) in zip(
+        streamed.named_parameters(), plain.named_parameters(), strict=True
+    ):
+        if parameter.requires_grad:
+            torch.testing.assert_close(parameter.grad, reference.grad, msg=name)

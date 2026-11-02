@@ -105,14 +105,14 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     # FSDP2 in tests/trainers/test_fsdp_compile_distributed.py). The
     # CPU-offload variant was never measured with compile.
     checkpointing = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
-    if compiles_replay and checkpointing == "full_cpu":
+    if compiles_replay and checkpointing in ("full_cpu", "selective_attention"):
         conflicts.append(
             CompileConflict(
                 "gradient_checkpointing",
-                "actor.gradient_checkpointing='full_cpu': unmeasured with torch.compile. "
-                "Use full or selective checkpointing with compile, eager + full_cpu, or "
-                "model.torch_compile.scope=rollout to keep the trainer eager while the "
-                "rollout policy compiles.",
+                f"actor.gradient_checkpointing={checkpointing!r}: unmeasured with "
+                "torch.compile. Use full or selective checkpointing with compile, eager + "
+                f"{checkpointing}, or model.torch_compile.scope=rollout to keep the trainer "
+                "eager while the rollout policy compiles.",
             )
         )
 

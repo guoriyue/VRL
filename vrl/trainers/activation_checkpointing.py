@@ -1,4 +1,4 @@
-"""Activation checkpointing appliers: off | full | full_cpu | selective.
+"""Activation checkpointing appliers: off | full | full_cpu | selective | selective_attention.
 
 A general training-setup concern (sibling to precision.py / fsdp.py), not specific
 to the online recipe runner: turn the ``actor.gradient_checkpointing`` knob into the
@@ -13,6 +13,11 @@ the cheap norm/pointwise/dropout -- the native-PyTorch equivalent of Megatron's
 selective recompute. Measured win on SD3.5-medium 1024² / 5090: selective recovers
 ~2/3 of full's recompute tax and reaches batches that no-checkpointing OOMs on. See
 archive/main-20261016:docs/sprints/parked/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
+``selective_attention`` saves only the attention outputs, the op whose
+recompute costs the most time per byte kept, and recomputes every other op. Measured on one
+Qwen-Image-Layered block (17.6k tokens, batch 2, 5090): the GEMM + attention
+set keeps 2.6 GB per block, 157 GB over 60 blocks, to cut its backward from
+246 to 175 ms; the attention output is 0.2 GB per block and cuts it to 212 ms.
 """
 
 from __future__ import annotations
@@ -38,14 +43,17 @@ logger = logging.getLogger(__name__)
 # Ops whose recompute is pure waste (GEMM + attention): SAC saves their outputs so
 # backward reads them back instead of re-running them; everything cheap (norm,
 # pointwise, dropout) is recomputed.
+_ATTENTION_SAVE_OPS = {
+    torch.ops.aten._scaled_dot_product_flash_attention.default,
+    torch.ops.aten._scaled_dot_product_flash_attention_for_cpu.default,
+    torch.ops.aten._scaled_dot_product_efficient_attention.default,
+    torch.ops.aten._scaled_dot_product_cudnn_attention.default,
+}
 _GRADIENT_CHECKPOINT_SAVE_OPS = {
     torch.ops.aten.mm.default,
     torch.ops.aten.addmm.default,
     torch.ops.aten.bmm.default,
-    torch.ops.aten._scaled_dot_product_flash_attention.default,
-    torch.ops.aten._scaled_dot_product_efficient_attention.default,
-    torch.ops.aten._scaled_dot_product_cudnn_attention.default,
-}
+} | _ATTENTION_SAVE_OPS
 
 
 def _selective_checkpoint_policy(ctx, op, *args, **kwargs):
@@ -73,6 +81,24 @@ def selective_checkpoint_func(module, *args):
     )
 
 
+def _attention_saving_policy(ctx, op, *args, **kwargs):
+    if op in _ATTENTION_SAVE_OPS:
+        return CheckpointPolicy.MUST_SAVE
+    return CheckpointPolicy.PREFER_RECOMPUTE
+
+
+def attention_saving_checkpoint_func(module, *args):
+    """``selective_checkpoint_func`` saving only the attention outputs."""
+    return checkpoint(
+        module.__call__,
+        *args,
+        use_reentrant=False,
+        context_fn=functools.partial(
+            create_selective_checkpoint_contexts, _attention_saving_policy
+        ),
+    )
+
+
 def cpu_checkpoint_func(module, *args):
     """Recompute blocks while storing their checkpoint inputs in pinned CPU memory."""
     with torch.autograd.graph.save_on_cpu(pin_memory=True):
@@ -82,11 +108,13 @@ def cpu_checkpoint_func(module, *args):
 def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> None:
     """Enable transformer gradient checkpointing while preserving family policy.
 
-    Mode is off | full | full_cpu | selective (``ActorSection.gradient_checkpointing_mode``).
-    ``selective`` uses SAC to recompute only the cheap ops; ``full`` recomputes
+    Mode is off | full | full_cpu | selective | selective_attention
+    (``ActorSection.gradient_checkpointing_mode``). ``selective`` uses SAC to
+    recompute only the cheap ops; ``selective_attention`` saves only the
+    attention outputs; ``full`` recomputes
     every block. If a module's ``enable_gradient_checkpointing`` cannot accept a
-    custom func, selective falls back to full for that module with a warning —
-    never silently, so the run log states what it actually got.
+    custom func, either SAC mode falls back to full for that module with a
+    warning — never silently, so the run log states what it actually got.
     """
 
     mode = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
@@ -107,11 +135,14 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
                     "a custom gradient_checkpointing_func is required",
                 ) from exc
             continue
-        if mode == "selective":
+        if mode in ("selective", "selective_attention"):
+            func = (
+                selective_checkpoint_func
+                if mode == "selective"
+                else attention_saving_checkpoint_func
+            )
             try:
-                inspect.signature(enable).bind_partial(
-                    gradient_checkpointing_func=selective_checkpoint_func,
-                )
+                inspect.signature(enable).bind_partial(gradient_checkpointing_func=func)
             except TypeError:
                 logger.warning(
                     "trainable module %r does not accept a custom gradient_checkpointing_func; "
@@ -119,12 +150,13 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
                     name,
                 )
             else:
-                enable(gradient_checkpointing_func=selective_checkpoint_func)
+                enable(gradient_checkpointing_func=func)
                 continue
         enable()
 
 
 __all__ = [
+    "attention_saving_checkpoint_func",
     "enable_transformer_gradient_checkpointing",
     "selective_checkpoint_func",
 ]
