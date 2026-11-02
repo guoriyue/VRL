@@ -418,6 +418,19 @@ class DenoiseModelBase(nn.Module, ABC):
         del build
         self._require_transformer().requires_grad_(True)
 
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Run the policy's blocks on fused kernels (``model.fused_kernels``).
+
+        Both the rollout and the replay builder call this after LoRA attaches
+        and before compile or host streaming wrap the blocks, so the two sides
+        keep running one computation. A family opts in by overriding it.
+        """
+
+        del build
+        raise ValueError(
+            f"model.fused_kernels: {type(self).__name__} has no fused block kernels",
+        )
+
     def _set_transformer(self, transformer: Any) -> None:
         """Register a replacement trainable transformer (LoRA wrap, compile, …).
 

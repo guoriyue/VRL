@@ -211,6 +211,13 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Reader: ModelBuild.fused_kernels. The family's fused block kernels
+    # (Qwen-Image: vrl/models/families/qwen_image/fused_block.py) in the rollout
+    # and the replay alike; the same weights, so identity-excluded.
+    fused_kernels: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     use_lora: bool | None = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),

@@ -74,6 +74,8 @@ def build_denoise_runtime_bundle(
             lora_config.rank,
             lora_config.alpha,
         )
+    if build.fused_kernels:
+        model.apply_fused_kernels(build)
     # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
     # The whole sequence and its ordering constraints live in the pass layer.
     apply_rollout_optimizations(model, build, before_compile=move_to_device)
@@ -141,6 +143,8 @@ def build_family_replay_runtime_bundle(
         model.apply_lora(build)
     else:
         model.apply_full_finetune(build)
+    if build.fused_kernels:
+        model.apply_fused_kernels(build)
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
         model.torch_compile_transformer(compile_cfg["mode"], regional=compile_cfg["regional"])

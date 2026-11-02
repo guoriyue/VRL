@@ -116,6 +116,18 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
             )
         )
 
+    # The fused block kernels are autograd functions over Triton launches that
+    # inductor would trace into graphs of its own; the two speedups are
+    # alternatives, and the fused kernels exist so rollout and replay share one
+    # computation, which compile's separate inference and training graphs break.
+    if root.model.fused_kernels:
+        conflicts.append(
+            CompileConflict(
+                "fused_kernels",
+                "model.fused_kernels: unsupported with torch.compile. Use one of the two.",
+            )
+        )
+
     # FSDP2 replay is not a conflict. On two Gloo ranks a tiny SD3 transformer
     # compiled regionally or at the root with full checkpointing, or at the
     # root with selective checkpointing, then sharded with

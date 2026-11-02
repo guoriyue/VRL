@@ -34,6 +34,7 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersModelBase,
     DiffusersPipelineModelBase,
@@ -88,6 +89,24 @@ class QwenImageModel(DiffusersModelBase):
             device=device,
             calculate_shift=calculate_shift,
         )
+
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap every policy core's blocks to ``FusedQwenImageTransformerBlock``."""
+
+        from vrl.models.families.qwen_image.fused_block import install_fused_blocks
+
+        precision = build.precision
+        # Under a half-precision autocast the fused blocks' LoRA inputs are
+        # already in the GEMM dtype; see install_fused_blocks.
+        half_autocast = precision.outer_autocast and precision.dtype in ("bf16", "fp16")
+        count = sum(
+            install_fused_blocks(root, keep_lora_input_cast=not half_autocast)
+            for root in self.policy_cores.values()
+        )
+        if count == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no QwenImageTransformerBlock"
+            )
 
     # -- forward_step --------------------------------------------------
 
