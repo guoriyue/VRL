@@ -29,7 +29,9 @@ The probe
   sequence whose per-module row-0 outputs would not fit next to the model);
 - reports ``|Δlogprob|`` per step, which separates an op that is itself
   imprecise from late small-sigma steps amplifying a tiny difference, and fails
-  when the maximum exceeds the replay gate;
+  when the maximum over the steps the trainer puts loss on exceeds the replay
+  gate (``actor.timestep_selection: sde_window`` trains only the stochastic
+  window; the deterministic steps after it are reported, not gated);
 - recomputes every step's transition density in float64 from the replay's
   noise prediction, and tests the rollout's standardized residuals
   ``(x_{t-1} - mean) / scale`` of every SDE-window step against N(0, 1): the
@@ -593,6 +595,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from vrl.generation.steps.denoise.loop import run_denoise_loop
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.models.families.semantics import VIDEO_TASKS
     from vrl.trainers.core.types import ReplayParityConfig
 
     inputs = prepare_inputs(args)
@@ -606,6 +609,9 @@ def main(argv: list[str] | None = None) -> None:
         inputs.root.trainer.replay_parity if inputs.root.trainer is not None else None
     ) or ReplayParityConfig()
     gate = float(replay_parity.max_abs_logprob_diff)
+    window_only = (
+        inputs.root.actor is not None and inputs.root.actor.timestep_selection == "sde_window"
+    )
 
     # Per-module hooks are closures dynamo guards on, so every hooked block
     # would recompile until the recompile limit drops it to eager: a compiled
@@ -710,7 +716,9 @@ def main(argv: list[str] | None = None) -> None:
                 (sde.log_prob.double() - density.log_prob).abs().max().item()
             )
             window = loop_config.sde_window
-            if step_idx in rollout_noise and (window is None or window[0] <= step_idx < window[1]):
+            in_window = window is None or window[0] <= step_idx < window[1]
+            entry_report["trained"] = in_window or not window_only
+            if step_idx in rollout_noise and in_window:
                 if getattr(scheduler, "_vrl_edm_sigma_domain", False):
                     entry_report["residual"] = {"skipped": "EDM sigma domain"}
                 else:
@@ -766,12 +774,12 @@ def main(argv: list[str] | None = None) -> None:
             f" over {block_audit['trainable_numel']} elements"
         )
 
-    max_logprob_abs = max(step["logprob_max_abs"] for step in report_steps)
+    max_logprob_abs = max(step["logprob_max_abs"] for step in report_steps if step["trained"])
     residuals_passed = all(
         step["residual"].get("passed", True) for step in report_steps if "residual" in step
     )
     passed = max_logprob_abs <= gate and residuals_passed
-    print(f"[probe] max |Δlogprob| = {max_logprob_abs:.3e} (gate {gate:.3e})")
+    print(f"[probe] max |Δlogprob| = {max_logprob_abs:.3e} over trained steps (gate {gate:.3e})")
     print(
         "[probe] max fp64 density |Δlogprob| = "
         f"{max(step['density_fp64_max_abs'] for step in report_steps):.3e}; "
@@ -780,7 +788,11 @@ def main(argv: list[str] | None = None) -> None:
     if artifact_dir is not None:
         from vrl.utils.media import write_mp4, write_png
 
-        if image.ndim == 5:
+        if image.ndim == 5 and entry.task not in VIDEO_TASKS:
+            # A frame stack of an image task (Qwen-Image-Layered's RGBA layers).
+            for frame, layer in enumerate(image[0].float().cpu()):
+                write_png(layer, artifact_dir / f"image_{frame}.png")
+        elif image.ndim == 5:
             write_mp4(
                 image[0].float().cpu(),
                 artifact_dir / "video.mp4",
