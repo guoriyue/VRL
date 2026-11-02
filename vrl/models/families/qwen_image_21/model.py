@@ -43,6 +43,7 @@ import numpy as np
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersModelBase,
     DiffusersPipelineModelBase,
@@ -96,6 +97,17 @@ class QwenImage21Model(DiffusersModelBase):
         is hardcoded to 16, so replay needs no VAE to compute it).
         """
         return (2 * (height // 32)) * (2 * (width // 32))
+
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap every policy core's blocks to ``FusedQwenImage21TransformerBlock``."""
+
+        del build
+        from vrl.models.families.qwen_image_21.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no QwenImage21TransformerBlock"
+            )
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set timesteps exactly as ``QwenImage21Pipeline`` does.
