@@ -149,6 +149,24 @@ def flow_sde_scale_terms(
     return schedule.sigma, torch.sqrt(-1 * schedule.dt), schedule.flow_grpo_std_dev_t(noise_level)
 
 
+def per_sample_mean(values: Any) -> Any:
+    """Mean over every dim but the first, reduced one sample at a time.
+
+    A CUDA reduction splits its work by how many outputs it has, so the mean
+    of one sample's row changes in its last bits with the batch around it
+    (1e-7 on a Qwen-Image-Layered log-prob). Reducing each sample alone gives
+    every sample the one-row reduction whatever its batch, so a rollout and a
+    replay at different batch sizes agree bitwise.
+    """
+
+    import torch
+
+    dims = tuple(range(1, values.ndim))
+    if values.shape[0] <= 1:
+        return values.mean(dim=dims)
+    return torch.cat([sample.mean(dim=dims) for sample in values.split(1)])
+
+
 def sde_step_with_logprob(
     scheduler: Any,
     model_output: Any,
@@ -238,7 +256,7 @@ def sde_step_with_logprob(
             prev_sample = sample + dt * model_output
 
         log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
-        log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+        log_prob = per_sample_mean(log_prob)
     else:
         std_dev_t = schedule.flow_grpo_std_dev_t(noise_level)
 
@@ -265,7 +283,7 @@ def sde_step_with_logprob(
             - torch.log(noise_scale)
             - 0.5 * math.log(2 * math.pi)
         )
-        log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+        log_prob = per_sample_mean(log_prob)
 
     if one_plus_sigma_prev is not None:
         prev_sample = prev_sample * one_plus_sigma_prev
