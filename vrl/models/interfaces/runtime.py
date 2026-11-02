@@ -354,7 +354,7 @@ class ModelBuild:
 
     @property
     def fused_kernels(self) -> bool:
-        """``model.fused_kernels``: the family's fused block kernels, rollout and replay alike."""
+        """``model.fused_kernels``: fused blocks and batch-invariant linears, rollout and replay alike."""
         return bool((self.model_config or {}).get("fused_kernels", False))
 
     @property

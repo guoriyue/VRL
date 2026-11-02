@@ -34,8 +34,9 @@ sampling:
 
 model:
   offload: true
-  # Rollout and replay run the same fused block kernels, so their log-probs
-  # stay bitwise equal: one step 2011 -> 1582 s together with the
+  # Rollout and replay run the same fused block kernels and batch-invariant
+  # linears, so their log-probs stay bitwise equal at any pair of generation
+  # and replay batch sizes: one step 2011 -> 1582 s together with the
   # checkpointing and batch below (5090, 2026-11-02).
   fused_kernels: true
   use_lora: true
@@ -68,9 +69,8 @@ actor:
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 4
-  # Equal to actor.training_microbatch_size, so each replay microbatch is one
-  # generation batch's rows and the replay runs the rollout's exact GEMM
-  # shapes (see trainer.replay_parity). Batch 1 costs no rollout time on the
+  # Any value keeps replay parity bitwise under model.fused_kernels (probed at
+  # 2 and 4 against replay batch 1); batch 1 costs no rollout time on the
   # 5090 (denoise 535 s vs 527 s at batch 2 for 32 samples).
   samples_per_generation_batch: 1
   # Noise only on the first 4 of the 10 steps: with noise on every step the

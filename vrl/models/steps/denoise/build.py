@@ -27,6 +27,21 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
+def _apply_fused_kernels(model, build: ModelBuild) -> None:
+    """``model.fused_kernels``: the family's fused blocks, then batch-invariant linears.
+
+    Both builders call this after LoRA attaches and before compile or host
+    streaming wrap the blocks, so the rollout and the replay run one
+    computation at any batch size.
+    """
+
+    from vrl.nn.kernels.batch_invariant import install_batch_invariant_linears
+
+    model.apply_fused_kernels(build)
+    for root in model.policy_cores.values():
+        install_batch_invariant_linears(root)
+
+
 def build_denoise_runtime_bundle(
     build: ModelBuild,
     *,
@@ -75,7 +90,7 @@ def build_denoise_runtime_bundle(
             lora_config.alpha,
         )
     if build.fused_kernels:
-        model.apply_fused_kernels(build)
+        _apply_fused_kernels(model, build)
     # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
     # The whole sequence and its ordering constraints live in the pass layer.
     apply_rollout_optimizations(model, build, before_compile=move_to_device)
@@ -144,7 +159,7 @@ def build_family_replay_runtime_bundle(
     else:
         model.apply_full_finetune(build)
     if build.fused_kernels:
-        model.apply_fused_kernels(build)
+        _apply_fused_kernels(model, build)
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
         model.torch_compile_transformer(compile_cfg["mode"], regional=compile_cfg["regional"])
