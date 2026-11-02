@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.nn.offload import Prefetcher
+from vrl.nn.offload.prefetch import IN_FLIGHT_UNITS
 
 
 def test_pass_direction_reads_forward_recompute_and_a_new_pass_from_its_end() -> None:
@@ -36,3 +38,23 @@ def test_prefetcher_hands_out_each_unit_and_copies_the_predicted_one_ahead() -> 
 
     # Only the first unit of each pass misses.
     assert (prefetcher.hits, prefetcher.misses) == (4, 2)
+
+
+@pytest.mark.gpu
+def test_the_host_waits_once_the_device_falls_more_than_the_in_flight_units_behind() -> None:
+    """Each queued unit holds its own copies, so an unbounded host lead grows the cache."""
+
+    units = [{"w": torch.full((1024,), float(i)).pin_memory()} for i in range(6)]
+    prefetcher = Prefetcher(units, "cuda")
+    done: list[torch.cuda.Event] = []
+    for index in range(len(units)):
+        prefetcher.acquire(index)
+        torch.cuda._sleep(20_000_000)  # tens of ms of device work per unit
+        done.append(torch.cuda.Event())
+        done[-1].record()
+        # The work queued IN_FLIGHT_UNITS + 1 acquires ago has run.
+        lagging = index - IN_FLIGHT_UNITS - 1
+        if lagging >= 0:
+            assert done[lagging].query()
+    assert not done[-1].query()
+    torch.cuda.synchronize()

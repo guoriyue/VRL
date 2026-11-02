@@ -13,14 +13,27 @@ the allocator recycle them once the stream that used them is done.
 The copies run at link speed only from pinned host memory
 (``vrl.nn.offload.host_pinning``); from pageable memory they are bounded by
 the host memcpy.
+
+A copy's memory is reusable only once the compute stream has run past its
+last use, and the host can queue kernels far ahead of the device: left
+alone, each queued unit holds its own copies, so the side stream's cache
+grows with the host's lead (10 GB of weight copies cached, none in use, on
+Qwen-Image-Layered training, where it filled the card and the allocator
+freed its cache and retried hundreds of times a step). The host therefore
+waits whenever the device is more than :data:`IN_FLIGHT_UNITS` units behind.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 
 import torch
 from torch.utils._python_dispatch import _disable_current_modes
+
+# Units of queued device work the host may run ahead of: two keep the
+# device fed while each copy hides behind the compute before its use.
+IN_FLIGHT_UNITS = 2
 
 
 class Prefetcher:
@@ -36,6 +49,7 @@ class Prefetcher:
         )
         self._ahead: tuple[int, dict[str, torch.Tensor], torch.cuda.Event | None] | None = None
         self._last: int | None = None
+        self._queued: deque[torch.cuda.Event] = deque()
         self.hits = 0
         self.misses = 0
 
@@ -79,6 +93,12 @@ class Prefetcher:
         self._ahead = None
         if ready is not None:
             current = torch.cuda.current_stream(self._device)
+            # Everything queued so far, the previous unit's uses included.
+            queued = torch.cuda.Event()
+            queued.record(current)
+            self._queued.append(queued)
+            while len(self._queued) > IN_FLIGHT_UNITS:
+                self._queued.popleft().synchronize()
             current.wait_event(ready)
             for tensor in copies.values():
                 tensor.record_stream(current)
@@ -106,4 +126,4 @@ class Prefetcher:
         return copies, ready
 
 
-__all__ = ["Prefetcher"]
+__all__ = ["IN_FLIGHT_UNITS", "Prefetcher"]
