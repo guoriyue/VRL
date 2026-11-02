@@ -368,6 +368,17 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
     ``forward_step`` runs it, the reference side in float64 with autocast off.
     The scalar whose gradient is compared projects every output on one fixed
     Gaussian direction, so every output element reaches the gradient.
+
+    The errors mean nothing without the problem's own conditioning: a
+    saturated attention softmax and the cancellation in a projected sum make
+    even an exact float64 gradient move by tens of percent under bf16-sized
+    perturbations (measured on Qwen-Image block 0 on CPU: float64 with inputs
+    and weights jittered by 2^-9 moved the gradient by 29%, the bf16 policy by
+    40%, fp32 by 17%). A third run therefore repeats the float64 reference
+    with every floating input and tensor scaled by ``1 + 2^-9 * N(0, 1)``
+    (about bf16's unit roundoff), and the report carries the policy error in
+    units of that floor: a kernel or semantic bug shows as a ratio far above
+    one, bf16 rounding as a ratio near it.
     """
 
     import torch
@@ -422,6 +433,16 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
         policy_outputs, policy_grad = run(lambda t: t)
     with torch.autocast(device_type=device.type, enabled=False), _reference_attention() as calls:
         reference_outputs, reference_grad = run(_float64)
+        jitter = torch.Generator(device=device).manual_seed(1)
+
+        def perturbed(tensor: Any) -> Any:
+            tensor = _float64(tensor)
+            if not tensor.is_floating_point():
+                return tensor
+            noise = torch.randn(tensor.shape, generator=jitter, device=device, dtype=tensor.dtype)
+            return tensor * (1 + 2**-9 * noise)
+
+        floor_outputs, floor_grad = run(perturbed)
     if not calls[0]:
         raise SystemExit(
             f"[probe] FAIL: {captured.name} attention does not call "
@@ -431,19 +452,26 @@ def _audit_block(model: Any, captured: _BlockInputs, *, device: Any) -> dict[str
     def relative(a: Any, b: Any) -> float:
         return ((a - b).norm() / b.norm()).item()
 
+    def cosine(a: Any, b: Any) -> float:
+        return torch.nn.functional.cosine_similarity(a, b, dim=0).item()
+
+    forward = [relative(a, b) for a, b in zip(policy_outputs, reference_outputs, strict=True)]
+    forward_floor = [relative(a, b) for a, b in zip(floor_outputs, reference_outputs, strict=True)]
+    grad, grad_floor = relative(policy_grad, reference_grad), relative(floor_grad, reference_grad)
     return {
         "block": captured.name,
         "reference_dtype": "float64",
         "attention_calls": calls[0],
         "trainable_tensors": len(trainable),
         "trainable_numel": policy_grad.numel(),
-        "forward_rel_l2": [
-            relative(a, b) for a, b in zip(policy_outputs, reference_outputs, strict=True)
-        ],
-        "grad_rel_l2": relative(policy_grad, reference_grad),
-        "grad_cosine": torch.nn.functional.cosine_similarity(
-            policy_grad, reference_grad, dim=0
-        ).item(),
+        "forward_rel_l2": forward,
+        "forward_floor_rel_l2": forward_floor,
+        "forward_over_floor": [a / b for a, b in zip(forward, forward_floor, strict=True)],
+        "grad_rel_l2": grad,
+        "grad_floor_rel_l2": grad_floor,
+        "grad_over_floor": grad / grad_floor,
+        "grad_cosine": cosine(policy_grad, reference_grad),
+        "grad_floor_cosine": cosine(floor_grad, reference_grad),
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(device)
         if device.type == "cuda"
         else None,
@@ -768,9 +796,16 @@ def main(argv: list[str] | None = None) -> None:
         block_audit = _audit_block(model, block_inputs, device=device)
         print(
             f"[probe] block audit {block_audit['block']}: forward rel l2 "
-            + ", ".join(f"{value:.3e}" for value in block_audit["forward_rel_l2"])
+            + ", ".join(
+                f"{value:.3e} ({ratio:.2f}x floor)"
+                for value, ratio in zip(
+                    block_audit["forward_rel_l2"], block_audit["forward_over_floor"], strict=True
+                )
+            )
             + f"; grad rel l2 {block_audit['grad_rel_l2']:.3e}"
+            f" ({block_audit['grad_over_floor']:.2f}x floor)"
             f" cosine {block_audit['grad_cosine']:.6f}"
+            f" (floor {block_audit['grad_floor_cosine']:.6f})"
             f" over {block_audit['trainable_numel']} elements"
         )
 

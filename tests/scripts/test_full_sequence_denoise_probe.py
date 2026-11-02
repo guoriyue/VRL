@@ -73,6 +73,8 @@ def test_probe_block_audit_matches_float64_on_an_fp32_policy(monkeypatch, tmp_pa
     assert max(audit["forward_rel_l2"]) < 1e-5
     # The gradient sums signed terms, so its fp32 relative error sits above eps.
     assert audit["grad_rel_l2"] < 1e-3 and audit["grad_cosine"] > 1 - 1e-8
+    # fp32 rounding sits far below a bf16-sized perturbation of the inputs.
+    assert max(audit["forward_over_floor"]) < 0.1 and audit["grad_over_floor"] < 0.1
     assert all(step["density_fp64_max_abs"] < 1e-5 for step in report["steps"])
     residuals = [step["residual"]["passed"] for step in report["steps"] if "residual" in step]
     assert residuals and all(residuals)
