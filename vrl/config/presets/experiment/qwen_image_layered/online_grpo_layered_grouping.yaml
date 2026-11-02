@@ -11,8 +11,9 @@
 # layer budget (request_overrides.layers) and the reward's reference (object
 # masks, truth layers or both; see /dataset/layered_coco).
 #
-# Usage:
-#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+# Usage (generation batch 1 leaves ~0.27 GB of CUDA runtime on the card after
+# the rollout parks, over the default 256 MiB parking tolerance):
+#   CUDA_VISIBLE_DEVICES=0 VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 vrl-train \
 #     --config experiment/qwen_image_layered/online_grpo_layered_grouping \
 #     model.lora.path=<peft dir> trainer.output_dir=outputs/layered_grpo/<run>
 defaults:
@@ -33,6 +34,10 @@ sampling:
 
 model:
   offload: true
+  # Rollout and replay run the same fused block kernels, so their log-probs
+  # stay bitwise equal: one step 2011 -> 1582 s together with the
+  # checkpointing and batch below (5090, 2026-11-02).
+  fused_kernels: true
   use_lora: true
   lora:
     path: outputs/layered_v3_data/run_20261015/luma/peft/v3_seg3
@@ -47,10 +52,15 @@ actor:
     # default eps of 1e-8 and the update shrinks to ~0.3% of lr.
     eps: 1.0e-12
   prompts_per_collection: 1
-  gradient_checkpointing: full
+  # Keep every block's attention output (0.1 GB per block per 10-layer
+  # sample) and recompute the rest: the trainer's peak stays near 23 GB, and
+  # the backward drops 648 -> 475 s a step with the fused kernels.
+  gradient_checkpointing: selective_attention
   offload: true
-  # Two 10-layer samples per training microbatch fill ~28 GB; use 1 on 24 GB.
-  training_microbatch_size: 2
+  # Per sample, batch 1 costs what batch 2 does (60 streamed blocks: 7.8 s
+  # forward + backward at batch 1 against 8.2 s at batch 2 with a 6 GB
+  # attention budget), at half the activation memory.
+  training_microbatch_size: 1
   # Train exactly the stochastic steps of the rollout window below.
   timestep_selection: sde_window
   timestep_fraction: 1.0
@@ -60,9 +70,9 @@ rollout:
   prompts_per_batch: 4
   # Equal to actor.training_microbatch_size, so each replay microbatch is one
   # generation batch's rows and the replay runs the rollout's exact GEMM
-  # shapes (see trainer.replay_parity). Batch 2 costs no rollout time on the
-  # 5090 (collect 683 s vs 674 s at batch 4 for 32 samples).
-  samples_per_generation_batch: 2
+  # shapes (see trainer.replay_parity). Batch 1 costs no rollout time on the
+  # 5090 (denoise 535 s vs 527 s at batch 2 for 32 samples).
+  samples_per_generation_batch: 1
   # Noise only on the first 4 of the 10 steps: with noise on every step the
   # final layers were noise-dominated, while deterministic last steps keep them
   # clean and the samples still differ in how they group the objects.
@@ -87,10 +97,12 @@ trainer:
   output_dir: outputs/layered_grpo/coco_grouping
   total_epochs: 1000
   save_freq: 2
-  # Generation batch 2 replayed as microbatch 2 is bitwise: |dlogprob| = 0
-  # at every step, both in no-grad (full_sequence_probe) and in the trainer's
-  # grad + full-checkpointing replay (2026-11-01). Generation batch 4 replayed
-  # as 2 drifted up to 2.9e-6 on the trained window steps. Any nonzero drift is
+  # A generation batch replayed as a microbatch of its own size is bitwise:
+  # |dlogprob| = 0 at every step, both in no-grad (full_sequence_probe) and
+  # in the trainer's grad replay, at batch 2 (stock blocks, full
+  # checkpointing, 2026-11-01) and batch 1 and 2 (fused blocks,
+  # selective_attention, 2026-11-02). Generation batch 4 replayed as 2
+  # drifted up to 2.9e-6 on the trained window steps. Any nonzero drift is
   # therefore a different computation and stops the run, including a
   # zero-advantage row dropped from the middle of a group, which shifts the
   # microbatch rows (actor.drop_zero_advantage; 0 of 109 groups in the
