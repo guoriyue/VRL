@@ -58,7 +58,11 @@ actor:
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 4
-  samples_per_generation_batch: 4
+  # Equal to actor.training_microbatch_size, so each replay microbatch is one
+  # generation batch's rows and the replay runs the rollout's exact GEMM
+  # shapes (see trainer.replay_parity). Batch 2 costs no rollout time on the
+  # 5090 (collect 683 s vs 674 s at batch 4 for 32 samples).
+  samples_per_generation_batch: 2
   # Noise only on the first 4 of the 10 steps: with noise on every step the
   # final layers were noise-dominated, while deterministic last steps keep them
   # clean and the samples still differ in how they group the objects.
@@ -83,10 +87,14 @@ trainer:
   output_dir: outputs/layered_grpo/coco_grouping
   total_epochs: 1000
   save_freq: 2
-  # Eager bf16 rollout (generation batch 4) against replay (microbatch 2)
-  # measured at most 5.2e-6 over 284 updates of the 2026-10 layered runs. Gate
-  # every update at twice that, an order below the 1e-4 ratio clip: drift
-  # that appears only once the adapter has moved must still stop the run.
+  # Generation batch 2 replayed as microbatch 2 is bitwise: |dlogprob| = 0
+  # at every step, both in no-grad (full_sequence_probe) and in the trainer's
+  # grad + full-checkpointing replay (2026-11-01). Generation batch 4 replayed
+  # as 2 drifted up to 2.9e-6 on the trained window steps. Any nonzero drift is
+  # therefore a different computation and stops the run, including a
+  # zero-advantage row dropped from the middle of a group, which shifts the
+  # microbatch rows (actor.drop_zero_advantage; 0 of 109 groups in the
+  # 2026-10/11 layered runs).
   replay_parity:
-    max_abs_logprob_diff: 1.0e-5
+    max_abs_logprob_diff: 0.0
     every_update: true
