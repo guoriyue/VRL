@@ -29,6 +29,7 @@ from diffusers.models.transformers.transformer_qwenimage import (
     QwenImageTransformerBlock,
 )
 
+from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
     joint_rms_norm_rope,
@@ -198,43 +199,31 @@ def install_fused_blocks(root: nn.Module, *, keep_lora_input_cast: bool) -> int:
 
     Blocks already fused count and stay as they are.
 
-    The fused kernels emit bf16 where the stock LayerNorm emitted fp32, so a
-    LoRA projection under autocast would upcast its bf16 input to its fp32
-    adapter weights only for autocast to round it straight back to bf16 at
-    the adapter GEMM: an exact round trip that reads and writes the whole
-    activation twice. ``keep_lora_input_cast=False`` turns that upcast off in
-    the fused blocks; it is exact only when every call runs under a
-    half-precision autocast, and without one the adapter GEMM fails on the
-    dtype mismatch rather than computing anything else.
+    The fused kernels emit bf16 where the stock LayerNorm emitted fp32. A
+    LoRA projection that runs PEFT's own forward (the batch-invariant adapter
+    path does not cast; PEFT's handles dropout, DoRA and several adapters)
+    under autocast would upcast its bf16 input to its fp32 adapter weights
+    only for autocast to round it straight back to bf16 at the adapter GEMM:
+    an exact round trip that reads and writes the whole activation twice.
+    ``keep_lora_input_cast=False`` turns that upcast off in the fused blocks;
+    it is exact only when every call runs under a half-precision autocast,
+    and without one PEFT's adapter GEMM fails on the dtype mismatch rather
+    than computing anything else.
     """
 
     from peft.tuners.tuners_utils import BaseTunerLayer
 
-    count = 0
-    for module in root.modules():
-        if not isinstance(module, QwenImageTransformerBlock):
-            continue
-        if type(module) is FusedQwenImageTransformerBlock:
-            count += 1
-            continue
-        if type(module) is not QwenImageTransformerBlock:
-            raise TypeError(
-                f"cannot fuse {type(module).__name__}: install fused blocks before "
-                "anything else subclasses them (host streaming, compile)"
-            )
-        _check_fusable(module)
-        processor = module.attn.processor
-        fused = FusedQwenDoubleStreamAttnProcessor()
-        fused._attention_backend = processor._attention_backend
-        fused._parallel_config = processor._parallel_config
-        module.attn.set_processor(fused)
-        module.__class__ = FusedQwenImageTransformerBlock
+    def prepare(block: QwenImageTransformerBlock) -> None:
+        _check_fusable(block)
+        swap_processor(block.attn, FusedQwenDoubleStreamAttnProcessor)
         if not keep_lora_input_cast:
-            for layer in module.modules():
+            for layer in block.modules():
                 if isinstance(layer, BaseTunerLayer):
                     layer.cast_input_dtype_enabled = False
-        count += 1
-    return count
+
+    return swap_block_class(
+        root, QwenImageTransformerBlock, FusedQwenImageTransformerBlock, prepare=prepare
+    )
 
 
 __all__ = [
