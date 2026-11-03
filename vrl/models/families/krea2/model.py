@@ -43,6 +43,7 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersModelBase,
     DiffusersPipelineModelBase,
@@ -77,6 +78,17 @@ class Krea2SamplingState(GuidedDenoiseSamplingStateBase):
 
 class Krea2Model(DiffusersModelBase):
     """Krea 2 transformer, scheduler and per-step math: the model replay runs."""
+
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap the transformer's image blocks to ``FusedKrea2TransformerBlock``."""
+
+        del build
+        from vrl.models.families.krea2.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no Krea2TransformerBlock"
+            )
 
     def packed_token_count(self, height: int, width: int) -> int:
         """Krea 2 packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
