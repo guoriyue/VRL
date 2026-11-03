@@ -203,6 +203,17 @@ class WanT2VModel(DiffusersModelBase):
 
         return self._wan_transformers()
 
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap both experts' blocks to ``FusedWanTransformerBlock``."""
+
+        del build
+        from vrl.models.families.wan_2_1.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no WanTransformerBlock"
+            )
+
     def set_module_root(self, name: str, module: Any) -> None:
         """Route a replaced expert to its writer.
 
