@@ -14,6 +14,7 @@ from tests.models.steps.denoise.fixtures import (
     build_tiny_transformer,
 )
 from vrl.models.families.cosmos.fused_block import (
+    FusedCosmosTransformer3DModel,
     FusedCosmosTransformerBlock,
     install_fused_blocks,
 )
@@ -65,6 +66,8 @@ def test_fused_blocks_match_the_stock_ones_with_their_lora_gradients(
     fused = copy.deepcopy(stock)
 
     assert install_fused_blocks(fused) == 2
+    # The model too: it hands the blocks one timestep row per frame.
+    assert type(fused.base_model.model) is FusedCosmosTransformer3DModel
     assert all(
         type(block) is FusedCosmosTransformerBlock
         for block in fused.base_model.model.transformer_blocks
