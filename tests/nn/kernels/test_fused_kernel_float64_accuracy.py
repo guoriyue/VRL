@@ -254,22 +254,24 @@ def test_layer_norm_is_one_rounding_of_its_float64_value_as_wans_fp32_layer_norm
     assert torch.equal(fused, layer_norm(x, weight, bias, eps=1e-6))
 
 
-def test_layer_norm_modulate_reads_a_per_token_table() -> None:
+def test_layer_norm_modulate_reads_one_table_row_per_frame() -> None:
     torch.manual_seed(8)
     x = (torch.randn(2, 300, 192, device="cuda") * 3).bfloat16().requires_grad_()
-    # Wan 2.2 TI2V's [B, S, 6, D] modulation: strided per-token [B, S, D] views.
-    modulation = 0.3 * torch.randn(2, 300, 6, 192, device="cuda")
-    shift, scale = modulation[:, :, 0], modulation[:, :, 1]
+    # Cosmos's per-frame timesteps: [B, frames, 3 * D] chunked into strided
+    # [B, 6, D] views, a row for each run of 50 consecutive tokens.
+    shift, scale, _ = (0.3 * torch.randn(2, 6, 3 * 192, device="cuda")).chunk(3, dim=-1)
     scale.requires_grad_()
     dy = torch.randn(2, 300, 192, device="cuda").bfloat16()
 
     x64, scale64 = x.detach().double().requires_grad_(), scale.detach().double().requires_grad_()
-    exact = torch.nn.functional.layer_norm(x64, (192,), eps=1e-6) * (1 + scale64) + shift.double()
+    exact = torch.nn.functional.layer_norm(x64, (192,), eps=1e-6) * (
+        1 + scale64.repeat_interleave(50, dim=1)
+    ) + shift.double().repeat_interleave(50, dim=1)
     exact.backward(dy.double())
     eager = (
         FP32LayerNorm(192, eps=1e-6, elementwise_affine=False)(x.detach().float())
-        * (1 + scale.detach())
-        + shift
+        * (1 + scale.detach().repeat_interleave(50, dim=1))
+        + shift.repeat_interleave(50, dim=1)
     ).bfloat16()
     fused = layer_norm_modulate(x, scale, shift, eps=1e-6)
     fused.backward(dy)

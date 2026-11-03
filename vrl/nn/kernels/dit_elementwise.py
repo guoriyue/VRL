@@ -10,9 +10,10 @@ one pass, in fp32 registers, rounding once to the input dtype on the way out:
 
 - :func:`layer_norm_modulate`, :func:`rms_norm_modulate`: the norm and
   ``* (1 + scale) + shift``, where every token reads its row of a modulation
-  table (per batch item; per token, as Wan 2.2 TI2V's and Cosmos's per-frame
-  timesteps; per packed row as MiniMax-H3's ``adaln_indices``; or per sample
-  and position as Qwen-Image-2.1's causal condition);
+  table (per batch item; per token, as Wan 2.2 TI2V's per-token timesteps;
+  per frame, as Cosmos's per-frame timesteps; per packed row as MiniMax-H3's
+  ``adaln_indices``; or per sample and position as Qwen-Image-2.1's causal
+  condition);
 - :func:`layer_norm`: an affine fp32 LayerNorm (Wan's cross-attention norm);
 - :func:`gated_residual`: ``residual + gate * y``, or ``tanh(gate)``;
 - :func:`joint_rms_norm_rope`: per-head q/k RMSNorm and the interleaved-pair
@@ -537,24 +538,27 @@ def _table_rows(
 
     The table is ``[R, D]`` with ``rows`` ``None`` (token ``(b, l)`` reads row
     ``b``, so ``R`` is the batch), an ``[L]`` index shared by the batch, or a
-    ``[B, L]`` index; or it is ``[B, L, D]``, one row per token, without
-    ``rows``. Returns the ``[R, D]`` table the kernels read, the index, the
-    index's batch stride, and how many consecutive tokens share an entry.
+    ``[B, L]`` index; or it is ``[B, G, D]`` without ``rows``, one row per
+    group of ``L / G`` consecutive tokens (``G = L``: per token). Returns the
+    ``[R, D]`` table the kernels read, the index, the index's batch stride,
+    and how many consecutive tokens share an entry.
     """
 
     if x.ndim != 3 or table.ndim not in (2, 3) or table.shape[-1] != x.shape[2]:
         raise ValueError(
-            f"expected x [B, L, D] and a [R, D] or [B, L, D] modulation table, got "
+            f"expected x [B, L, D] and a [R, D] or [B, G, D] modulation table, got "
             f"{tuple(x.shape)} and {tuple(table.shape)}"
         )
     batch, length = x.shape[:2]
     if table.ndim == 3:
-        if rows is not None or table.shape[:2] != (batch, length):
+        groups = table.shape[1]
+        if rows is not None or table.shape[0] != batch or length % groups:
             raise ValueError(
-                f"a per-token modulation table is [{batch}, {length}, D] and takes no rows, "
-                f"got {tuple(table.shape)}"
+                f"a grouped modulation table is [{batch}, G, D] with G dividing {length}, "
+                f"and takes no rows; got {tuple(table.shape)}"
             )
-        return _last_dim_contiguous(table.reshape(batch * length, -1)), None, 0, 1
+        flat = _last_dim_contiguous(table.reshape(batch * groups, -1))
+        return flat, None, 0, length // groups
     table = _last_dim_contiguous(table)
     if rows is None:
         if table.shape[0] != batch:
@@ -571,11 +575,11 @@ def _table_rows(
     raise ValueError(f"modulation rows must be [L] or [B, L], got {tuple(rows.shape)}")
 
 
-def _gather_table(table: torch.Tensor, rows: torch.Tensor | None) -> torch.Tensor:
+def _gather_table(table: torch.Tensor, rows: torch.Tensor | None, length: int) -> torch.Tensor:
     """The per-token view of a modulation table, broadcastable to ``[B, L, D]``."""
 
     if table.ndim == 3:
-        return table
+        return table.repeat_interleave(length // table.shape[1], dim=1)
     if rows is None:
         return table[:, None]
     return table[rows.long()] if rows.ndim == 2 else table[rows.long()][None]
@@ -588,11 +592,11 @@ def _reduce_to_table(
 
     One masked fp32 sum per table row (an indexed table has a handful): no
     atomic ``index_add_``, and no GEMM that ``float32_precision: tf32`` would
-    round. A per-token table takes the per-token gradients as they are.
+    round. A grouped table sums each group of consecutive tokens.
     """
 
     if table.ndim == 3:
-        return per_token
+        return per_token.unflatten(1, (table.shape[1], -1)).sum(2)
     if rows is None:
         return per_token.sum(1)
     index = rows.expand(per_token.shape[:2])
@@ -674,7 +678,9 @@ class _NormModulate(torch.autograd.Function):
             ]
             if ctx.needs_input_grad[1]:
                 factored = (
-                    dy32 if scale is None else dy32 * (1 + _gather_table(scale.float(), rows))
+                    dy32
+                    if scale is None
+                    else dy32 * (1 + _gather_table(scale.float(), rows, x.shape[1]))
                 )
                 dweight = (factored * normalized).sum((0, 1)).to(weight.dtype)
             if scale is not None and ctx.needs_input_grad[2]:
@@ -728,7 +734,9 @@ class _GatedResidual(torch.autograd.Function):
         if ctx.needs_input_grad[1]:
             per_token = dout.float() * y.float()
             if ctx.tanh:
-                per_token = per_token * (1 - torch.tanh(_gather_table(gate.float(), rows)) ** 2)
+                per_token = per_token * (
+                    1 - torch.tanh(_gather_table(gate.float(), rows, y.shape[1])) ** 2
+                )
             dgate = _reduce_to_table(per_token, rows, gate).to(gate.dtype)
         dresidual = dout.to(ctx.residual_dtype) if ctx.needs_input_grad[0] else None
         return dresidual, dgate, dy, None, None, None
@@ -1007,9 +1015,9 @@ def _norm_modulate_reference(
         normalized = normalized * weight.to(compute)
     if scale is None:
         return (normalized if shift is None else normalized + shift.to(compute)).to(x.dtype)
-    out = normalized * (1 + _gather_table(scale.to(compute), rows))
+    out = normalized * (1 + _gather_table(scale.to(compute), rows, x.shape[1]))
     if shift is not None:
-        out = out + _gather_table(shift.to(compute), rows)
+        out = out + _gather_table(shift.to(compute), rows, x.shape[1])
     return out.to(x.dtype)
 
 
@@ -1039,9 +1047,10 @@ def layer_norm_modulate(
     ``x`` is ``[B, L, D]``; ``scale`` and ``shift`` (``None``: no shift) are
     ``[R, D]`` modulation tables. Token ``(b, l)`` reads table row ``b``
     without ``rows`` (``R`` is the batch), else row ``rows[l]`` (an ``[L]``
-    index) or ``rows[b, l]`` (``[B, L]``). A ``[B, L, D]`` table (Wan 2.2
-    TI2V's and Cosmos's per-frame timesteps) gives every token its own row.
-    The result has ``x``'s dtype.
+    index) or ``rows[b, l]`` (``[B, L]``). A ``[B, G, D]`` table gives each
+    run of ``L / G`` consecutive tokens a row: every token its own (``G = L``,
+    Wan 2.2 TI2V's per-token timesteps) or every frame (Cosmos's per-frame
+    timesteps). The result has ``x``'s dtype.
     """
 
     if _runs_triton(x):
@@ -1109,7 +1118,7 @@ def gated_residual_reference(
     """:func:`gated_residual` in torch ops, in fp32 or the input's wider dtype."""
 
     compute = torch.promote_types(_compute_dtype(residual), out_dtype or residual.dtype)
-    gate = _gather_table(gate.to(compute), rows)
+    gate = _gather_table(gate.to(compute), rows, residual.shape[1])
     if tanh:
         gate = gate.tanh()
     return (residual.to(compute) + gate * y.to(compute)).to(out_dtype or residual.dtype)
