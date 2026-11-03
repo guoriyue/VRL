@@ -77,6 +77,17 @@ class CosmosPredict2SamplingState(GuidedDenoiseSamplingStateBase):
 class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
     """Cosmos Predict2 Video2World transformer, scheduler and per-step math: the model replay runs."""
 
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap the transformer's blocks to ``FusedCosmosTransformerBlock``."""
+
+        del build
+        from vrl.models.families.cosmos.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no CosmosTransformerBlock"
+            )
+
     # -- forward_step --------------------------------------------------
 
     def forward_step(
