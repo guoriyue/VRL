@@ -212,7 +212,8 @@ class ModelSection(ConfigBase):
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
     # Reader: ModelBuild.fused_kernels. The family's fused block kernels
-    # (qwen_image, qwen_image_21, minimax_h3: <family>/fused_block.py) plus the
+    # (qwen_image, qwen_image_21, minimax_h3, wan_2_1, cosmos, flux, krea2,
+    # sd3_5: <family>/fused_block.py) plus the
     # batch-invariant conditioning and LoRA linears (vrl/nn/kernels/
     # batch_invariant.py), in the rollout and the replay alike, so a sample's
     # numbers do not depend on its batch; the same weights, so identity-excluded.
