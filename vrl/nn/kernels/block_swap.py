@@ -52,8 +52,10 @@ def swap_processor(attention: Any, processor_class: type) -> None:
 
     processor = attention.processor
     replacement = processor_class()
-    replacement._attention_backend = processor._attention_backend
-    replacement._parallel_config = processor._parallel_config
+    # Processors of the older attention API (SD3's, Cosmos's) carry neither.
+    for name in ("_attention_backend", "_parallel_config"):
+        if hasattr(processor, name):
+            setattr(replacement, name, getattr(processor, name))
     attention.set_processor(replacement)
 
 
