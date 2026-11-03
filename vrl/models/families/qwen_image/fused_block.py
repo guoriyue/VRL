@@ -29,6 +29,7 @@ from diffusers.models.transformers.transformer_qwenimage import (
     QwenImageTransformerBlock,
 )
 
+from vrl.nn.kernels.batch_invariant import per_sample_attention
 from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
@@ -89,7 +90,8 @@ class FusedQwenDoubleStreamAttnProcessor(QwenDoubleStreamAttnProcessor2_0):
             [heads(attn.add_v_proj, encoder_hidden_states), heads(attn.to_v, hidden_states)],
             dim=1,
         )
-        joint_hidden_states = dispatch_attention_fn(
+        joint_hidden_states = per_sample_attention(
+            dispatch_attention_fn,
             joint_query,
             joint_key,
             joint_value,

@@ -38,6 +38,7 @@ from diffusers.models.normalization import (
     SD35AdaLayerNormZeroX,
 )
 
+from vrl.nn.kernels.batch_invariant import per_sample_attention
 from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
@@ -98,7 +99,8 @@ class FusedJointAttnProcessor(JointAttnProcessor2_0):
             eps=attn.norm_k.eps,
         )
         value = torch.cat([heads(p[2], s) for p, s in zip(projections, streams, strict=True)], 1)
-        joint = F.scaled_dot_product_attention(
+        joint = per_sample_attention(
+            F.scaled_dot_product_attention,
             query.transpose(1, 2),
             key.transpose(1, 2),
             value.transpose(1, 2),

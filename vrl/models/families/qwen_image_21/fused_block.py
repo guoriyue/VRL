@@ -34,6 +34,7 @@ from diffusers.models.transformers.transformer_qwenimage21 import (
     QwenImage21TransformerBlock,
 )
 
+from vrl.nn.kernels.batch_invariant import per_sample_attention
 from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
@@ -102,7 +103,8 @@ class FusedQwenImage21AttnProcessor(QwenImage21AttnProcessor):
         seq_len_q = query.shape[1]
 
         if segments is None:
-            hidden_states = dispatch_attention_fn(
+            hidden_states = per_sample_attention(
+                dispatch_attention_fn,
                 query,
                 key,
                 value,
@@ -131,7 +133,8 @@ class FusedQwenImage21AttnProcessor(QwenImage21AttnProcessor):
                     seg_key_valid = key_valid[:, None, None, :end]
                     seg_mask = seg_key_valid if seg_mask is None else (seg_mask & seg_key_valid)
                 outputs.append(
-                    dispatch_attention_fn(
+                    per_sample_attention(
+                        dispatch_attention_fn,
                         query[:, start:end],
                         key[:, :end],
                         value[:, :end],
@@ -142,7 +145,8 @@ class FusedQwenImage21AttnProcessor(QwenImage21AttnProcessor):
                     )
                 )
             outputs.append(
-                dispatch_attention_fn(
+                per_sample_attention(
+                    dispatch_attention_fn,
                     query[:, prefix_len:],
                     key,
                     value,

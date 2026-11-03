@@ -1,10 +1,11 @@
-"""A sample's rows through the invariant linears do not depend on its batch.
+"""A sample's rows through the invariant linears and attention do not depend on its batch.
 
 Each case runs samples alone and then batched with others, and requires the
 batched rows to be bitwise the lone ones; the shapes are the GEMM kinds
 cuBLAS varies on (one conditioning vector per sample, a text stream of tens
-of tokens per sample, and a LoRA's thin rank-r side). The results must also
-be as close to float64 as cuBLAS's.
+of tokens per sample, and a LoRA's thin rank-r side) and the short sequence
+flash attention splits by batch. The linears must also be as close to
+float64 as cuBLAS's.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from vrl.nn.kernels.batch_invariant import (
     PerSampleLinear,
     install_batch_invariant_linears,
     lora_delta,
+    per_sample_attention,
     per_sample_linear,
 )
 
@@ -65,6 +67,37 @@ def test_lora_rows_are_the_same_at_every_batch_size() -> None:
         tokens.double() @ lora_a.bfloat16().double().t() @ lora_b.bfloat16().double().t()
     )
     assert _max_error(alone, exact) <= _max_error(eager, exact)
+
+
+def test_attention_samples_are_the_same_at_every_batch_size() -> None:
+    torch.manual_seed(3)
+    # A 256-pixel FLUX smoke shape: 24 heads over 64 text and 256 image tokens,
+    # where flash attention splits the keys by a count that follows the batch.
+    query, key, value = (torch.randn(4, 24, 320, 128, device="cuda").bfloat16() for _ in range(3))
+    # A padded text prefix per sample: the mask rows split with the samples.
+    valid = torch.ones(4, 1, 1, 320, dtype=torch.bool, device="cuda")
+    valid[1, ..., 40:64] = False
+    for mask in (None, valid):
+        alone = torch.cat(
+            [
+                F.scaled_dot_product_attention(
+                    query[i : i + 1],
+                    key[i : i + 1],
+                    value[i : i + 1],
+                    attn_mask=None if mask is None else mask[i : i + 1],
+                )
+                for i in range(4)
+            ]
+        )
+        for batch in (2, 3, 4):
+            batched = per_sample_attention(
+                F.scaled_dot_product_attention,
+                query[:batch],
+                key[:batch],
+                value[:batch],
+                attn_mask=None if mask is None else mask[:batch],
+            )
+            assert torch.equal(batched, alone[:batch])
 
 
 def _relative(actual: torch.Tensor, exact: torch.Tensor) -> float:

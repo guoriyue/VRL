@@ -34,6 +34,7 @@ from diffusers.models.transformers.transformer_wan import (
     WanTransformerBlock,
 )
 
+from vrl.nn.kernels.batch_invariant import per_sample_attention
 from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
@@ -76,7 +77,8 @@ class FusedWanAttnProcessor(WanAttnProcessor):
         key = rms_norm_rope_across_heads(
             heads(attn.to_k(hidden_states)), attn.norm_k.weight, freqs, eps=attn.norm_k.eps
         )
-        hidden_states = dispatch_attention_fn(
+        hidden_states = per_sample_attention(
+            dispatch_attention_fn,
             query,
             key,
             heads(attn.to_v(hidden_states)),

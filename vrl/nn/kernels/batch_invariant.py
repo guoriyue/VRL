@@ -7,9 +7,13 @@ batch around them whenever the per-sample row count is small: measured on the
 RTX 5090, a conditioning projection (one vector per sample) and the text
 stream of a joint-attention block (tens of tokens per sample) both move by
 1e-2 in bf16 between batch 1, 2 and 4, as does a LoRA's thin rank-``r`` side.
-Flash attention and the elementwise kernels already work per sample.
+The elementwise kernels already work per sample. Flash attention does too,
+except on a short sequence: when the batch, heads and query blocks are too
+few to fill the GPU, it splits the keys across programs, by a count that
+follows the batch (on the 5090: 24 heads of a 320-token sequence split at
+batch 1 but not at batch 2, and move by 2e-3).
 
-Both are fixed without giving up cuBLAS where it is the right kernel:
+Both linears are fixed without giving up cuBLAS where it is the right kernel:
 
 - every plain linear runs cuBLAS once per sample (:func:`per_sample_linear`):
   each call has the one-sample shape, so cuBLAS picks one kernel whatever the
@@ -26,13 +30,17 @@ Both are fixed without giving up cuBLAS where it is the right kernel:
   the adapter runs cuBLAS once per sample instead.
 
 :func:`install_batch_invariant_linears` routes a model's linears and its LoRA
-adapters through these, in the rollout and in the replay alike.
+adapters through these, in the rollout and in the replay alike; the fused
+families' attention processors call their attention through
+:func:`per_sample_attention`, which runs it once per sample wherever the
+sequence is short enough to split.
 Gradients are computed with torch ops (cuBLAS): only the forward has to agree
 between the two sides.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -194,6 +202,51 @@ def per_sample_linear(
     return out
 
 
+def per_sample_attention(
+    attention: Callable[..., torch.Tensor],
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    *,
+    attn_mask: torch.Tensor | None = None,
+    **kwargs: Any,
+) -> torch.Tensor:
+    """``attention(query, key, value, attn_mask=..., **kwargs)`` one sample at a time.
+
+    ``attention`` takes batch-first tensors (diffusers' ``dispatch_attention_fn``,
+    or ``F.scaled_dot_product_attention``). On a sequence short enough for
+    flash attention to split its keys, each sample is its own call at the
+    one-sample shape, so it gets one split whatever the batch; a longer one
+    runs batched, where the loop would only cost waves (FLUX at 1024 pixels:
+    +10% at batch 2). A 4-D mask with a row per sample is split with the
+    samples; a broadcast mask is passed as it is.
+    """
+
+    batch = query.shape[0]
+    # Flash attention splits when the one-sample grid (heads times 128-query
+    # blocks) fills under 0.8 of the SMs, and a sample whose own call does not
+    # split is not split at any batch either. The bound is 2x the SM count, a
+    # margin over that rule, read from heads * length in either layout.
+    short = query.is_cuda and query[0, ..., 0].numel() < 2 * 128 * (
+        torch.cuda.get_device_properties(query.device).multi_processor_count
+    )
+    if batch == 1 or not short:
+        return attention(query, key, value, attn_mask=attn_mask, **kwargs)
+    per_sample_mask = attn_mask is not None and attn_mask.ndim == 4 and attn_mask.shape[0] > 1
+    return torch.cat(
+        [
+            attention(
+                query[i : i + 1],
+                key[i : i + 1],
+                value[i : i + 1],
+                attn_mask=attn_mask[i : i + 1] if per_sample_mask else attn_mask,
+                **kwargs,
+            )
+            for i in range(batch)
+        ]
+    )
+
+
 class _LoraDelta(torch.autograd.Function):
     @staticmethod
     def forward(ctx, base, x, lora_a, lora_b, scaling, compute):
@@ -347,5 +400,6 @@ __all__ = [
     "PerSampleLinear",
     "install_batch_invariant_linears",
     "lora_delta",
+    "per_sample_attention",
     "per_sample_linear",
 ]

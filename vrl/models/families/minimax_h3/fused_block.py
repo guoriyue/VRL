@@ -38,6 +38,7 @@ from diffusers.models.transformers.transformer_minimax_h3 import (
     MiniMaxH3TransformerBlock,
 )
 
+from vrl.nn.kernels.batch_invariant import per_sample_attention
 from vrl.nn.kernels.block_swap import swap_block_class, swap_processor
 from vrl.nn.kernels.dit_elementwise import (
     gated_residual,
@@ -75,7 +76,8 @@ class FusedMiniMaxH3AttnProcessor(MiniMaxH3AttnProcessor):
             eps=attn.norm_k.eps,
         )
         value = attn.to_v(hidden_states).unflatten(-1, (attn.heads, -1))
-        hidden_states = dispatch_attention_fn(
+        hidden_states = per_sample_attention(
+            dispatch_attention_fn,
             query,
             key,
             value,
