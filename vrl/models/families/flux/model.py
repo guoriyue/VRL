@@ -37,6 +37,7 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersModelBase,
     DiffusersPipelineModelBase,
@@ -70,6 +71,17 @@ class FluxModel(DiffusersModelBase):
     on a ``guidance`` embedding, NOT classifier-free guidance with an
     unconditional branch.
     """
+
+    def apply_fused_kernels(self, build: ModelBuild) -> None:
+        """Swap the transformer's double- and single-stream blocks to the fused ones."""
+
+        del build
+        from vrl.models.families.flux.fused_block import install_fused_blocks
+
+        if sum(install_fused_blocks(root) for root in self.policy_cores.values()) == 0:
+            raise ValueError(
+                f"model.fused_kernels: {type(self).__name__} has no FluxTransformerBlock"
+            )
 
     def packed_token_count(self, height: int, width: int) -> int:
         """FLUX packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
