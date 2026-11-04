@@ -354,13 +354,6 @@ class TrainerConfig:
                 f"actor.timestep_fraction={self.timestep_fraction} would be "
                 "silently ignored — leave it at 1.0",
             )
-        if self.ema.step_per_microbatch and self.batch_config.collections_per_update > 1:
-            raise ValueError(
-                "actor.ema.step_per_microbatch steps the shadow after every replay "
-                "microbatch and once more after the optimizer step, which needs the "
-                "update's last microbatch to be known: collect the update in one "
-                "collection (prompts_per_collection=0 or =prompts_per_batch)",
-            )
         if self.batch_config.streaming and int(self.ppo_epochs) != 1:
             raise ValueError(
                 "actor.ppo_epochs must be 1 when streaming accumulation is on "

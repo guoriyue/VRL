@@ -13,6 +13,8 @@
 #   windows of 192 videos, each ending in one optimizer step.
 # Here: 12 prompt groups/rank x 8 samples x 4 ranks = 384 per collected batch,
 # global_std across ranks, dealt into optimizer_steps_per_batch=2 updates.
+# Deliberate difference: the EMA shadow copies the live weights every 8th
+# update (decay 0) instead of lerping after every microbatch.
 #
 # Launch (three-update smoke first):
 #   VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
@@ -87,12 +89,12 @@ actor:
   drop_zero_advantage: true   # reference: mask = advantages.abs().sum() != 0
   gradient_checkpointing: full
   ema:
-    enable: true          # reference: EMAModuleWrapper(decay=0.9, update_step_interval=8)
-    decay: 0.9
+    # reference: EMAModuleWrapper(decay=0.9, update_step_interval=8), stepped
+    # after every microbatch: on each 8th update that is ~47 lerps at 0.9,
+    # i.e. a copy of the live weights (0.9^47 < 1%). Decay 0 is that copy.
+    enable: true
+    decay: 0.0
     update_interval: 8
-    # reference: ema.step() after EVERY microbatch, counter advanced before
-    # the last call of an update (see EMAConfig.step_per_microbatch).
-    step_per_microbatch: true
 
 distributed:
   training:

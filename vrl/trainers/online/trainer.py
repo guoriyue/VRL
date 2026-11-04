@@ -1440,16 +1440,10 @@ class OnlineTrainer:
         (the all-filtered initial_replay crash), so the sweep lives here and
         the callers keep only their own orchestration. Replay and backward are
         timed into the step's stats.
-
-        ``ema_per_microbatch`` reproduces the reference loop's shadow stepping:
-        the shadow steps after every microbatch but the last, at the current
-        optimizer-step counter; the caller steps it once more after the
-        optimizer step with the advanced counter (``EMAConfig.step_per_microbatch``).
         """
         defer_replay_tensors = (
             self.algorithm.uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
         )
-        ema_per_microbatch = self._ensure_ema() if self.config.ema.step_per_microbatch else None
 
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
@@ -1467,7 +1461,7 @@ class OnlineTrainer:
             training_microbatch_size,
             self._strategy,
         )
-        for position, sample_batch in enumerate(sample_batches):
+        for sample_batch in sample_batches:
             group_batch = sample_batch.batch.to_device(
                 self.device,
                 defer_replay_tensors=defer_replay_tensors,
@@ -1498,28 +1492,14 @@ class OnlineTrainer:
                         weight=sample_batch.loss_weight,
                         capture_initial_replay=capture_initial_replay,
                     )
-            if ema_per_microbatch is not None and position + 1 < len(sample_batches):
-                trainable = [p for p in self.model.parameters() if p.requires_grad]
-                ema_per_microbatch.step(trainable, self.state.global_step)
 
     def _ema_after_optimizer_step(self) -> None:
-        """Step the EMA shadow for one completed optimizer step.
+        """Step the EMA shadow for one completed optimizer step."""
 
-        Default: one step at the counter of the update just taken. Reference
-        microbatch stepping instead advances the counter first — the reference
-        increments ``global_step`` on gradient sync and then steps the shadow
-        for the update's last microbatch — so the final lerp of the update
-        reads the next counter.
-        """
-        ema = self._ema
-
-        if ema is None:
+        if self._ema is None:
             return
         trainable = [p for p in self.model.parameters() if p.requires_grad]
-        if self.config.ema.step_per_microbatch:
-            ema.step(trainable, self.state.global_step + 1)
-        else:
-            ema.step(trainable, self.state.global_step)
+        self._ema.step(trainable, self.state.global_step)
 
     def _optimizer_step_chunks(
         self,
