@@ -1,9 +1,10 @@
 # Flash-GRPO reference reproduction on Wan 2.1 1.3B T2V + HPSv3, four L40S.
 # Every knob below reproduces scripts/train_wan2_1_flash_1node.py of
 # Shredded-Pork/Flash-GRPO@bd6051f68e1ab444e5ec7c6ffe0a1f7eaf559a0d as READ
-# FROM ITS SOURCE, not from its config names (docs/sprints/
-# SPRINT_flash_grpo_native_reference.md derives each number). Where vrl's loop
-# is structured differently the equivalence is stated at the knob.
+# FROM ITS SOURCE, not from its config names (derived in
+# docs/sprints/SPRINT_flash_grpo_native_reference.md, archived from docs in
+# fc89d6f67). Where vrl's loop is structured differently the equivalence is
+# stated at the knob.
 #
 # Reference batch per EPOCH (one sampling pass, one advantage pass):
 #   8 ranks x 24 requests x 2 videos = 384 videos over 48 unique prompts
@@ -11,12 +12,18 @@
 #   repeated on 4 virtual ranks x 2 videos = 8 videos), standardized once
 #   with the global std of all 384, shuffled, trained as TWO accumulation
 #   windows of 192 videos, each ending in one optimizer step.
-# Here: 12 prompt groups/rank x 8 samples x 4 ranks = 384 per collected batch,
-# global_std across ranks, dealt into optimizer_steps_per_batch=2 updates.
-# Deliberate difference: the EMA shadow copies the live weights every 8th
-# update (decay 0) instead of lerping after every microbatch.
+# Here each update collects its own batch of the reference window's size:
+# 6 prompt groups/rank x 8 samples x 4 ranks = 192, global_std across ranks.
+# Deliberate differences: the advantage std covers the update's 192 videos,
+# not the epoch's 384; the reference's second window replays samples drawn
+# before its first update, while here every update samples fresh, so the
+# replay is on-policy and the 1e-3 clip only absorbs numerical drift; one
+# generation phase (with its trainer parking) per update instead of per two;
+# the EMA shadow copies the live weights every 8th update (decay 0) instead
+# of lerping after every microbatch. One vrl epoch is one update, half a
+# reference epoch.
 #
-# Launch (three-update smoke first):
+# Launch (two-update smoke first):
 #   VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
 #   torchrun --standalone --nproc_per_node=4 -m vrl.scripts.train \
 #     --config experiment/wan_2_1/online_flash_grpo_hpsv3_reference_4x_l40s \
@@ -56,10 +63,11 @@ model:
 
 algorithm:
   kind: flash_grpo
-  clip_ratio: 1.0e-3      # reference: train.clip_range = 1e-3
+  clip_ratio: 1.0e-3      # reference: train.clip_range = 1e-3 (on-policy here; see header)
   kl_coef: 0.0            # reference: train.beta = 0
   # reference: PerPromptStatTracker(global_std=True): per-prompt mean, std of
-  # ALL rewards of the epoch + 1e-4 (additive; eps defaults to 1e-4).
+  # ALL rewards of the epoch + 1e-4 (additive; eps defaults to 1e-4). Here the
+  # std covers the update's 192 rewards (see header).
   global_std: true
   adv_clip_max: 5.0       # reference: train.adv_clip_max = 5
 
@@ -76,11 +84,9 @@ actor:
   # same direction scaled by 1/24, so the equivalent threshold is 1.0/24.
   # AdamW (decoupled weight decay) is invariant to that constant factor.
   max_norm: 0.0416667
-  # Full-batch path: the whole 384-sample batch is collected, standardized
-  # once, then dealt into two optimizer updates (reference: one epoch = two
-  # accumulation windows after one stat_tracker.update).
+  # Full-batch path: the update's 192 samples are collected and standardized
+  # together.
   prompts_per_collection: 0
-  optimizer_steps_per_batch: 2
   ppo_epochs: 1           # reference: train.num_inner_epochs = 1
   # Mechanism 1: train exactly the rollout's stochastic step (sde_window
   # requires timestep_fraction 1.0; the trained subset is the recorded window).
@@ -118,8 +124,8 @@ distributed:
     worker_rpc_timeout_s: 1800
 
 rollout:
-  # 12 groups/rank x 8 samples x 4 ranks = 384 videos per collected batch.
-  prompts_per_batch: 12
+  # 6 groups/rank x 8 samples x 4 ranks = 192 videos per update.
+  prompts_per_batch: 6
   n_samples_per_prompt: 8
   # One request per prompt group draws ONE stochastic step for the whole group
   # (mechanism 2); sub-batches of the request share it, so the group may run as
@@ -153,7 +159,7 @@ reward:
 
 trainer:
   output_dir: outputs/flash_grpo_reference/run
-  total_epochs: 300       # reference: num_epochs = 300, stopped manually
-  save_freq: 2
+  total_epochs: 600       # reference: num_epochs = 300 (two updates each), stopped manually
+  save_freq: 4            # every 2 reference epochs
   debug:
     first_step: true      # unchanged-policy parity before the first update

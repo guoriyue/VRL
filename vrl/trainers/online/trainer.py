@@ -1501,44 +1501,6 @@ class OnlineTrainer:
         trainable = [p for p in self.model.parameters() if p.requires_grad]
         self._ema.step(trainable, self.state.global_step)
 
-    def _optimizer_step_chunks(
-        self,
-        batches: list[RolloutBatch],
-        advantages: list[torch.Tensor],
-    ) -> list[tuple[list[RolloutBatch], list[torch.Tensor]]]:
-        """Split one collected batch into ``steps`` disjoint optimizer updates.
-
-        Samples are shuffled within each prompt group and dealt across the
-        updates (the reference shuffles the epoch's samples before cutting it
-        into accumulation windows), so a group's advantage — already computed
-        over the whole batch — feeds every update and no rank runs an update
-        without samples. The permutation is seeded from the optimizer-step
-        counter and rank, so a resumed run deals the same way.
-        """
-        steps = self.config.batch_config.optimizer_steps_per_batch
-
-        if steps <= 1:
-            return [(batches, advantages)]
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(
-            (int(self.state.global_step) * 1_000_003 + int(self._strategy.context.rank))
-            & 0x7FFFFFFF,
-        )
-        chunks: list[tuple[list[RolloutBatch], list[torch.Tensor]]] = [
-            ([], []) for _ in range(steps)
-        ]
-        for batch, adv in zip(batches, advantages, strict=True):
-            count = int(batch.rewards.shape[0])
-            permutation = torch.randperm(count, generator=generator)
-            for (chunk_batches, chunk_advs), selector in zip(
-                chunks, torch.tensor_split(permutation, steps), strict=True
-            ):
-                if selector.numel() == 0:
-                    continue
-                chunk_batches.append(batch.select(selector.to(batch.rewards.device)))
-                chunk_advs.append(adv[selector.to(adv.device)])
-        return chunks
-
     async def train_on_collections(
         self,
         collections: AsyncIterable[TrainingBatch],
@@ -1551,9 +1513,9 @@ class OnlineTrainer:
         a time, each released before the next is collected, so host RAM holds one
         collection of rollout/replay tensors. Every collection's replay/backward
         accumulates into one gradient and the update steps once; ``ppo_epochs``
-        and ``optimizer_steps_per_batch`` instead replay a collection several
-        times with an optimizer step per pass, which needs the whole batch in
-        hand (``TrainerConfig`` rejects them under streaming).
+        instead replays a collection several times with an optimizer step per
+        pass, which needs the whole batch in hand (``TrainerConfig`` rejects it
+        under streaming).
 
         ``total_groups`` is the loss normalizer when the update's prompt-group
         count is known up front (streaming: ``prompts_per_batch``); ``None``
@@ -1569,7 +1531,7 @@ class OnlineTrainer:
         self._ensure_ema()
         self.model.train()
         optimizer.zero_grad(set_to_none=True)
-        step_per_pass = cfg.ppo_epochs > 1 or cfg.batch_config.optimizer_steps_per_batch > 1
+        step_per_pass = cfg.ppo_epochs > 1
         agg = _ReplayMetrics()
         diagnostics = _UpdateDiagnostics()
         initial_replay: InitialReplayStats | None = None
@@ -1661,10 +1623,10 @@ class OnlineTrainer:
         clip_and_step: Any,
         initial_replay_pending: Any,
     ) -> None:
-        """Replay and backward one collection: every PPO epoch and optimizer chunk of it.
+        """Replay and backward one collection: every PPO epoch of it.
 
-        A method rather than loop body so the chunk references die with the
-        frame and the collection can be released before the next is collected.
+        A method rather than loop body so the collection's references die with
+        the frame and it can be released before the next is collected.
         """
 
         # Replay schedule — step evaluators use the configured denoise subset;
@@ -1672,21 +1634,16 @@ class OnlineTrainer:
         # Trajectory schemas are consistent across batches, so inspect the first.
         train_indices = self._train_replay_indices(batch.batches[0])
         for _ppo_epoch in range(self.config.ppo_epochs):
-            # ``optimizer_steps_per_batch`` deals the collection's samples into
-            # that many disjoint updates, each with its own optimizer step.
-            for chunk_batches, chunk_advs in self._optimizer_step_chunks(
-                batch.batches, batch.advantages
-            ):
-                self._run_replay_pass(
-                    chunk_batches,
-                    chunk_advs,
-                    total_groups=len(chunk_batches) if total_groups is None else int(total_groups),
-                    train_indices=train_indices,
-                    agg=agg,
-                    capture_initial_replay=initial_replay_pending(),
-                )
-                if step_per_pass:
-                    clip_and_step()
+            self._run_replay_pass(
+                batch.batches,
+                batch.advantages,
+                total_groups=len(batch.batches) if total_groups is None else int(total_groups),
+                train_indices=train_indices,
+                agg=agg,
+                capture_initial_replay=initial_replay_pending(),
+            )
+            if step_per_pass:
+                clip_and_step()
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on one collected batch: ``train_on_collections`` over that one collection."""

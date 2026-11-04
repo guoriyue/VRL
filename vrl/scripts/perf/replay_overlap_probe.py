@@ -173,13 +173,8 @@ def main(argv: list[str] | None = None) -> None:
             raise ValueError(
                 "disable KL explicitly; reference-policy weight swaps are outside this pilot"
             )
-        if (
-            built.trainer.ppo_epochs != 1
-            or built.trainer.batch_config.optimizer_steps_per_batch != 1
-        ):
-            raise ValueError(
-                "pilot requires one optimizer update: actor.ppo_epochs=1 and optimizer_steps_per_batch=1"
-            )
+        if built.trainer.ppo_epochs != 1:
+            raise ValueError("pilot requires one optimizer update: actor.ppo_epochs=1")
         if built.trainer.rollout_orchestration.schedule_mode != "strict_on_policy":
             raise ValueError("the fixed-trajectory probe requires strict_on_policy scheduling")
         from vrl.models.precision import apply_float32_precision

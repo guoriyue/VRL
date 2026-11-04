@@ -18,8 +18,8 @@ from vrl.config.loading import load_config
 _BASE = "experiment/sd3_5/online_grpo_ocr"
 _CONTINUOUS = "/base/rollout/orchestration=continuous"
 _RECOMPUTE = 'trainer.precision_correction.recompute_old_logprob="on"'
-# Several epochs or updates per batch replay a whole collected batch, which
-# needs the full-batch path rather than the base experiment's streaming.
+# Several epochs per batch replay a whole collected batch, which needs the
+# full-batch path rather than the base experiment's streaming.
 _FULL_BATCH = "actor.prompts_per_collection=0"
 
 
@@ -68,7 +68,6 @@ def test_current_policy_objective_rejects_continuous_staleness() -> None:
     "schedule",
     [
         ("actor.ppo_epochs=2", _FULL_BATCH),
-        ("actor.ppo_epochs=1", "actor.optimizer_steps_per_batch=2", _FULL_BATCH),
         ("actor.ppo_epochs=1", _CONTINUOUS),
     ],
 )

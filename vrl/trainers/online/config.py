@@ -32,11 +32,6 @@ class OnlineBatchConfig:
     prompts_per_collection: int = 0
     # Samples per training computation within one prompt group; zero keeps it whole.
     training_microbatch_size: int = 1
-    # Optimizer updates per collected batch. Advantages (and a global std) are
-    # computed once over the whole batch; its samples are then shuffled and split
-    # into this many disjoint updates, each stepping the optimizer (Flash-GRPO's
-    # reference trains one epoch of samples as two accumulation windows).
-    optimizer_steps_per_batch: int = 1
     host_memory_budget_fraction: float = 0.0
 
     @classmethod
@@ -72,7 +67,6 @@ class OnlineBatchConfig:
         for name in (
             "prompts_per_collection",
             "training_microbatch_size",
-            "optimizer_steps_per_batch",
             "host_memory_budget_fraction",
         ):
             value = None if actor is None else getattr(actor, name)
@@ -105,18 +99,6 @@ class OnlineBatchConfig:
             raise ValueError(
                 "actor.prompts_per_collection must evenly divide "
                 f"rollout.prompts_per_batch ({prompts} % {collection_prompts} != 0)",
-            )
-        optimizer_steps = require_int(
-            self.optimizer_steps_per_batch,
-            path="actor.optimizer_steps_per_batch",
-            minimum=1,
-        )
-        if optimizer_steps > 1 and collection_prompts > 0:
-            raise ValueError(
-                "actor.optimizer_steps_per_batch>1 splits one collected batch into "
-                "several updates, which needs the full-batch path; streaming "
-                "accumulation (prompts_per_collection>0) releases each collection "
-                f"after one update (got optimizer_steps_per_batch={optimizer_steps})",
             )
 
         budget = self.host_memory_budget_fraction
@@ -365,10 +347,8 @@ class TrainerConfig:
             raise ValueError(
                 "precision_correction.recompute_old_logprob='on' replaces the rollout "
                 "log-prob with the trainer's pre-update replay log-prob, which is only "
-                "the behavior policy under actor.ppo_epochs=1, one optimizer step per "
-                f"batch and no continuous staleness; got ppo_epochs={self.ppo_epochs}, "
-                "optimizer_steps_per_batch="
-                f"{self.batch_config.optimizer_steps_per_batch}, "
+                "the behavior policy under actor.ppo_epochs=1 and no continuous "
+                f"staleness; got ppo_epochs={self.ppo_epochs}, "
                 f"schedule_mode={self.rollout_orchestration.schedule_mode!r}. Use 'off' "
                 "(bypass) with the TIS/RS for off-policy replay.",
             )
@@ -377,16 +357,11 @@ class TrainerConfig:
     def replays_off_policy(self) -> bool:
         """Whether some replay trains weights newer than its behavior policy.
 
-        A later PPO epoch, a later optimizer step over the same batch, and a
-        continuous-schedule sample (whose window is at least one version) all
-        replay under weights the rollout did not use.
+        A later PPO epoch and a continuous-schedule sample (whose window is at
+        least one version) both replay under weights the rollout did not use.
         """
 
-        return (
-            int(self.ppo_epochs) > 1
-            or int(self.batch_config.optimizer_steps_per_batch) > 1
-            or self.rollout_orchestration.schedule_mode == "continuous"
-        )
+        return int(self.ppo_epochs) > 1 or self.rollout_orchestration.schedule_mode == "continuous"
 
 
 __all__ = ["OnlineBatchConfig", "TrainerConfig"]
