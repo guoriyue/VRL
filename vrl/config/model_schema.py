@@ -120,7 +120,6 @@ class TorchCompileSection(ConfigBase):
 class ModelExecutorSection(ConfigBase):
     """Shared ``GenericDenoiseBatchExecutor`` constructor inputs."""
 
-    num_frames: int | None = None
     max_sequence_length: int | None = None
     fps: int | None = None
     batch_passthrough_keys: list[str] | None = None

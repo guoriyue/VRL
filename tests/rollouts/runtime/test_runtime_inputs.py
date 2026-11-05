@@ -278,7 +278,6 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
                 "model": {
                     "family": "flux",
                     "executor": {
-                        "num_frames": 17,
                         "max_sequence_length": 256,
                         "fps": 24,
                         "batch_passthrough_keys": ["text_ids"],
@@ -293,7 +292,6 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
     assert get_model_family_entry("flux").executor_kwargs(cfg) == {
         "family": "flux",
         "task": get_model_family_entry("flux").task,
-        "num_frames": 17,
         "max_sequence_length": 256,
         "fps": 24,
         "batch_passthrough_keys": ["text_ids"],

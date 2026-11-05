@@ -350,7 +350,7 @@ def _full_sequence_entry(
 ) -> ModelFamilyEntry:
     # Default dispatch: the shared generic executor. Families with real
     # per-batch logic pass their own executor_cls. Per-family executor config
-    # (num_frames / max_sequence_length / ...) lives in the model yaml's
+    # (max_sequence_length / fps / ...) lives in the model yaml's
     # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
         executor_cls = GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
