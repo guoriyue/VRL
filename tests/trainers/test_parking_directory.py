@@ -14,14 +14,14 @@ import torch
 
 from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.models.parking_disk_store import ParkingDiskStore
-from vrl.ray.resources import DistributedResourceConfig, ParkingConfig
+from vrl.ray.resources import DistributedResourceConfig, TrainerParkingConfig
 
 
 def test_parking_directory_is_optional_and_must_be_absolute() -> None:
-    assert DistributedResourceConfig().trainer.parking == ParkingConfig("move", None)
+    assert DistributedResourceConfig().trainer.parking == TrainerParkingConfig("move", None)
     for bad in ("", "   ", "relative/dir"):
         with pytest.raises(ValueError, match="disk_directory"):
-            ParkingConfig("move", bad)
+            TrainerParkingConfig("move", bad)
 
 
 def _cpu_training_state() -> tuple[torch.nn.Module, TrainingMemoryState]:

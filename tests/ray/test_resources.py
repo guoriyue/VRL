@@ -826,7 +826,8 @@ def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -
 
 def test_each_role_parks_with_its_default_and_refuses_other_mechanisms() -> None:
     """``parking.mechanism`` resolves to the role's default; a mechanism the role
-    cannot use, or a disk directory outside the trainer, fails at parse.
+    cannot use fails at parse, and ``disk_directory`` is a key only the
+    trainer's block knows.
     """
 
     resources = ResourcePlan.from_root(
@@ -841,5 +842,6 @@ def test_each_role_parks_with_its_default_and_refuses_other_mechanisms() -> None
     for role, mechanism in refused.items():
         with pytest.raises(ValueError, match=rf"{role}\.parking\.mechanism must be one of"):
             parse_config(_cfg({role: {"parking": {"mechanism": mechanism}}}))
-    with pytest.raises(ValueError, match="disk_directory"):
-        parse_config(_cfg({"reward": {"parking": {"disk_directory": "/mnt/nvme/x"}}}))
+    for role in ("rollout", "reward"):
+        with pytest.raises(ValueError, match=rf"unknown .*{role}\.parking\.disk_directory"):
+            parse_config(_cfg({role: {"parking": {"disk_directory": "/mnt/nvme/x"}}}))

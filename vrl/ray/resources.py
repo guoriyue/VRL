@@ -32,15 +32,26 @@ class ParkingConfig:
 
     Public key: ``distributed.resources.<role>.parking``. ``mechanism`` names the
     ``ParkingSession`` mechanism (vrl/models/parking.py); left unset, the role's
-    default applies. ``disk_directory`` is the ``move`` mechanism's optional file
-    destination, ``ModelParking(disk=...)``: unset, the parked bytes stay in host
-    RAM; set, a node-local disk directory (NVMe) whose shared file mappings Linux
-    can drop and re-read while another role owns the GPU (miles:
-    --offload-train-target=disk / --offload-train-disk-dir). Whether a role
-    yields at all comes from the topology, not from here.
+    default applies. Whether a role yields at all comes from the topology, not
+    from here.
     """
 
     mechanism: ParkingMechanism | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrainerParkingConfig(ParkingConfig):
+    """The trainer's parking block, the one role that can park to disk.
+
+    ``disk_directory`` is the ``move`` mechanism's optional file destination,
+    ``ModelParking(disk=...)``: unset, the parked bytes stay in host RAM; set, a
+    node-local disk directory (NVMe) whose shared file mappings Linux can drop
+    and re-read while another role owns the GPU (miles:
+    --offload-train-target=disk / --offload-train-disk-dir). Only the trainer
+    accepts the key: the rollout parks a CuMem pool or a module built from a
+    factory, and the reward never moves, so neither has bytes to file.
+    """
+
     disk_directory: str | None = None
 
     def __post_init__(self) -> None:
@@ -88,10 +99,6 @@ class _RoleResourceBase:
                 f"{self.key_prefix}.parking.mechanism must be one of "
                 f"{list(self.parking_mechanisms)}, got {mechanism!r}",
             )
-        if parking.disk_directory is not None and self.role != "trainer":
-            raise ValueError(
-                f"{self.key_prefix}.parking.disk_directory: only the trainer parks to disk",
-            )
         object.__setattr__(self, "parking", replace(parking, mechanism=mechanism))
 
     @property
@@ -114,19 +121,27 @@ class _RoleResourceBase:
 
 
 @dataclass(frozen=True, slots=True)
-class RoleResourceConfig(_RoleResourceBase):
-    """GPU ownership request for one execution role."""
+class _CountedRoleResourceBase(_RoleResourceBase):
+    """A role sized by GPU count (trainer, rollout): ``devices`` or ``num_gpus``."""
+
+    num_gpus: int | str | None = "auto"
+
+
+@dataclass(frozen=True, slots=True)
+class RoleResourceConfig(_CountedRoleResourceBase):
+    """GPU ownership request for the trainer."""
 
     role: ClassVar[str] = "trainer"
     # Not cumem: training state is not allocated inside a CuMem pool. Not
     # reload: optimizer state cannot be rebuilt from a factory.
     parking_mechanisms: ClassVar[tuple[ParkingMechanism, ...]] = ("move",)
 
-    num_gpus: int | str | None = "auto"
+    # The one parking block with a ``disk_directory`` key.
+    parking: TrainerParkingConfig = field(default_factory=TrainerParkingConfig)
 
 
 @dataclass(frozen=True, slots=True)
-class RolloutResourceConfig(RoleResourceConfig):
+class RolloutResourceConfig(_CountedRoleResourceBase):
     """GPU ownership request for rollout engines.
 
     The only role that runs engine replicas: the trainer is the driver process
@@ -741,7 +756,7 @@ def _resolve_cross_node_visible_devices(
     return tuple(range(total))
 
 
-def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
+def _explicit_role_gpu_count(role_config: _CountedRoleResourceBase) -> int:
     """Return an explicit integer GPU count for a role under ``cross_node``."""
 
     devices = role_config.pinned_devices
@@ -765,7 +780,7 @@ def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
 
 
 def _explicit_role_devices(
-    role_config: RoleResourceConfig,
+    role_config: _CountedRoleResourceBase,
     *,
     visible_devices: tuple[int, ...],
 ) -> tuple[int, ...] | None:
@@ -787,7 +802,7 @@ def _explicit_role_devices(
 def _resolve_role_devices(
     *,
     visible_devices: tuple[int, ...],
-    role_config: RoleResourceConfig,
+    role_config: _CountedRoleResourceBase,
     default_auto_count: int,
 ) -> tuple[int, ...]:
     prefix = role_config.key_prefix
