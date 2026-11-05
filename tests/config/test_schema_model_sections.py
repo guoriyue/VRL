@@ -175,7 +175,6 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
 def test_family_owned_denoise_keys_select_their_public_sections() -> None:
     payload = {
         "vdn_checkpoint": "OpenVDN/vdn-h3",
-        "vdn_revision": "revision",
         "softmax_backend": "ref",
     }
     cfg = OmegaConf.create({"model": {"family": "vdn_h3", **payload}})

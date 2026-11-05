@@ -16,24 +16,14 @@ class VDNH3ModelSection(ModelSection):
     ``path`` is the MiniMax-H3 base the hybrid transform is grafted onto;
     ``vdn_checkpoint`` is the VDN artifact that supplies the transform config,
     the linear-branch weights and the adapters folded into the backbone. Two
-    sources, so two checkpoint-identity entries: a run is only reproducible
-    when both are pinned.
+    sources, so two checkpoint-identity entries: ``path`` pinned by
+    ``revision``, ``vdn_checkpoint`` an existing local directory hashed by
+    content (it carries no Hub revision).
     """
 
     vdn_checkpoint: Any = Field(
         default=None,
-        json_schema_extra=checkpoint_identity_metadata(
-            "source",
-            source="vdn",
-            revision_field="vdn_revision",
-        ),
-    )
-    vdn_revision: Any = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata(
-            "source_revision",
-            source="vdn",
-        ),
+        json_schema_extra=checkpoint_identity_metadata("source", source="vdn"),
     )
     # Window-softmax implementation, upstream's one runtime knob
     # (hybrid_transform.set_softmax_backend): auto | flex | decomposed | ref.

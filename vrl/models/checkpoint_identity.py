@@ -384,14 +384,23 @@ def resolve_checkpoint_model_identity(build: ModelBuild) -> dict[str, Any]:
         if value is _MISSING or not _is_configured(value):
             continue
         revision_field = metadata.get("revision_field")
-        revision = values.get(revision_field) if revision_field is not None else None
-        # One local-vs-remote classification: a pinned Hugging Face source, or
-        # None for an existing local path.
-        remote = require_remote_checkpoint_source_pin(
-            value,
-            revision,
-            field_name=f"model.{field_name}",
-        )
+        if revision_field is None:
+            # A source without a revision field is a local artifact; there
+            # is no Hub pin to record for it.
+            if local_checkpoint_source(value) is None:
+                raise ValueError(
+                    f"checkpoint source model.{field_name} must be an existing "
+                    f"local path: {str(value).strip()!r}",
+                )
+            remote = None
+        else:
+            # One local-vs-remote classification: a pinned Hugging Face
+            # source, or None for an existing local path.
+            remote = require_remote_checkpoint_source_pin(
+                value,
+                values.get(revision_field),
+                field_name=f"model.{field_name}",
+            )
         if remote is not None:
             repo_id, revision_text = remote
             sources[source_name] = {

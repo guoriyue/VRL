@@ -256,7 +256,6 @@ def test_local_identity_omits_root_path_and_caches_duplicate_source(
             path=str(model),
             revision="ignored-for-local-content",
             vdn_checkpoint=str(model),
-            vdn_revision=None,
         ),
     )
 
@@ -266,6 +265,24 @@ def test_local_identity_omits_root_path_and_caches_duplicate_source(
     assert identity["sources"]["main"]["bytes"] == 7
     assert identity["sources"]["main"]["files"] == 1
     assert str(tmp_path) not in repr(identity)
+
+
+def test_a_source_without_a_revision_field_must_be_local(tmp_path: Path) -> None:
+    """The VDN artifact carries no Hub pin, so only an existing path identifies it."""
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "weights.bin").write_bytes(b"weights")
+
+    with pytest.raises(ValueError, match=r"model\.vdn_checkpoint must be an existing local path"):
+        resolve_checkpoint_model_identity(
+            _build(
+                family="vdn_h3",
+                path=str(model),
+                revision=None,
+                vdn_checkpoint="OpenVDN/vdn-h3",
+            ),
+        )
 
 
 def test_disabled_lora_ignores_topology_initializer_and_warm_start_path() -> None:
