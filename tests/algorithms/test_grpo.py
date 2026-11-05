@@ -83,37 +83,6 @@ class TestGRPOFlowMatchingKL:
         assert metrics.kl_penalty == pytest.approx(0.5)
         assert metrics.weighted_kl_loss == pytest.approx(0.02)
 
-    def test_flow_kl_can_use_dt_when_explicitly_configured(self) -> None:
-        """``flow_kl_use_dt=True`` scales the flow KL by the step size (kl 0.5 -> 50 at dt=0.1)."""
-        grpo = GRPO(GRPOConfig(kl_coef=1.0, flow_kl_use_dt=True))
-        signals = _flow_signals(
-            log_prob=torch.zeros(2),
-            old_log_prob=torch.zeros(2),
-            ref_log_prob=torch.zeros(2),
-            prev_sample_mean=torch.zeros(2, 1, 1, 1),
-            ref_prev_sample_mean=torch.ones(2, 1, 1, 1),
-            std_dev_t=torch.ones(2, 1, 1, 1),
-            dt=torch.full((2, 1, 1, 1), 0.1),
-        )
-
-        loss, metrics = grpo.compute_loss(
-            AlgorithmInput(
-                signals=signals,
-                advantages=torch.zeros(2),
-            ),
-        )
-
-        assert loss.item() == pytest.approx(50.0)
-        assert metrics.kl_penalty == pytest.approx(50.0)
-
-
-class TestGRPOClippedSurrogate:
-    """Numeric checks on the PPO-clipped surrogate (continuous.py:102-141).
-
-    These guard the classic sign trap in ``torch.maximum(unclipped, clipped)``
-    on the negative-advantage side, plus the clip_fraction / approx_kl metrics.
-    """
-
     def test_ratio_one_gives_negative_mean_advantage(self) -> None:
         """log_prob == old_log_prob → ratio 1 → loss == -mean(advantage)."""
         grpo = GRPO(GRPOConfig(kl_coef=0.0))

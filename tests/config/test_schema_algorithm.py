@@ -27,7 +27,7 @@ def test_unknown_algorithm_keys_are_rejected_together() -> None:
 @pytest.mark.parametrize(
     ("kind", "field", "value"),
     [
-        ("grpo", "flow_kl_use_dt", True),
+        ("grpo", "kl_coef", 0.5),
         ("dance_grpo", "sft_weight", 0.1),
         ("flow_dppo", "add_kl_coefficient", False),
         ("grpo_guard", "clip_ratio", 0.2),

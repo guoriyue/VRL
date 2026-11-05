@@ -38,7 +38,6 @@ class GRPOConfig(ImportanceRatioConfig):
 
     clip_ratio: float = 0.2
     kl_coef: float = 0.0
-    flow_kl_use_dt: bool = False
     # Diffusion-loss regularizer weight (Cosmos-Predict2.5 paper 4.2.2's
     # anti-reward-hacking term): adds sft_weight * MSE(model_pred,
     # pretraining_target) on CLEAN fine-tuning latents (data.sft_latents,
@@ -184,7 +183,6 @@ class GRPO(ImportanceRatioAlgorithm):
                     signals.prev_sample_mean,
                     signals.ref_prev_sample_mean,
                     signals.std_dev_t,
-                    sqrt_neg_dt=signals.dt if cfg.flow_kl_use_dt else None,
                 )
                 kl_loss = torch.mean(kl)
             else:
