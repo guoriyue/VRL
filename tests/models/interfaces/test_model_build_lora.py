@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.config.model_schema import LoraSection
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild
 
@@ -31,24 +30,23 @@ def test_disabled_lora_has_no_attach_config(model_config) -> None:
         build.require_lora_config()
 
 
-@pytest.mark.parametrize("extras", [{}, {"init_lora_weights": False}])
-def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
-    values = {"rank": 2, "alpha": 4, "target_modules": ["proj"], **extras}
-    build = _build({"use_lora": True, "lora": {**values, "path": "/adapter"}})
+@pytest.mark.parametrize("missing", ["rank", "alpha", "target_modules"])
+def test_lora_attach_requires_the_topology(missing: str) -> None:
+    values = {"rank": 2, "alpha": 4, "target_modules": ["proj"], "path": "/adapter"}
+    del values[missing]
+    build = _build({"use_lora": True, "lora": values})
 
-    assert build.require_lora_config() == LoraSection(
-        **{"init_lora_weights": "gaussian", **values, "path": "/adapter"}
-    )
-    assert build.require_lora_config().path == "/adapter"
+    with pytest.raises(ValueError, match=r"requires rank, alpha, and target_modules"):
+        build.require_lora_config()
 
 
-# One row per distinct family decision: the shared ModelSection defaults
-# (sd3_5) and WanModelSection (both wan entries).
+# One row per distinct family decision: the shared ModelSection (sd3_5) and
+# WanModelSection; the build reads them off the family's schema class.
 @pytest.mark.parametrize(
     ("family", "init_lora_weights", "autocast_adapter_dtype"),
     [("sd3_5", "gaussian", True), ("wan_2_1", True, False)],
 )
-def test_family_lora_defaults_are_resolved_by_the_build(
+def test_family_lora_decisions_follow_the_model_family(
     family: str,
     init_lora_weights: str | bool,
     autocast_adapter_dtype: bool,
@@ -56,5 +54,5 @@ def test_family_lora_defaults_are_resolved_by_the_build(
     build = _build({"use_lora": True, "lora": {"rank": 2, "alpha": 4, "target_modules": ["proj"]}})
     build.family = family
 
-    assert build.require_lora_config().init_lora_weights == init_lora_weights
+    assert build.lora_init_weights == init_lora_weights
     assert build.lora_autocast_adapter_dtype is autocast_adapter_dtype

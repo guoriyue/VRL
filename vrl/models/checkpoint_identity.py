@@ -478,9 +478,7 @@ def resolve_checkpoint_model_identity(build: ModelBuild) -> dict[str, Any]:
             raw_lora = values.get(field_name)
             if not isinstance(raw_lora, Mapping):
                 raise ValueError("model.use_lora=true requires a model.lora mapping")
-            # Include effective storage/mirror settings so explicit defaults
-            # and omitted family defaults describe the same checkpoint.
-            raw_lora = schema_cls.resolve_lora(dict(raw_lora)).model_dump(exclude_none=True)
+            raw_lora = LoraSection.model_validate(dict(raw_lora)).model_dump(exclude_none=True)
             lora_values: dict[str, Any] = {}
             for lora_name, lora_field in LoraSection.model_fields.items():
                 lora_metadata = _field_metadata(

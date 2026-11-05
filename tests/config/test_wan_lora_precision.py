@@ -14,7 +14,6 @@ def test_fp32_adapter_schema_requires_lora(section: type[ModelSection], family: 
         section(family=family, use_lora=False, lora={"parameter_dtype": "float32"})
     model = section(family=family, use_lora=True, lora={"parameter_dtype": "float32"})
     assert model.lora.parameter_dtype == "float32"
-    assert section.resolve_lora(None).parameter_dtype is None
 
 
 def test_adapter_schema_rejects_unsupported_dtype() -> None:

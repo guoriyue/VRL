@@ -54,19 +54,20 @@ rank, alpha, and target-module lists. Override those at launch, rather than
 adding a new model/reward preset:
 
 ```bash
-model.use_lora=true model.lora.rank=32 model.lora.alpha=64 \
-model.lora.init_lora_weights=gaussian
+model.use_lora=true model.lora.rank=32 model.lora.alpha=64
 ```
 
-`ModelBuild.lora` resolves these settings into the shared `LoraSection`, then
-the shared model calls PEFT's `LoraConfig` and `get_peft_model` directly.
-There is no second adapter manager. This follows the separation in
+`ModelBuild.lora` types these settings as the shared `LoraSection`, then the
+shared model calls PEFT's `LoraConfig` and `get_peft_model` directly. There
+is no second adapter manager. This follows the separation in
 [Miles Diffusion's PEFT setup](https://github.com/radixark/miles_diffusion/blob/ebd55fc1e597520322e0225997552c0807e9293b/miles/backends/fsdp_utils/actor.py#L603):
-shared run inputs, with real family defaults kept separate.
+run inputs in YAML, family decisions in code.
 
-The lightweight family schemas own defaults: Gaussian initialization
-normally; Wan retains `init_lora_weights=true`. Both initialization choices
-start with zero B weights; the A distribution and RNG recipe differ. `path`
+The family's model section decides initialization and storage
+(`lora_init_weights`, `lora_autocast_adapter_dtype`; neither is a YAML key):
+Gaussian A with PEFT's fp32 upcast normally; Wan keeps PEFT's
+`init_lora_weights=true` and no upcast. Both initializations start with zero B
+weights; the A distribution and RNG recipe differ. `path`
 loads a trainable PEFT adapter after topology validation. `parameter_dtype:
 float32` explicitly stores trainable adapters in FP32; with FSDP it requires
 `distributed.training.fsdp.precision_policy=none`.
@@ -85,7 +86,7 @@ Migration from the former layout:
 | --- | --- |
 | `model.lora_parameter_dtype` | `model.lora.parameter_dtype` |
 | `model.nft_previous_adapter` / `model.lora.previous_adapter` | Remove; the algorithm contract requests the previous policy |
-| `model.lora.init` (never consumed) | Remove it; use `model.lora.init_lora_weights` for initialization |
+| `model.lora.init` / `model.lora.init_lora_weights` | Remove; the family's model section decides initialization |
 
 The removed spellings are rejected, not silently aliased. The persisted v1
 checkpoint identity retains its original canonical keys, so this spelling

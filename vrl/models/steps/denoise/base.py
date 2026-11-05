@@ -400,7 +400,7 @@ class DenoiseModelBase(nn.Module, ABC):
                         r=lora_config.rank,
                         lora_alpha=lora_config.alpha,
                         lora_dropout=LORA_DROPOUT,
-                        init_lora_weights=lora_config.init_lora_weights,
+                        init_lora_weights=build.lora_init_weights,
                         target_modules=lora_config.target_modules,
                     ),
                     autocast_adapter_dtype=autocast_adapter_dtype,

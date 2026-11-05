@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field
 
-from vrl.config.model_schema import LoraSection, ModelSection
+from vrl.config.model_schema import ModelSection
 from vrl.models.checkpoint_identity import (
     checkpoint_identity_metadata,
     require_remote_checkpoint_source_pin,
@@ -22,9 +22,9 @@ WanTransformerName = Literal["transformer", "transformer_2"]
 class WanModelSection(ModelSection):
     """Wan-specific public model keys."""
 
-    # Keep the established initialization/RNG recipe. No PEFT fp32 upcast:
-    # rollout adapters must match the FSDP actor's synchronized storage dtype.
-    lora_defaults: ClassVar[LoraSection] = LoraSection(init_lora_weights=True)
+    # Keep PEFT's own initialization/RNG recipe. No fp32 upcast: rollout
+    # adapters must match the FSDP actor's synchronized storage dtype.
+    lora_init_weights: ClassVar[str | bool] = True
     lora_autocast_adapter_dtype: ClassVar[bool] = False
 
     trainable_transformers: (

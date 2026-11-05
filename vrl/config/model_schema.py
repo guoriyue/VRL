@@ -43,10 +43,6 @@ class LoraSection(ConfigBase):
             canonicalize="sorted_unique",
         ),
     )
-    init_lora_weights: str | bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
     parameter_dtype: Literal["float32"] | None = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value"),
@@ -116,29 +112,15 @@ class ModelExecutorSection(ConfigBase):
 class ModelSection(ConfigBase):
     """Keys shared by every registered model family."""
 
-    # Defaults belong to the lightweight family schema, not the loaded model.
-    # Target names/rank/alpha remain recipe inputs in the model presets.
-    lora_defaults: ClassVar[LoraSection] = LoraSection(init_lora_weights="gaussian")
-    # PEFT's fp32 adapter upcast (``autocast_adapter_dtype``, a storage
-    # option, not forward autocast). A family whose weight sync needs one
-    # construction dtype across trainer topologies and rollout replicas turns
-    # it off; adapters train without dropout (``peft_adapter.LORA_DROPOUT``).
+    # How a family's adapters are decided, not recipe inputs (rank, alpha and
+    # the target names stay in the model presets). PEFT's ``init_lora_weights``:
+    # Gaussian A with zero B unless a family keeps PEFT's own recipe. PEFT's
+    # fp32 adapter upcast (``autocast_adapter_dtype``, a storage option, not
+    # forward autocast): a family whose weight sync needs one construction
+    # dtype across trainer topologies and rollout replicas turns it off.
+    # Adapters train without dropout (``peft_adapter.LORA_DROPOUT``).
+    lora_init_weights: ClassVar[str | bool] = "gaussian"
     lora_autocast_adapter_dtype: ClassVar[bool] = True
-
-    @classmethod
-    def resolve_lora(cls, values: dict[str, Any] | LoraSection | None) -> LoraSection:
-        """Resolve explicit settings over family defaults without mutating either."""
-
-        requested = (
-            values if isinstance(values, LoraSection) else LoraSection.model_validate(values or {})
-        )
-        return LoraSection.model_validate(
-            {
-                **ModelSection.lora_defaults.model_dump(exclude_none=True),
-                **cls.lora_defaults.model_dump(exclude_none=True),
-                **requested.model_dump(exclude_none=True),
-            }
-        )
 
     family: str = Field(
         json_schema_extra=checkpoint_identity_metadata("exclude"),
@@ -239,8 +221,7 @@ class ModelSection(ConfigBase):
 
     @model_validator(mode="after")
     def _validate_lora(self) -> Self:
-        resolved = self.resolve_lora(self.lora)
-        if resolved.parameter_dtype is not None and not self.use_lora:
+        if self.lora is not None and self.lora.parameter_dtype is not None and not self.use_lora:
             raise ValueError("model.lora.parameter_dtype requires model.use_lora=true")
         return self
 

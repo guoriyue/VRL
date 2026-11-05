@@ -315,7 +315,7 @@ def test_disabled_lora_ignores_topology_initializer_and_warm_start_path() -> Non
     assert left["build"] == {"use_lora": False}
 
 
-def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path() -> None:
+def test_enabled_lora_includes_topology_but_not_warm_start_path() -> None:
     first = resolve_checkpoint_model_identity(
         _build(
             use_lora=True,
@@ -323,7 +323,6 @@ def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path()
                 "rank": 8,
                 "alpha": 16,
                 "target_modules": ["q", "v"],
-                "init_lora_weights": "gaussian",
                 "path": "/first",
             },
         ),
@@ -335,7 +334,6 @@ def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path()
                 "rank": 8,
                 "alpha": 16,
                 "target_modules": ["v", "q", "q"],
-                "init_lora_weights": False,
                 "path": "/second",
             },
         ),

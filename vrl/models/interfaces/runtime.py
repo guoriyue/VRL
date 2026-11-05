@@ -304,10 +304,15 @@ class ModelBuild:
 
     @property
     def lora(self) -> LoraSection | None:
-        """Typed adapter settings, with the selected family's defaults applied."""
+        """Typed adapter settings of the recipe (rank, alpha, targets, path, dtype)."""
         if not self.use_lora:
             return None
-        return self._model_section_cls().resolve_lora((self.model_config or {}).get("lora"))
+        return LoraSection.model_validate((self.model_config or {}).get("lora") or {})
+
+    @property
+    def lora_init_weights(self) -> str | bool:
+        """PEFT's ``init_lora_weights``, decided per family by its model section."""
+        return self._model_section_cls().lora_init_weights
 
     @property
     def lora_autocast_adapter_dtype(self) -> bool:
