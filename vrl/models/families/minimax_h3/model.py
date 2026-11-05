@@ -20,8 +20,8 @@ facts about the released model drive the shape of this file:
    and prepares the rows for ``i + 1``. Every step's audio input is recorded
    (``audio_rows_by_step``) so replay feeds the transformer the exact rows
    rollout used; audio therefore never enters the policy ratio, and any
-   loop mode that skips a ``forward_step`` (TeaCache) desynchronises the side
-   stream and is refused loudly.
+   loop mode that skips a ``forward_step`` desynchronises the side stream and
+   is refused loudly.
 
 3. **Velocity sign.** MiniMax-H3 predicts a *data-ward* velocity
    (``x0 = x_t + sigma * v``) on a ``t = 1 - sigma`` clock, the opposite of the
@@ -577,7 +577,7 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
             raise RuntimeError(
                 "MiniMax-H3 audio side stream is out of step with the denoise loop "
                 f"(audio at step {state.audio_step}, forward requested at {step_idx}); "
-                "every step must run forward_step exactly in order (TeaCache is unsupported)"
+                "every step must run forward_step exactly in order"
             )
         if len(state.audio_rows_by_step) == step_idx:
             state.audio_rows_by_step.append(state.audio_rows.detach())

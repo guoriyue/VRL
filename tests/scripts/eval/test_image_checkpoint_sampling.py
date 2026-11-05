@@ -46,8 +46,8 @@ def test_family_key_missing_everywhere_names_the_config_path() -> None:
 def test_family_keys_come_from_the_family_schema_not_a_hand_list() -> None:
     """Qwen-Image-2.1 declares reference preprocessing and no prompt-length knob.
 
-    negative_prompt and teacache belong to the shared section and never ride
-    along into the record handed to the family executor.
+    negative_prompt belongs to the shared section and never rides along into
+    the record handed to the family executor.
     """
 
     root = _root(

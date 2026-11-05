@@ -172,7 +172,7 @@ classDiagram
 
 Below the executors, `steps/denoise/` holds the family-neutral inner loop
 (`DenoiseLoopConfig`, `DenoiseSDEParams`, `DenoiseLoopResult`,
-`DenoiseTrajectoryBuffers`, TeaCache classes).
+`DenoiseTrajectoryBuffers`).
 
 ### 2.5 Request/output types (`types.py`)
 

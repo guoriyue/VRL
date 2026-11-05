@@ -9,7 +9,6 @@ import torch
 
 from vrl.generation.execution.types import BatchMemoryReading
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
-from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import SDEStepResult, sde_step_with_logprob
 from vrl.utils.cuda_memory import (
     cuda_peak_allocated_bytes,
@@ -157,11 +156,6 @@ def run_denoise_loop(
         generator = None
 
     buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=config)
-    teacache = (
-        TeaCacheState(config.teacache, len(state.timesteps))
-        if config.teacache is not None
-        else None
-    )
 
     num_steps_to_run = len(state.timesteps)
     with torch.no_grad():
@@ -171,17 +165,9 @@ def run_denoise_loop(
             with profile_range("generation.denoise_step"):
                 timestep = state.timesteps[step_idx]
 
-                if teacache is not None and not teacache.should_run(
-                    state.latents,
-                    step_idx,
-                ):
-                    noise_pred = teacache.cached_noise_pred
-                else:
-                    with profile_range("generation.denoise_forward"):
-                        step_output = model.forward_step(state, step_idx)
-                    noise_pred = step_output["noise_pred"]
-                    if teacache is not None:
-                        teacache.cache_noise_pred(noise_pred)
+                with profile_range("generation.denoise_forward"):
+                    step_output = model.forward_step(state, step_idx)
+                noise_pred = step_output["noise_pred"]
 
                 if config.denoise_mode == "native":
                     with profile_range("generation.scheduler_step"):

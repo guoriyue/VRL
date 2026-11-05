@@ -18,16 +18,11 @@ rather than in each family builder:
 * Device moves run AFTER quantization and BEFORE compile, so they act on the
   compact real modules. Offload runs AFTER compile: block streaming wraps each
   block's call outside whatever compile left in place.
-
-Not every rollout optimization is a pass. TeaCache is resolved per sampling
-request in the denoise binding and skips forwards inside the loop without
-touching the module tree, so it has no build-time seam to install; it declares
-its replay drift through :data:`REQUEST_SCOPED_DRIFT_SOURCES` instead.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -230,8 +225,8 @@ class CompilePass:
     """torch.compile every policy core.
 
     Compilation is a graph-level rewrite of the SAME math, so unlike
-    quantization and TeaCache it is not a drift source: it does not need a
-    precision correction armed.
+    quantization it is not a drift source: it does not need a precision
+    correction armed.
     """
 
     name: str = "compile"
@@ -354,14 +349,6 @@ ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
     VaeDecodeMemoryPass(),
 )
 
-# Optimizations that skip or approximate a rollout forward without a build-time
-# module seam, so they are configured per request rather than as a pass. Keyed by
-# the ``sampling`` key that switches them on; the value is the drift each one
-# introduces, which is what ``unguarded_drift_sources`` reports.
-REQUEST_SCOPED_DRIFT_SOURCES: dict[str, str] = {
-    "teacache": "reuses a cached noise_pred on skipped denoise steps",
-}
-
 
 def apply_rollout_optimizations(
     model: Any,
@@ -405,41 +392,11 @@ def apply_rollout_optimizations(
         before_compile()  # no replacing pass registered at all
 
 
-def unguarded_drift_sources(sampling: Any, precision: Any) -> tuple[str, ...]:
-    """Request-scoped drift sources this run's precision policy will not cover.
-
-    The trainer already arms TIS/RS correction automatically whenever rollout
-    and training precision differ (``PrecisionPolicy.stages_match`` is False),
-    and the replay-parity gate still fails on catastrophic drift under it. Quantization therefore needs no
-    extra check here — it moves rollout precision, so it flips exactly that
-    switch.
-
-    A request-scoped optimization does NOT: TeaCache approximates the rollout
-    ``noise_pred`` while leaving both roles' precision labels identical, so
-    ``stages_match`` stays True and every automatic correction stays off. That
-    is the uncovered case, and it is the one this returns.
-    """
-
-    if precision is not None and not getattr(precision, "stages_match", True):
-        return ()  # guard + TIS already armed by the precision split
-    if not isinstance(sampling, Mapping):
-        return ()
-    sources: list[str] = []
-    for key, reason in REQUEST_SCOPED_DRIFT_SOURCES.items():
-        value = sampling.get(key)
-        enabled = value.get("enabled", True) if isinstance(value, Mapping) else value
-        if enabled:
-            sources.append(f"{key} ({reason})")
-    return tuple(sources)
-
-
 __all__ = [
-    "REQUEST_SCOPED_DRIFT_SOURCES",
     "ROLLOUT_PASSES",
     "CompilePass",
     "OptimizationPass",
     "PassResult",
     "QuantizationPass",
     "apply_rollout_optimizations",
-    "unguarded_drift_sources",
 ]

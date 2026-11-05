@@ -36,7 +36,6 @@ def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolic
     if conflicts:
         joined = "\n  - ".join(conflict.message for conflict in conflicts)
         raise ValueError(f"model.torch_compile.enable=true cannot combine with:\n  - {joined}")
-    validate_guarded_rollout_drift(root, precision)
     return root, precision
 
 
@@ -156,51 +155,8 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     return tuple(conflicts)
 
 
-# ---- rollout drift ------------------------------------------------------------
-
-
-def validate_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy) -> None:
-    """Refuse a rollout approximation that no drift correction will cover.
-
-    Quantization needs no check here: it changes the rollout precision label, so
-    ``stages_match`` goes False and the trainer already installs TIS/RS
-    correction, under which the replay-parity gate still fails on catastrophic
-    drift.
-
-    A request-scoped approximation is the uncovered case. TeaCache reuses a
-    cached ``noise_pred`` on skipped denoise steps, so the collection-time
-    log-prob stops matching the trainer's exact replay forward -- while BOTH
-    roles keep the same precision label, leaving every automatic correction off.
-    Silently, the run would train on uncorrected off-policy gradients and still
-    report convergence.
-    """
-
-    from vrl.nn.optimization import unguarded_drift_sources
-
-    sampling = root.sampling
-    sources = unguarded_drift_sources(
-        sampling.model_dump(mode="python", exclude_none=True) if sampling is not None else None,
-        precision,
-    )
-    if not sources:
-        return
-    # The same escape hatch the precision-split path honors: an explicit expert
-    # block means the user has chosen the correction policy deliberately.
-    explicit = set() if root.trainer is None else root.trainer.model_fields_set
-    if "precision_correction" in explicit:
-        return
-    raise ValueError(
-        f"sampling enables {', '.join(sources)}, which makes the rollout log-probs "
-        "diverge from the trainer's exact replay forward, but rollout and training "
-        "precision are identical so no importance-sampling correction is armed. "
-        "Set an explicit trainer.precision_correction for this run, or disable "
-        "the optimization.",
-    )
-
-
 __all__ = [
     "CompileConflict",
     "compile_conflicts",
     "require_training_config",
-    "validate_guarded_rollout_drift",
 ]

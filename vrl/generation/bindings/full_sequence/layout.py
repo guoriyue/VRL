@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation.steps.denoise.config import DenoiseSDEParams
-from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import DenoiseRequest
 
 
@@ -18,7 +17,6 @@ class DenoiseSamplingParams:
     max_sequence_length: int | None
     sde: DenoiseSDEParams
     denoise_mode: str
-    teacache: TeaCacheConfig | None = None
     # Re-parses use request-owned randomness so split batches and retries
     # select the same window, including requests without a sampling seed.
     sde_window: tuple[int, int] | None = None

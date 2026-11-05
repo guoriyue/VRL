@@ -1,16 +1,9 @@
-"""A rollout approximation must not run with every drift correction off.
+"""The torch.compile compatibility matrix.
 
-Quantization is already covered without a new check: it changes the rollout
-precision label, so ``PrecisionPolicy.stages_match`` goes False and the trainer
-installs TIS correction plus a drift guard whose default ``mode="auto"``
-resolves to ``"fail"``.
-
-TeaCache is the uncovered case, and the reason this check exists. It reuses a
-cached ``noise_pred`` on skipped denoise steps -- so the collection-time
-log-prob no longer matches the trainer's exact replay forward -- while leaving
-both roles' precision labels identical. Every automatic correction stays off and
-the run trains on uncorrected off-policy gradients while still reporting
-convergence.
+One home for every torch.compile incompatibility. Each was discovered
+separately and used to live somewhere different -- grad-checkpointing in the
+trainer, sequence parallelism nowhere at all -- so adding the next one meant
+first finding the others.
 """
 
 from __future__ import annotations
@@ -18,113 +11,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.config.validation import validate_guarded_rollout_drift
-
-
-def _cfg(**overrides) -> OmegaConf:
-    """A minimal config carrying only what the drift check reads."""
-
-    base = {
-        "model": {"family": "sd3_5"},
-        "precision": {
-            "float32_precision": "tf32",
-            "training": {"dtype": "bf16"},
-            "rollout": {"dtype": "bf16"},
-        },
-    }
-    base.update(overrides)
-    return parse_config(OmegaConf.create(base))
-
-
-def _precision(root) -> object:
-    return PrecisionPolicy.from_section(root.precision)
-
-
-def test_teacache_without_any_correction_is_refused() -> None:
-    cfg = _cfg(sampling={"teacache": True})
-
-    with pytest.raises(ValueError, match=r"teacache.*no importance-sampling"):
-        validate_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-def test_validate_training_config_refuses_unguarded_teacache() -> None:
-    """The check runs on the real entry point, not only when called directly."""
-
-    from vrl.config.loading import load_config
-    from vrl.config.validation import require_training_config
-
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr", overrides=["sampling.teacache=true"])
-
-    with pytest.raises(ValueError, match="teacache"):
-        require_training_config(cfg)
-
-
-def test_teacache_mapping_form_is_refused_too() -> None:
-    """``teacache: {threshold: ...}`` enables it just as ``teacache: true`` does."""
-
-    cfg = _cfg(sampling={"teacache": {"threshold": 0.2}})
-
-    with pytest.raises(ValueError, match="teacache"):
-        validate_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-@pytest.mark.parametrize(
-    "sampling",
-    [
-        {},
-        {"teacache": False},
-        {"teacache": {"enabled": False}},
-    ],
-)
-def test_teacache_off_passes(sampling: dict) -> None:
-    cfg = _cfg(sampling=sampling)
-
-    validate_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-def test_quantized_rollout_needs_no_extra_check() -> None:
-    """A precision split already arms the guard + TIS, so this must not fire.
-
-    Firing here would reject every fp8 rollout that also uses TeaCache, even
-    though such a run is exactly the covered case.
-    """
-
-    cfg = _cfg(
-        sampling={"teacache": True},
-        precision={
-            "float32_precision": "tf32",
-            "training": {"dtype": "bf16"},
-            "rollout": {"dtype": "bf16", "quantization": {"format": "fp8"}},
-        },
-    )
-    assert not _precision(cfg).stages_match
-
-    validate_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-def test_explicit_expert_block_is_honored() -> None:
-    """The same escape hatch the precision-split default path respects.
-
-    ``TrainerConfig.from_root`` only fills the correction in when the user has
-    not, so an explicit block means the policy was chosen deliberately.
-    """
-
-    cfg = _cfg(
-        sampling={"teacache": True},
-        trainer={"precision_correction": {"tis_mode": "truncate"}},
-    )
-
-    validate_guarded_rollout_drift(cfg, _precision(cfg))
-
-
-# --- the compile compatibility matrix ----------------------------------------
-#
-# One home for every torch.compile incompatibility. Each was discovered
-# separately and used to live somewhere different -- grad-checkpointing in the
-# trainer, sequence parallelism nowhere at all --
-# so adding the next one meant first finding the others.
 
 
 def _compile_cfg(**overrides) -> OmegaConf:

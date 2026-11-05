@@ -75,7 +75,7 @@ vrl/models/
   steps/denoise/              shared model contracts, builders, and step helpers
 
 vrl/generation/
-  steps/denoise/              denoise config, hot loop, and TeaCache
+  steps/denoise/              denoise config and hot loop
   bindings/full_sequence/     full-sequence × denoise binding
   execution/                  step-neutral sample-batch planning, pipelining, and workers
   ray/                        distributed lifecycle and transport

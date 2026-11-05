@@ -14,10 +14,7 @@ import pytest
 from torch import nn
 
 from tests.nn._quantization_helpers import QuantizablePolicy
-from vrl.nn.optimization import (
-    apply_rollout_optimizations,
-    unguarded_drift_sources,
-)
+from vrl.nn.optimization import apply_rollout_optimizations
 from vrl.nn.quantization import QuantizedLinear
 
 
@@ -253,33 +250,6 @@ def test_full_coverage_passes() -> None:
     apply_rollout_optimizations(model, _build(quantization="fp8", compile_mode="default"))
 
     assert model.compiled == ["transformer:default", "transformer_2:default"]
-
-
-# --- drift accounting ----------------------------------------------------------
-
-
-def test_teacache_is_reported_as_unguarded_when_precision_matches() -> None:
-    """TeaCache drifts while both roles share precision, so nothing auto-arms.
-
-    ``stages_match`` True is exactly the case the trainer's automatic guard and
-    TIS correction do NOT cover, which is why this reports it.
-    """
-
-    matched = SimpleNamespace(stages_match=True)
-
-    assert unguarded_drift_sources({"teacache": True}, matched)
-    assert unguarded_drift_sources({"teacache": {"threshold": 0.1}}, matched)
-
-
-def test_teacache_off_or_precision_split_reports_nothing() -> None:
-    matched = SimpleNamespace(stages_match=True)
-    split = SimpleNamespace(stages_match=False)
-
-    assert unguarded_drift_sources({}, matched) == ()
-    assert unguarded_drift_sources({"teacache": False}, matched) == ()
-    assert unguarded_drift_sources({"teacache": {"enabled": False}}, matched) == ()
-    # A precision split already arms the drift guard + TIS automatically.
-    assert unguarded_drift_sources({"teacache": True}, split) == ()
 
 
 # --- block streaming is the family-neutral offload section ---------------------

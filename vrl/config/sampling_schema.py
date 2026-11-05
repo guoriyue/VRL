@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, StrictBool, StrictInt
+from pydantic import Field, StrictInt
 
 from vrl.config.base import ConfigBase
 
@@ -28,18 +28,6 @@ class SamplingSection(ConfigBase):
     seed: StrictInt | None = None
 
 
-class TeaCacheSection(ConfigBase):
-    """``sampling.teacache`` mapping form; ``teacache: true`` selects the defaults.
-
-    reader: vrl/generation/steps/denoise/teacache.py TeaCacheConfig.from_sampling
-    (the request boundary), via the collector's request projection.
-    """
-
-    enabled: StrictBool = True
-    threshold: float | None = None
-    warmup_steps: StrictInt | None = None
-
-
 class DenoiseImageSamplingSection(SamplingSection):
     """Sampling inputs shared by denoise image generators."""
 
@@ -48,10 +36,6 @@ class DenoiseImageSamplingSection(SamplingSection):
     num_steps: Any = None
     width: Any = None
     negative_prompt: str | None = None
-    # Rollout-only forward approximation (skips denoise steps on a cached
-    # noise_pred). A request-scoped drift source: config validation refuses it
-    # unless an importance-sampling correction is armed.
-    teacache: StrictBool | TeaCacheSection | None = None
 
 
 class TextEncodedImageSamplingSection(DenoiseImageSamplingSection):
@@ -110,7 +94,6 @@ __all__ = [
     "MiniMaxH3SamplingSection",
     "QwenImage21SamplingSection",
     "SamplingSection",
-    "TeaCacheSection",
     "TextEncodedImageSamplingSection",
     "TextEncodedVideoSamplingSection",
     "VideoSamplingSection",

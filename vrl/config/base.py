@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -57,10 +56,7 @@ def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
     errors = exc.errors(include_url=False)
 
     def location(error: Any) -> str:
-        # A union field (``teacache: bool | TeaCacheSection``) reports the
-        # variant's class name as a loc segment; YAML keys are snake_case, so a
-        # CapWords segment is never a key and only hides the real path.
-        parts = [str(p) for p in error["loc"] if not re.fullmatch(r"[A-Z][A-Za-z0-9]*", str(p))]
+        parts = [str(p) for p in error["loc"]]
         if section:
             parts.insert(0, section)
         return ".".join(parts)

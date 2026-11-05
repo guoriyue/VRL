@@ -26,7 +26,7 @@ download that skips them is 144 GB instead of 500.
 - The video latent is the RL action; the audio rows are a deterministic side
   stream stepped by the checkpoint's own Euler update one step behind the loop.
   Every step's audio input is recorded for replay, so audio never enters the
-  policy ratio. A loop mode that skips a forward (TeaCache) is refused.
+  policy ratio. A loop mode that skips a forward is refused.
 - Velocity sign: H3 predicts a data-ward velocity on a `t = 1 - sigma` clock.
   `forward_step` returns `-v` as the shared `noise_pred`, and
   `MiniMaxH3FlowScheduler` flips it back inside `step`, so `denoise_mode: native`

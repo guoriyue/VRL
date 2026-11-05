@@ -252,7 +252,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             max_sequence_length=max_sequence_length,
             sde=sde,
             denoise_mode=options.denoise_mode,
-            teacache=options.teacache,
             sde_window=sde_window,
         )
 
@@ -320,7 +319,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
                 # the selected window identical across those re-parses.
                 sde_window=params.sde_window,
                 denoise_mode=params.denoise_mode,
-                teacache=params.teacache,
             )
             state = self.prepare_denoise_state(
                 request=params.model_request,

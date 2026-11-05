@@ -666,7 +666,6 @@ def prepare_inputs(args: argparse.Namespace, root: Any = None) -> ProbeInputs:
         sde=params.sde,
         sde_window=params.sde_window,
         denoise_mode=params.denoise_mode,
-        teacache=params.teacache,
     )
     with torch.no_grad():
         encoded = executor.encode_prompt_for_batch(

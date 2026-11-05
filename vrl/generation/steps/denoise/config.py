@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -33,7 +32,6 @@ class DenoiseRequestOptions:
     sde_window_size: int = 0
     sde_window_range: tuple[int, int] | None = None
     return_prev_sample_mean: bool = False
-    teacache: TeaCacheConfig | None = None
 
     def __post_init__(self) -> None:
         if self.denoise_mode not in get_args(DenoiseMode):
@@ -65,7 +63,7 @@ class DenoiseRequestOptions:
 
     @classmethod
     def from_root(cls, root: RootConfig) -> DenoiseRequestOptions:
-        """Project rollout.* / rollout.sde.* / sampling.teacache into the typed options.
+        """Project rollout.* / rollout.sde.* into the typed options.
 
         Only YAML-declared values are passed, so the option defaults stay the single
         source.
@@ -89,15 +87,6 @@ class DenoiseRequestOptions:
                     values["sde_window_size"] = sde.window_size
                 if sde.window_range is not None:
                     values["sde_window_range"] = tuple(sde.window_range)
-        teacache = getattr(root.sampling, "teacache", None)
-        if teacache is not None:
-            # Bool flows as-is; the mapping form is the section minus unset keys, so
-            # TeaCacheConfig.from_sampling sees exactly what the YAML declared.
-            values["teacache"] = TeaCacheConfig.from_sampling(
-                teacache
-                if isinstance(teacache, bool)
-                else teacache.model_dump(mode="python", exclude_none=True, exclude_unset=True),
-            )
         return cls(**values)
 
     def resolve_sde_window_range(self, num_steps: int) -> tuple[int, int]:
@@ -136,7 +125,6 @@ class DenoiseLoopConfig:
     sde: DenoiseSDEParams
     sde_window: tuple[int, int] | None
     denoise_mode: DenoiseMode = "sde"
-    teacache: TeaCacheConfig | None = None
 
     def __post_init__(self) -> None:
         require_int(self.sample_start, path="sample_start", minimum=0)
