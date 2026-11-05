@@ -679,7 +679,8 @@ class RolloutRuntimeSection(ConfigBase):
     Each knob belongs to one layer of the engine/rank split (an engine is one
     replica; a rank is one per-GPU worker actor inside it):
     rank level: cpus_per_worker, worker_rpc_timeout_s.
-    engine level: generation_stall_timeout_s, pipelined.
+    engine level: pipelined. The per-batch generation stall budget is not a
+    key: vrl/generation/ray/config.py GENERATION_STALL_TIMEOUT_S.
     """
 
     # rank level: CPU grant per rank actor (Ray num_cpus).
@@ -687,10 +688,6 @@ class RolloutRuntimeSection(ConfigBase):
     # rank level: opaque control-plane calls expose no useful progress. Bound
     # startup, metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
-    # engine level: generation has a separate stall budget per batch; the
-    # pipelined path grants it once per batch of an engine's share. One hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
-    # batch with margin; opaque control calls retain their tighter budget above.
-    generation_stall_timeout_s: float = 3600.0
     # engine level: opt-in per-request rollout. Each engine runs its share of a
     # request's batches in a single RPC instead of one RPC per batch, staging
     # each payload in the object store for a CPU finalizer actor to merge.
@@ -703,14 +700,6 @@ class RolloutRuntimeSection(ConfigBase):
         if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
             raise ValueError(
                 "distributed.rollout.worker_rpc_timeout_s must be finite and > 0",
-            )
-
-        if (
-            not math.isfinite(self.generation_stall_timeout_s)
-            or self.generation_stall_timeout_s <= 0
-        ):
-            raise ValueError(
-                "distributed.rollout.generation_stall_timeout_s must be finite and > 0",
             )
         return self
 

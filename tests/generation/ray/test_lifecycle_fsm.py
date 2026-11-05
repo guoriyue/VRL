@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+import vrl.generation.ray.config as ray_config_module
 from tests.generation.ray._helpers import (
     install_slow_workers,
     is_dead,
@@ -37,15 +38,19 @@ from vrl.utils.lifecycle import (
     RuntimePhase,
 )
 
-# ``SlowGenerationWorker`` holds a "slow" request for a fixed second; the stall
-# deadline below expires well before that, while an ordinary request finishes
-# well inside it.
-_STALL = "distributed.rollout.generation_stall_timeout_s=0.5"
-
 
 @pytest.fixture(autouse=True)
 def _slow_workers(monkeypatch: pytest.MonkeyPatch) -> None:
     install_slow_workers(monkeypatch)
+
+
+def _tight_stall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``SlowGenerationWorker`` holds a "slow" request for a fixed second; this
+    stall deadline expires well before that, while an ordinary request finishes
+    well inside it. The launcher reads the constant when it freezes the worker
+    config, so patch before ``ray_sana_runtime``."""
+
+    monkeypatch.setattr(ray_config_module, "GENERATION_STALL_TIMEOUT_S", 0.5)
 
 
 def _gate(
@@ -328,9 +333,8 @@ async def test_cleanup_error_chains_existing_root_without_replacing_it(
 async def test_generation_timeout_force_kills_without_release_rpc(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    async with ray_sana_runtime(
-        monkeypatch, tmp_path, ray_sana_snapshot, overrides=(_STALL,)
-    ) as ray_run:
+    _tight_stall(monkeypatch)
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
         actors = ray_run.actors()
@@ -418,9 +422,8 @@ async def test_pre_submission_generation_cancellation_keeps_runtime_running(
 async def test_timeout_preserves_root_when_force_cleanup_also_fails(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    async with ray_sana_runtime(
-        monkeypatch, tmp_path, ray_sana_snapshot, overrides=(_STALL,)
-    ) as ray_run:
+    _tight_stall(monkeypatch)
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         closes = Trace(monkeypatch)
         closes.watch(runtime._session, "close", "session.close")
@@ -471,11 +474,12 @@ async def test_active_sibling_failure_escapes_as_the_first_failure_identity(
     """A request admitted before a sibling's timeout killed the fleet reports the
     sibling's timeout, not the actor error its own call hits on the dead fleet."""
 
+    _tight_stall(monkeypatch)
     async with ray_sana_runtime(
         monkeypatch,
         tmp_path,
         ray_sana_snapshot,
-        overrides=(_STALL, "distributed.resources.rollout.num_engines=2"),
+        overrides=("distributed.resources.rollout.num_engines=2",),
     ) as ray_run:
         runtime = ray_run.runtime
         executor = runtime._session.executor
@@ -517,9 +521,8 @@ async def test_active_sibling_failure_escapes_as_the_first_failure_identity(
 async def test_active_sibling_failure_wins_over_a_later_ordinary_error(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    async with ray_sana_runtime(
-        monkeypatch, tmp_path, ray_sana_snapshot, overrides=(_STALL,)
-    ) as ray_run:
+    _tight_stall(monkeypatch)
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         executor = runtime._session.executor
         later_error = RuntimeError("batch correlation failed after fleet kill")
@@ -550,9 +553,8 @@ async def test_active_sibling_failure_wins_over_a_later_ordinary_error(
 async def test_active_sibling_failure_keeps_cancelled_surface_with_first_cause(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    async with ray_sana_runtime(
-        monkeypatch, tmp_path, ray_sana_snapshot, overrides=(_STALL,)
-    ) as ray_run:
+    _tight_stall(monkeypatch)
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         executor = runtime._session.executor
         waiting = asyncio.Event()
@@ -618,9 +620,8 @@ async def test_sibling_failure_after_weight_ack_blocks_version_publication(
     """The fleet ACKed the install, but a sibling request's timeout closed
     admission before the driver published the version."""
 
-    async with ray_sana_runtime(
-        monkeypatch, tmp_path, ray_sana_snapshot, overrides=(_STALL,)
-    ) as ray_run:
+    _tight_stall(monkeypatch)
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         payload = ray_run.trainable_state()
         await runtime.update_weights(payload, 6)
@@ -693,11 +694,12 @@ async def test_timeout_prevents_sibling_generation_from_returning_output(
     """A sibling that finished its real generation still cannot return its
     output once another request's timeout terminated the runtime."""
 
+    _tight_stall(monkeypatch)
     async with ray_sana_runtime(
         monkeypatch,
         tmp_path,
         ray_sana_snapshot,
-        overrides=(_STALL, "distributed.resources.rollout.num_engines=2"),
+        overrides=("distributed.resources.rollout.num_engines=2",),
     ) as ray_run:
         runtime = ray_run.runtime
         sibling_generated = asyncio.Event()

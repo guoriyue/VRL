@@ -67,14 +67,16 @@ def test_unknown_enum_value_is_rejected_at_parse_by_its_dotted_path(path: str, v
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     """RolloutRuntimeSection (pydantic lint boundary) and RolloutWorkerConfig (the
     frozen runtime projection the Ray launcher takes) must stay
-    field-for-field identical. ``RolloutWorkerConfig.from_root`` builds the dataclass via
-    ``cls(**section.model_dump())``, so a field on one but not the other silently
-    breaks at runtime (TypeError / unfilled required field) instead of at parse.
+    field-for-field identical apart from the stall budget, which is a module
+    constant. ``RolloutWorkerConfig.from_root`` builds the dataclass via
+    ``cls(generation_stall_timeout_s=..., **section.model_dump())``, so a key on
+    one but not the other silently breaks at runtime (TypeError / unfilled
+    required field) instead of at parse.
 
     The two types are deliberately NOT merged (the pydantic schema is a lint-only
     boundary; the dataclass is the real runtime consumer), so this parity test is
     the guard against drift. Public defaults remain only on the section; the
-    runtime dataclass has no fallback literals.
+    runtime dataclass has no fallback literals of its own.
     """
     import dataclasses
 
@@ -82,9 +84,9 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
 
     section_fields = set(RolloutRuntimeSection.model_fields)
     config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
-    assert section_fields == config_fields
+    # The generation stall budget is a module constant, not a key.
+    assert section_fields == config_fields - {"generation_stall_timeout_s"}
     assert "worker_rpc_timeout_s" in section_fields
-    assert "generation_stall_timeout_s" in section_fields
 
     # Per-field default parity: an absent distributed.rollout block projects to the
     # section's declared defaults unchanged (from_root adds no fallbacks or
@@ -94,21 +96,10 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
         assert getattr(projected, name) == RolloutRuntimeSection.model_fields[name].default
 
 
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    [
-        ("worker_rpc_timeout_s", float("inf"), r"worker_rpc_timeout_s must be finite and > 0"),
-        ("generation_stall_timeout_s", 0.0, r"generation_stall_timeout_s must be finite and > 0"),
-    ],
-)
-def test_rollout_worker_timeouts_must_be_finite_and_in_range(
-    field: str,
-    value: float,
-    message: str,
-) -> None:
-    cfg = minimal_grpo_cfg(distributed={"rollout": {field: value}})
+def test_rollout_worker_rpc_timeout_must_be_finite_and_in_range() -> None:
+    cfg = minimal_grpo_cfg(distributed={"rollout": {"worker_rpc_timeout_s": float("inf")}})
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=r"worker_rpc_timeout_s must be finite and > 0"):
         parse_config(cfg)
 
 

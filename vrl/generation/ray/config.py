@@ -9,10 +9,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
 
+# Engine-level stall budget of one generation batch (the pipelined path grants
+# it once per batch of an engine's share). One hour covers the observed
+# ~30-minute cold torch.compile plus a 733-second Cosmos batch with margin;
+# opaque control calls keep the tighter distributed.rollout.worker_rpc_timeout_s.
+GENERATION_STALL_TIMEOUT_S = 3600.0
+
 
 @dataclass(frozen=True, slots=True)
 class RolloutWorkerConfig:
-    """Frozen runtime projection of the public rollout-worker section."""
+    """Frozen runtime projection of the public rollout-worker section.
+
+    ``generation_stall_timeout_s`` is not a YAML key: ``from_root`` fills it
+    from ``GENERATION_STALL_TIMEOUT_S``, which a Ray runtime test patches
+    before the launch freezes this config.
+    """
 
     cpus_per_worker: float
     worker_rpc_timeout_s: float
@@ -40,7 +51,10 @@ class RolloutWorkerConfig:
 
         distributed = root.distributed
         section = distributed.rollout if distributed is not None else None
-        return cls(**(section or RolloutRuntimeSection()).model_dump())
+        return cls(
+            generation_stall_timeout_s=GENERATION_STALL_TIMEOUT_S,
+            **(section or RolloutRuntimeSection()).model_dump(),
+        )
 
 
-__all__ = ["RolloutWorkerConfig"]
+__all__ = ["GENERATION_STALL_TIMEOUT_S", "RolloutWorkerConfig"]

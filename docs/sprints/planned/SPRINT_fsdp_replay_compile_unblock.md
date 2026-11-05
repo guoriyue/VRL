@@ -29,7 +29,7 @@ FSDP replay 能 compile 之后，有两个好处：大视频家族的 replay 会
 
 **已有的实测**：`experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s.yaml:89-93` 只 compile rollout，每组 446s → 324s。
 
-**冷编译**：约 30 分钟（`vrl/config/schema.py:701-704`，`generation_stall_timeout_s=3600` 就是为它设的）。全仓没有用 `save_cache_artifacts`/`load_cache_artifacts`。`TORCHINDUCTOR_CACHE_DIR` 只在测试 runner 里设置（`tools/pytest/main.py:19`）。
+**冷编译**：约 30 分钟（`vrl/generation/ray/config.py` 的 `GENERATION_STALL_TIMEOUT_S = 3600.0` 就是为它设的）。全仓没有用 `save_cache_artifacts`/`load_cache_artifacts`。`TORCHINDUCTOR_CACHE_DIR` 只在测试 runner 里设置（`tools/pytest/main.py:19`）。
 
 **锁定版本**：torch 2.11.0，triton 3.6.0，diffusers 0.41.0.dev0。
 

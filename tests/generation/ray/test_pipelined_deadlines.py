@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+import vrl.generation.ray.config as ray_config_module
 import vrl.generation.ray.launcher as launcher_module
 import vrl.ray.actor_pool as actor_pool_module
 from tests.generation.ray._helpers import (
@@ -62,13 +63,13 @@ async def _pipelined_fleet(
 ) -> AsyncIterator[RaySanaRuntime]:
     install_slow_workers(monkeypatch)
     monkeypatch.setattr(launcher_module, "RayGenerationFinalizer", _SlowMergeFinalizer)
+    monkeypatch.setattr(ray_config_module, "GENERATION_STALL_TIMEOUT_S", stall_timeout_s)
     async with ray_sana_runtime(
         monkeypatch,
         tmp_path,
         snapshot,
         overrides=(
             "distributed.rollout.pipelined=true",
-            f"distributed.rollout.generation_stall_timeout_s={stall_timeout_s}",
             "rollout.samples_per_generation_batch=2",
         ),
     ) as run:
