@@ -69,4 +69,3 @@ trainer:
   rollout_orchestration:
     continuous:
       max_inflight_groups: 6
-      max_stale_policy_versions: 1

@@ -32,7 +32,6 @@ _TWO_ENGINES = ("distributed.resources.rollout.num_engines=2",)
 _VERSIONED = (
     "model.use_lora=true",
     "/base/rollout/orchestration=continuous",
-    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
 )
 
 

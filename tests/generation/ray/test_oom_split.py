@@ -54,7 +54,6 @@ _OOM_WIRE_FORMAT = pytest.mark.real_cover(
 _VERSIONED = (
     "model.use_lora=true",
     "trainer.rollout_orchestration.schedule_mode=continuous",
-    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
 )
 
 

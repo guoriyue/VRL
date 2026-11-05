@@ -29,13 +29,14 @@ from tests.rollouts.orchestration.continuous._helpers import (
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.orchestration import ContinuousRolloutSchedule
+from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.trainers.core.types import ContinuousRolloutConfig
 from vrl.trainers.data.prompts import PromptExample
 from vrl.utils.stats import recording
 
 
 def _continuous_config(**continuous: Any) -> ContinuousRolloutConfig:
-    settings = {"wait_timeout_s": 5.0, "queue_poll_interval_s": 0.001}
+    settings = {"wait_timeout_s": 5.0}
     settings.update(continuous)
     return ContinuousRolloutConfig(**settings)
 
@@ -296,7 +297,7 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit(
     """A draining backend completes every finite prefetch slot at one version."""
 
     bench = _bench(monkeypatch, tmp_path)
-    schedule = _build(_continuous_config(max_stale_policy_versions=1), bench)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         _, first = await _measured(
@@ -323,7 +324,8 @@ async def test_persistent_producer_failure_fails_fast_with_root_cause(
     # cause well before the (long) wait timeout, not an opaque timeout.
     bench = _bench(monkeypatch, tmp_path)
     bench.trace.fail("generate", "reward model OOM", times=50)
-    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
+    monkeypatch.setattr(continuous_types, "FAIL_FAST_ERRORS", 2)
+    schedule = _build(_continuous_config(wait_timeout_s=30.0), bench)
 
     try:
         with pytest.raises(RuntimeError, match="reward model OOM") as excinfo:
@@ -339,7 +341,8 @@ async def test_reward_failure_fails_fast_and_never_reaches_queue(monkeypatch, tm
     # surface that root cause and the result slots must stay empty.
     bench = _bench(monkeypatch, tmp_path)
     bench.trace.fail("score", "reward model exploded", times=50)
-    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
+    monkeypatch.setattr(continuous_types, "FAIL_FAST_ERRORS", 2)
+    schedule = _build(_continuous_config(wait_timeout_s=30.0), bench)
 
     try:
         with pytest.raises(RuntimeError, match="reward model exploded"):
@@ -457,7 +460,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence(
 
     bench = _bench(monkeypatch, tmp_path, non_draining=True)
     schedule = _build(
-        _continuous_config(max_inflight_groups=6, max_stale_policy_versions=1),
+        _continuous_config(max_inflight_groups=6),
         bench,
     )
     prompts = [[f"update-{update}-micro-{micro}"] for update in range(3) for micro in range(2)]
@@ -554,7 +557,8 @@ async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch(
         StaleSlotDiscard("trainable-state slot evicted for policy_version=1"),
         times=50,
     )
-    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
+    monkeypatch.setattr(continuous_types, "FAIL_FAST_ERRORS", 2)
+    schedule = _build(_continuous_config(wait_timeout_s=30.0), bench)
 
     try:
         with pytest.raises(RuntimeError, match="producer control loop failed") as exc_info:
@@ -573,7 +577,7 @@ async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batc
 
     bench = _bench(monkeypatch, tmp_path)
     schedule = _build(
-        _continuous_config(max_stale_policy_versions=1, max_inflight_groups=2),
+        _continuous_config(max_inflight_groups=2),
         bench,
     )
 
@@ -636,12 +640,7 @@ async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata(
     ("field", "value", "message"),
     [
         ("max_inflight_groups", 0, r"max_inflight_groups must be >= 1"),
-        # Zero-window execution belongs to strict_on_policy, not continuous.
-        ("max_stale_policy_versions", 0, r"max_stale_policy_versions must be >= 1"),
-        ("max_stale_policy_versions", True, r"max_stale_policy_versions must be an integer"),
         ("wait_timeout_s", float("nan"), r"wait_timeout_s must be finite and > 0"),
-        ("queue_poll_interval_s", 0.0, r"queue_poll_interval_s must be finite and > 0"),
-        ("fail_fast_errors", -1, r"fail_fast_errors must be >= 0"),
     ],
 )
 def test_continuous_config_rejects_out_of_range_fields(field, value, message) -> None:

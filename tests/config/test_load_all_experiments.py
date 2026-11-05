@@ -342,7 +342,6 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
         **OmegaConf.to_container(orchestration, resolve=True),
     )
     assert typed.schedule_mode == "continuous"
-    assert typed.continuous.max_stale_policy_versions >= 1
 
 
 # Every recipe below also passes test_all_online_experiments_pass_static_launch_preflight

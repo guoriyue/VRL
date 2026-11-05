@@ -301,6 +301,7 @@ class TrainerConfig:
         algorithm = root.algorithm
         if algorithm is not None:
             from vrl.config.algorithm import algorithm_class
+            from vrl.rollouts.orchestration.continuous.types import MAX_STALE_POLICY_VERSIONS
 
             algorithm_cls = algorithm_class(algorithm.kind)
             if (
@@ -309,7 +310,8 @@ class TrainerConfig:
             ):
                 raise ValueError(
                     "trainer.rollout_orchestration.schedule_mode='continuous' trains on "
-                    f"samples up to max_stale_policy_versions old, but algorithm.kind="
+                    f"samples up to {MAX_STALE_POLICY_VERSIONS} policy version(s) old, "
+                    f"but algorithm.kind="
                     f"{algorithm.kind!r} scores against the current weights and has no "
                     "importance ratio to absorb that lag. Use schedule_mode="
                     "'strict_on_policy'.",

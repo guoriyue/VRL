@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.rollouts.orchestration.continuous.thread import (
     ContinuousRolloutThread,
 )
@@ -32,10 +33,8 @@ class ContinuousRolloutSchedule:
         *,
         lifecycle: RolloutRuntimeCoordinator,
         # No defaults: the typed config remains the single source of defaults.
-        # ``settings`` already validated ``max_stale_policy_versions >= 1`` at
-        # construction, and ResourcePlan.validate_schedule_mode
-        # rejected shared or parked GPU topologies, a GPU-sharing reward
-        # included, before launch.
+        # ResourcePlan.validate_schedule_mode rejected shared or parked GPU
+        # topologies, a GPU-sharing reward included, before launch.
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
@@ -57,16 +56,13 @@ class ContinuousRolloutSchedule:
         # User settings were validated by ContinuousRolloutConfig.
         settings = ContinuousRolloutSettings(
             max_inflight_groups=config.max_inflight_groups,
-            max_stale_policy_versions=config.max_stale_policy_versions,
             wait_timeout_s=config.wait_timeout_s,
-            queue_poll_interval_s=config.queue_poll_interval_s,
-            fail_fast_errors=config.fail_fast_errors,
             versioned_weight_sync=versioned_weight_sync,
         )
 
         logger.info(
             "continuous async prefetch ENABLED: max_stale_policy_versions=%d, max_inflight_groups=%d",
-            settings.max_stale_policy_versions,
+            continuous_types.MAX_STALE_POLICY_VERSIONS,
             settings.max_inflight_groups,
         )
 

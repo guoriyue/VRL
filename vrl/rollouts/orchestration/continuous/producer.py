@@ -24,6 +24,7 @@ import torch
 
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
@@ -52,11 +53,8 @@ class ContinuousRolloutProducer:
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self.max_stale_policy_versions = settings.max_stale_policy_versions
         # Validated once at the config boundary; trusted here (no re-checks).
         self.max_inflight_groups = settings.max_inflight_groups
-        self.poll_interval_s = settings.queue_poll_interval_s
-        self.fail_fast_errors = settings.fail_fast_errors
 
         self.state = ContinuousRolloutProducerState()
         self._next_batch_id = 0
@@ -211,7 +209,7 @@ class ContinuousRolloutProducer:
                         self._drain_timeout_message(prompt_batch, wait_timeout_s),
                     )
                 await asyncio.sleep(
-                    min(self.poll_interval_s, _RETRY_BACKOFF_MAX_S, remaining_s),
+                    min(continuous_types.QUEUE_POLL_INTERVAL_S, _RETRY_BACKOFF_MAX_S, remaining_s),
                 )
             if not self._has_pending_work:
                 return
@@ -229,7 +227,7 @@ class ContinuousRolloutProducer:
                 )
             await asyncio.wait(
                 tasks,
-                timeout=min(self.poll_interval_s, remaining_s),
+                timeout=min(continuous_types.QUEUE_POLL_INTERVAL_S, remaining_s),
                 return_when=asyncio.FIRST_COMPLETED,
             )
         self._harvest_done()
@@ -268,11 +266,11 @@ class ContinuousRolloutProducer:
             while self.state.running:
                 self._record_tick()
                 if self.state.paused_for_weight_sync:
-                    await asyncio.sleep(self.poll_interval_s)
+                    await asyncio.sleep(continuous_types.QUEUE_POLL_INTERVAL_S)
                     continue
                 self._harvest_done()
                 self._admit()
-                await asyncio.sleep(self.poll_interval_s)
+                await asyncio.sleep(continuous_types.QUEUE_POLL_INTERVAL_S)
         except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             raise
         except BaseException as error:
@@ -400,7 +398,8 @@ class ContinuousRolloutProducer:
                 )
                 failures = prompt_batch.failure_counts.get(slot, 0) + 1
                 prompt_batch.failure_counts[slot] = failures
-                if self.fail_fast_errors and failures >= self.fail_fast_errors:
+                budget = continuous_types.FAIL_FAST_ERRORS
+                if budget and failures >= budget:
                     raise RuntimeError(
                         "continuous prompt batch slot exceeded the failure "
                         f"budget (slot={slot}, failures={failures})",
@@ -425,10 +424,11 @@ class ContinuousRolloutProducer:
         # no replacement can preserve its fixed policy version, and the consumer
         # would otherwise wait for a batch that can never become complete.
         # Future items pass this gate; the consumer rejects their negative
-        # staleness as a version-barrier violation. A zero window is retained only for
-        # isolated mechanism tests; production continuous config requires >= 1.
+        # staleness as a version-barrier violation. A zero window exists only
+        # where a mechanism test narrows MAX_STALE_POLICY_VERSIONS.
         current_version = self.lifecycle.current_policy_version()
-        if current_version - prompt_batch.policy_version > self.max_stale_policy_versions:
+        window = continuous_types.MAX_STALE_POLICY_VERSIONS
+        if current_version - prompt_batch.policy_version > window:
             raise RuntimeError(
                 "continuous prompt batch became stale before completion "
                 f"(item={prompt_batch.policy_version}, trainer={current_version})",

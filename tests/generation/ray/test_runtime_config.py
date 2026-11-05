@@ -34,10 +34,7 @@ from vrl.ray.resources import ResourcePlan
 from vrl.utils.lifecycle import RuntimePhase
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
-_CONTINUOUS = (
-    "/base/rollout/orchestration=continuous",
-    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
-)
+_CONTINUOUS = ("/base/rollout/orchestration=continuous",)
 
 
 # ------------------------------------------------------- launch config values

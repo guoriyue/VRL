@@ -15,6 +15,7 @@ import time
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
@@ -31,10 +32,6 @@ class ContinuousRolloutConsumer:
 
     def __init__(self, *, settings: ContinuousRolloutSettings) -> None:
         self.settings = settings
-        # Fresh-error count (with zero fresh completions) that ends the wait
-        # early with the producer's root cause. 0 disables fail-fast. Range
-        # validated once at the config boundary; trusted here.
-        self.fail_fast_errors = settings.fail_fast_errors
 
     async def collect_iteration(
         self,
@@ -54,9 +51,9 @@ class ContinuousRolloutConsumer:
         message (when reached) includes the producer's last error and counters.
         """
 
-        # Both waits were validated by ContinuousRolloutConfig.
+        # The wait budget was validated by ContinuousRolloutConfig.
         wait_timeout_s = self.settings.wait_timeout_s
-        poll_interval_s = self.settings.queue_poll_interval_s
+        poll_interval_s = continuous_types.QUEUE_POLL_INTERVAL_S
         deadline = time.monotonic() + wait_timeout_s
         gauge(
             "continuous.ready_groups_at_demand",
@@ -138,11 +135,14 @@ class ContinuousRolloutConsumer:
             raise RuntimeError(
                 "continuous rollout producer control loop failed",
             ) from producer_state.fatal_error
-        if self.fail_fast_errors == 0:
+        # Fresh-error count (with zero fresh completions) that ends the wait
+        # early with the producer's root cause. 0 disables fail-fast.
+        budget = continuous_types.FAIL_FAST_ERRORS
+        if budget == 0:
             return
         fresh_errors = producer_state.error_count - start_errors
         fresh_completions = producer_state.completed_count - start_completed
-        if fresh_completions == 0 and fresh_errors >= self.fail_fast_errors:
+        if fresh_completions == 0 and fresh_errors >= budget:
             raise RuntimeError(
                 "continuous rollout producer is failing every generation while "
                 f"the consumer waits: {fresh_errors} errors and 0 completions "
@@ -175,7 +175,7 @@ class ContinuousRolloutConsumer:
                 f"(item={version}, trainer={current_policy_version}); weight-sync "
                 "barrier invariant violated",
             )
-        if version_lag > self.settings.max_stale_policy_versions:
+        if version_lag > continuous_types.MAX_STALE_POLICY_VERSIONS:
             raise RuntimeError(
                 "continuous ready prompt batch is older than the policy window "
                 f"(item={version}, trainer={current_policy_version})",

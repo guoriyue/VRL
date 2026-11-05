@@ -6,7 +6,7 @@
 # 128px continuous_4gpu_acceptance gate, which validates scheduling only):
 #
 #   1. Staleness (SPRINT_async_rollout_train_overlap Option A): strict
-#      on-policy vs continuous with max_stale_policy_versions=1, same seed.
+#      on-policy vs continuous (one stale policy version), same seed.
 #   2. Chunk placement (SPRINT_generation_scheduler Track A): round_robin vs
 #      dynamic dispatch across the three engines.
 #

@@ -187,7 +187,6 @@ def trainer_side(bench: CollectorBench, *, initialized: bool = False) -> Trainer
 _VERSIONED_SLOTS = (
     "model.use_lora=true",
     "trainer.rollout_orchestration.schedule_mode=continuous",
-    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
 )
 
 

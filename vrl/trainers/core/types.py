@@ -93,38 +93,23 @@ class ReplayParityConfig:
 class ContinuousRolloutConfig:
     """Tuning for ``mode='continuous'`` (producer/ready-queue/consumer).
 
-    Continuous execution is bounded off-policy prefetch by definition. A
-    zero-version window is serial strict-on-policy execution and belongs to the
+    Continuous execution is bounded off-policy prefetch by definition. The
+    staleness window, the ready-slot poll period and the slot failure budget are
+    fixed in vrl/rollouts/orchestration/continuous/types.py; a zero-version
+    window is serial strict-on-policy execution and belongs to the
     ``strict_on_policy`` schedule instead of a second continuous submode.
     """
 
     max_inflight_groups: int = field(default=1)
-    max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
-    queue_poll_interval_s: float = field(default=0.05)
-    # Failures of one prompt-batch slot tolerated before raising the producer's
-    # root cause, instead of waiting for the full wait_timeout_s. The consumer
-    # also applies this budget when no request completes at all. 0 disables both
-    # fast paths. This is the single source of the default; the rollout layer
-    # receives the configured value explicitly.
-    fail_fast_errors: int = field(default=3)
 
     def __post_init__(self) -> None:
         # Validate declared settings before projection. Containers additionally
         # check their own admission invariants when called independently.
         require_int(self.max_inflight_groups, path="continuous.max_inflight_groups", minimum=1)
-        require_int(
-            self.max_stale_policy_versions,
-            path="continuous.max_stale_policy_versions",
-            minimum=1,
-        )
         self.wait_timeout_s = require_timeout(
             self.wait_timeout_s, name="continuous.wait_timeout_s"
         )
-        self.queue_poll_interval_s = require_timeout(
-            self.queue_poll_interval_s, name="continuous.queue_poll_interval_s"
-        )
-        require_int(self.fail_fast_errors, path="continuous.fail_fast_errors", minimum=0)
 
 
 @dataclass(slots=True)

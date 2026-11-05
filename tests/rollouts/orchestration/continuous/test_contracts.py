@@ -13,10 +13,11 @@ so a "version bump" is a real weight push and every stored item is a real
 scored batch. Generation and scoring are held at explicit gates ahead of the
 real work so a test controls their timing.
 
-Some cases use ``max_stale=0`` settings to pin the mechanism's exact boundary.
-That value is intentionally unreachable from production continuous config,
-which requires at least one stale policy version; zero-staleness execution uses
-the strict-on-policy schedule.
+The staleness window, poll period and slot failure budget are module
+constants of ``continuous.types``; a case that needs another value patches the
+constant before building its producer or consumer. One case narrows the window
+to zero to pin the receipt-time boundary; production continuous execution is
+always one stale version, zero-staleness execution being strict_on_policy.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import PromptCollectionCleanupError
+from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.types import (
@@ -133,24 +135,12 @@ async def _gated(
     return stack, reward, _GenerationGate(monkeypatch, stack.bench, reward.events)
 
 
-def _settings(
-    *,
-    max_inflight: int = 1,
-    max_stale: int = 1,
-    wait_timeout_s: float = 5.0,
-    poll_interval_s: float = 0.001,
-    fail_fast_errors: int = 3,
-) -> ContinuousRolloutSettings:
-    """Validated carrier for mechanism tests. Cases pin the exact zero-staleness
-    boundary with ``max_stale=0``, which production config routes to
-    strict_on_policy instead."""
+def _settings(*, max_inflight: int = 1, wait_timeout_s: float = 5.0) -> ContinuousRolloutSettings:
+    """Validated carrier for mechanism tests."""
 
     return ContinuousRolloutSettings(
         max_inflight_groups=max_inflight,
-        max_stale_policy_versions=max_stale,
         wait_timeout_s=wait_timeout_s,
-        queue_poll_interval_s=poll_interval_s,
-        fail_fast_errors=fail_fast_errors,
         # Only the owner thread's weight sync reads this; the producer never does.
         versioned_weight_sync=False,
     )
@@ -159,22 +149,14 @@ def _settings(
 def _producer(
     lifecycle: RolloutRuntimeCoordinator,
     *,
-    max_stale: int = 0,
     prompts: list[str] | None = None,
     group_size: int = 2,
     max_inflight: int = 1,
-    poll_interval_s: float = 0.001,
-    fail_fast_errors: int = 3,
 ) -> ContinuousRolloutProducer:
     prompt_list = ["p0"] if prompts is None else list(prompts)
     producer = ContinuousRolloutProducer(
         lifecycle=lifecycle,
-        settings=_settings(
-            max_stale=max_stale,
-            max_inflight=max_inflight,
-            poll_interval_s=poll_interval_s,
-            fail_fast_errors=fail_fast_errors,
-        ),
+        settings=_settings(max_inflight=max_inflight),
     )
     producer.set_prompt_batch(
         prompt_list,
@@ -245,7 +227,7 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped(monkeypatch, 
     await producer.start()
     try:
         await _wait_until(lambda: producer.state.fatal_error is not None)
-        consumer = _consumer(max_stale=0, wait_timeout_s=60.0)
+        consumer = _consumer(wait_timeout_s=60.0)
 
         with pytest.raises(RayOperationTimeout) as caught:
             await consumer.collect_iteration(
@@ -292,7 +274,7 @@ async def test_idle_sibling_failure_makes_next_collect_fatal_without_slot_retry(
     await producer.start()
     try:
         await _wait_until(lambda: producer.state.fatal_error is not None)
-        consumer = _consumer(max_stale=0, wait_timeout_s=60.0)
+        consumer = _consumer(wait_timeout_s=60.0)
 
         with pytest.raises(RuntimeError, match="generate rejected") as caught:
             await consumer.collect_iteration(
@@ -332,7 +314,7 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried(monkeypatch,
     await producer.start()
     try:
         await _wait_until(lambda: producer.state.fatal_error is not None)
-        consumer = _consumer(max_stale=0, wait_timeout_s=60.0)
+        consumer = _consumer(wait_timeout_s=60.0)
 
         with pytest.raises(PromptCollectionCleanupError) as caught:
             await consumer.collect_iteration(
@@ -357,13 +339,9 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry(
 ) -> None:
     stack = await _stack(monkeypatch, tmp_path, versioned=True)
     stack.bench.trace.fail("generate", "transient failure for p0")
-    producer = _producer(
-        stack.coordinator,
-        max_stale=1,
-        prompts=["p0", "p1"],
-        group_size=3,
-        poll_interval_s=60.0,
-    )
+    # A retry must not wait for a poll tick: make a tick longer than the test.
+    monkeypatch.setattr(continuous_types, "QUEUE_POLL_INTERVAL_S", 60.0)
+    producer = _producer(stack.coordinator, prompts=["p0", "p1"], group_size=3)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -435,7 +413,8 @@ async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget(
 ) -> None:
     stack = await _stack(monkeypatch, tmp_path)
     stack.bench.trace.fail("generate", "deterministic failure for p0", times=2)
-    producer = _producer(stack.coordinator, poll_interval_s=0.001, fail_fast_errors=2)
+    monkeypatch.setattr(continuous_types, "FAIL_FAST_ERRORS", 2)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -458,7 +437,8 @@ async def test_prompt_batch_drain_times_out_when_collect_never_returns(
 ) -> None:
     stack, _reward, gate = await _gated(monkeypatch, tmp_path)
     gate.allow.clear()
-    producer = _producer(stack.coordinator, poll_interval_s=0.001, fail_fast_errors=0)
+    monkeypatch.setattr(continuous_types, "FAIL_FAST_ERRORS", 0)
+    producer = _producer(stack.coordinator)
 
     await producer.start()
     producer.pause_admission()
@@ -568,7 +548,10 @@ async def test_prompt_batch_fails_when_group_is_stale_at_receipt(monkeypatch, tm
 
     stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
     gate.allow.clear()
-    producer = _producer(stack.coordinator, max_stale=0)
+    # Zero window: one trainer step while the group is in flight already
+    # expires it, so a single real version bump pins the receipt-time gate.
+    monkeypatch.setattr(continuous_types, "MAX_STALE_POLICY_VERSIONS", 0)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -607,14 +590,8 @@ def _item(phase_times: dict[str, float] | None = None) -> ScoredRollout:
     )
 
 
-def _consumer(
-    max_stale: int, *, wait_timeout_s: float = 1.0, poll_interval_s: float = 0.001
-) -> ContinuousRolloutConsumer:
-    return ContinuousRolloutConsumer(
-        settings=_settings(
-            max_stale=max_stale, wait_timeout_s=wait_timeout_s, poll_interval_s=poll_interval_s
-        ),
-    )
+def _consumer(*, wait_timeout_s: float = 1.0) -> ContinuousRolloutConsumer:
+    return ContinuousRolloutConsumer(settings=_settings(wait_timeout_s=wait_timeout_s))
 
 
 def _prompt_batch(
@@ -655,19 +632,19 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     """
     items = [_item(), _item()]
     prompt_batch = _prompt_batch(list(items))
-    consumer = _consumer(max_stale=0)
+    consumer = _consumer()
+    # The batch ran at version 1; a trainer at 3 is two versions ahead, one
+    # past the window.
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        consumer.validate_ready_versions(prompt_batch=prompt_batch, current_policy_version=2)
+        consumer.validate_ready_versions(prompt_batch=prompt_batch, current_policy_version=3)
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        await _collect_iteration(consumer, prompt_batch, current_policy_version=2)
+        await _collect_iteration(consumer, prompt_batch, current_policy_version=3)
     assert prompt_batch.results == items
 
 
 def test_item_ages_never_go_negative_under_a_skewed_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vrl.rollouts.orchestration.continuous import types as continuous_types
-
     item = _item()
     monkeypatch.setattr(continuous_types.time, "monotonic", lambda: item.completed_at - 10.0)
     assert item.age_s == 0.0
@@ -677,7 +654,7 @@ def test_item_ages_never_go_negative_under_a_skewed_clock(
 async def test_consumer_rejects_future_policy_version() -> None:
     prompt_batch = _prompt_batch([_item()], version=2)
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
-        await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=1)
+        await _collect_iteration(_consumer(), prompt_batch, current_policy_version=1)
 
 
 @pytest.mark.asyncio
@@ -689,7 +666,7 @@ async def test_consumer_aggregates_item_phase_times() -> None:
         ]
     )
     with recording() as stats:
-        await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=1)
+        await _collect_iteration(_consumer(), prompt_batch, current_policy_version=1)
     assert stats.phase_seconds["collect.engine_generate"] == 4.0
     assert stats.phase_seconds["collect.reward_score"] == 0.5
     assert "continuous.queue_wait_s" in stats.phase_seconds
@@ -711,7 +688,7 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
         return await real_generate(request)
 
     monkeypatch.setattr(stack.bench.runtime, "generate", gated_generate)
-    producer = _producer(stack.coordinator, prompts=["p0", "p1"], max_inflight=2, max_stale=1)
+    producer = _producer(stack.coordinator, prompts=["p0", "p1"], max_inflight=2)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     await producer.start()
@@ -721,7 +698,7 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
     with recording() as stats:
         demand = asyncio.create_task(
             _collect_iteration(
-                _consumer(max_stale=1, wait_timeout_s=5.0), prompt_batch, current_policy_version=2
+                _consumer(wait_timeout_s=5.0), prompt_batch, current_policy_version=2
             )
         )
     try:
@@ -753,8 +730,9 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
 
 
 @pytest.mark.asyncio
-async def test_consumer_polling_respects_remaining_wait_budget():
-    consumer = _consumer(max_stale=1, wait_timeout_s=0.01, poll_interval_s=10.0)
+async def test_consumer_polling_respects_remaining_wait_budget(monkeypatch) -> None:
+    monkeypatch.setattr(continuous_types, "QUEUE_POLL_INTERVAL_S", 10.0)
+    consumer = _consumer(wait_timeout_s=0.01)
     with pytest.raises(TimeoutError, match="continuous rollout consumer timed out"):
         await asyncio.wait_for(
             consumer.collect_iteration(

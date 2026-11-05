@@ -71,10 +71,7 @@ def _owner(
         lifecycle=trainer.coordinator(bench),
         settings=ContinuousRolloutSettings(
             max_inflight_groups=max_inflight_groups,
-            max_stale_policy_versions=1,
             wait_timeout_s=5.0,
-            queue_poll_interval_s=0.001,
-            fail_fast_errors=2,
             versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,
         ),
     )

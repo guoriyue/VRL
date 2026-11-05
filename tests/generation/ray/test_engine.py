@@ -42,7 +42,6 @@ _OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
 _VERSIONED = (
     "model.use_lora=true",
     "trainer.rollout_orchestration.schedule_mode=continuous",
-    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
 )
 
 

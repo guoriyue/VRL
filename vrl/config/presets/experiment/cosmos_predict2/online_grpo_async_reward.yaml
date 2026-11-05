@@ -75,4 +75,3 @@ trainer:
   rollout_orchestration:
     continuous:
       max_inflight_groups: 2          # >=2: keep rollout(N+1) producing while reward(N) scores
-      max_stale_policy_versions: 1

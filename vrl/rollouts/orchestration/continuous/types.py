@@ -10,6 +10,22 @@ from typing import Any
 from vrl.rollouts.batch import RolloutBatch
 from vrl.utils.stats import Stats
 
+# Policy versions a ready prompt batch may trail the trainer by. One is the
+# continuous design itself: batch N+1 generates at version N while step N
+# trains, and the importance ratio absorbs that single version of lag
+# (SD3.5 OCR on 4x L40S, 2026-09-14: no measurable reward difference over 11
+# paired epochs). A zero window is strict_on_policy; a wider one was never run.
+MAX_STALE_POLICY_VERSIONS = 1
+# Ready-slot poll period of the producer tick and the consumer wait: far below
+# any generation (seconds) yet coarse enough to keep the owner loop idle
+# between checks.
+QUEUE_POLL_INTERVAL_S = 0.05
+# Failures of one prompt-batch slot tolerated before the producer raises its
+# root cause instead of waiting out wait_timeout_s; the consumer applies the
+# same budget when a wait sees only failures and no completion. Three tells a
+# systemic generation/reward failure from a transient one; 0 disables both.
+FAIL_FAST_ERRORS = 3
+
 
 @dataclass(frozen=True, slots=True)
 class ContinuousRolloutSettings:
@@ -21,14 +37,13 @@ class ContinuousRolloutSettings:
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
     (``vrl.trainers.core.types``) remains the single source of default values.
     User settings are validated by ContinuousRolloutConfig before projection.
-    This carrier does not repeat those checks.
+    This carrier does not repeat those checks. The fixed limits above are not
+    carried: the producer and consumer read them from this module at the point
+    of use, so a test narrows one by patching it here.
     """
 
     max_inflight_groups: int
-    max_stale_policy_versions: int
     wait_timeout_s: float
-    queue_poll_interval_s: float
-    fail_fast_errors: int
     # The run's decision (TrainerConfig.versioned_weight_sync): the rollout
     # workers keep each version's weights, so a sync need not drain the batch.
     versioned_weight_sync: bool

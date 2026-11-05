@@ -29,10 +29,10 @@
 # finite request. The batch always has exactly one result slot per prompt
 # group of that request. Admission and weight-sync ordering are owned by the
 # continuous schedule state machine.
-# Concurrency/staleness tuning defaults (max_inflight_groups,
-# max_stale_policy_versions=1,
-# wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
+# max_inflight_groups and wait_timeout_s live on ContinuousRolloutConfig in
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
+# The one-version staleness window, the ready-slot poll period and the slot
+# failure budget are fixed in vrl/rollouts/orchestration/continuous/types.py.
 trainer:
   rollout_orchestration:
     schedule_mode: continuous
