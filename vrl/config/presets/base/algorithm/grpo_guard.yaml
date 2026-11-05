@@ -7,7 +7,3 @@
 # rollout proposal mean, so the recipe MUST set rollout.return_prev_sample_mean=true.
 algorithm:
   kind: grpo_guard
-  clip_ratio: 0.2
-  eps: 1.0e-8
-  adv_clip_max: 5.0
-  global_std: false

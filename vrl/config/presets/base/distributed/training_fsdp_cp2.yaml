@@ -12,5 +12,4 @@ distributed:
       mesh: [dp_shard, cp]
       context_parallel:
         ulysses_degree: 2
-        ring_degree: 1
       precision_policy: none

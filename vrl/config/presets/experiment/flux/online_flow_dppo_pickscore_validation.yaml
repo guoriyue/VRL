@@ -50,8 +50,8 @@ actor:
   ppo_epochs: 4
 
 algorithm:
-  kl_mask_threshold: 1.0       # trust-region boundary (the one knob to sweep)
-  add_kl_coefficient: true     # fold sqrt(-dt) diffusion coeff into the KL sigma
+  # kl_mask_threshold (default 1.0) is the trust-region boundary, the one
+  # knob to sweep; add_kl_coefficient folds sqrt(-dt) into the KL sigma.
   global_std: true
 
 rollout:

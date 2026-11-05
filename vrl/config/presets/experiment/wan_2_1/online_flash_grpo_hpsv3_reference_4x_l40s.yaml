@@ -63,21 +63,18 @@ model:
 
 algorithm:
   kind: flash_grpo
-  clip_ratio: 1.0e-3      # reference: train.clip_range = 1e-3 (on-policy here; see header)
-  kl_coef: 0.0            # reference: train.beta = 0
+  # FlashGRPOConfig's defaults are the reference's: train.clip_range = 1e-3
+  # (on-policy here; see header), train.beta = 0, train.adv_clip_max = 5.
   # reference: PerPromptStatTracker(global_std=True): per-prompt mean, std of
-  # ALL rewards of the epoch + 1e-4 (additive; eps defaults to 1e-4). Here the
-  # std covers the update's 192 rewards (see header).
+  # ALL rewards of the epoch + 1e-4 (additive). Here the std covers the
+  # update's 192 rewards (see header).
   global_std: true
-  adv_clip_max: 5.0       # reference: train.adv_clip_max = 5
+  eps: 1.0e-4             # reference: the tracker's additive 1e-4 (repo default is 1e-8)
 
 actor:
   optim:
     lr: 1.0e-4            # reference: train.learning_rate = 1e-4
-    adam_beta1: 0.9       # reference: adam_beta1 / adam_beta2 / weight_decay / eps
-    adam_beta2: 0.999
-    weight_decay: 1.0e-4
-    eps: 1.0e-8
+    weight_decay: 1.0e-4  # reference: weight_decay (betas and eps are the defaults)
   # reference: accelerator.clip_grad_norm_(max_grad_norm=1.0) on the SUM of 24
   # microbatch-mean losses per rank (gradient_accumulation_steps=24 on four
   # ranks). vrl backpropagates the MEAN over the update's samples, i.e. the
@@ -110,8 +107,6 @@ distributed:
     fsdp:
       mesh: ["dp_shard"]
       precision_policy: none      # keep native dtypes: fp32 adapters, bf16 base
-      reshard_after_forward: true
-      cpu_offload: false
   resources:
     # Four parked trainers plus four sleeping generators exceed this host's RAM;
     # the trainers' parked state goes to node-local NVMe while generation runs

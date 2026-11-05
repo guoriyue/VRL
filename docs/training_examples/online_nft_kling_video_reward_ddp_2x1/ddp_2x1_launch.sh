@@ -49,12 +49,9 @@ RESUME=""
 LAST=$(ls -d "$OUT"/checkpoint-* 2>/dev/null | grep -v final | sed 's/.*checkpoint-//' | sort -n | tail -1)
 [ -n "$LAST" ] && RESUME="trainer.resume_from=$OUT/checkpoint-$LAST"
 
-# find_unused_parameters: NFT's previous/reference adapters require_grad but run
-# under no_grad, so DDP's reducer would otherwise flag them as missing gradients.
 exec torchrun --max-restarts=0 --nnodes=2 --node_rank="$RANK" --nproc_per_node=1 \
   --master_addr="$NODE_A" --master_port="$PORT" -m vrl.scripts.train \
   --config "$CONFIG" \
-  distributed.training.ddp.find_unused_parameters=true \
   trainer.save_freq="$SAVE_FREQ" \
   trainer.output_dir="$OUT" \
   $EXTRA_OVERRIDES $RESUME \

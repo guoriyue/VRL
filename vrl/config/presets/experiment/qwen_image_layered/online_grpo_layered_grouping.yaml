@@ -30,7 +30,6 @@ sampling:
   num_steps: 10
   guidance_scale: 1.0
   layers: 9
-  input_mode: rgb
 
 model:
   offload: true

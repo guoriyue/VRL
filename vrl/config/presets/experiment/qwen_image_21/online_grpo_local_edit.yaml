@@ -26,7 +26,6 @@ reward:
 sampling:
   # Reference encoded at the training geometry so the prefix is 1024 tokens.
   reference_resolution: 512
-  output_mode: rgb
 
 actor:
   optim:

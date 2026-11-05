@@ -1,11 +1,4 @@
-# DiffusionNFT-style RL objective for diffusion world models.
+# DiffusionNFT-style RL objective for diffusion world models; the Cosmos-RL
+# parity values are DiffusionNFTConfig's defaults (vrl/algorithms/diffusion_nft.py).
 algorithm:
   kind: diffusion_nft
-  eps: 1.0e-8
-  adv_clip_max: 5.0
-  global_std: false
-
-  # Cosmos-RL DiffusionNFT parity knobs.
-  nft_beta: 1.0
-  kl_coef: 1.0
-  advantage_scale: 5.0

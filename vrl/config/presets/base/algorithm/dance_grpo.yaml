@@ -7,9 +7,3 @@
 # override it at the family boundary.
 algorithm:
   kind: dance_grpo
-  clip_ratio: 0.2
-  kl_coef: 0.0
-  eps: 1.0e-8
-  adv_clip_max: 5.0
-  global_std: false
-  flow_kl_use_dt: false

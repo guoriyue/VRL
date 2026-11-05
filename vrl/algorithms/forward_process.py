@@ -26,9 +26,7 @@ from vrl.algorithms.base import OnlineAlgorithm
 
 @dataclass(slots=True)
 class ForwardProcessConfig(GroupAdvantageConfig):
-    """Knobs shared by the forward-process algorithms: the papers' tighter std floor."""
-
-    eps: float = 1e-8
+    """Group-advantage settings shared by the forward-process algorithms."""
 
 
 class ForwardProcessAlgorithm(OnlineAlgorithm):

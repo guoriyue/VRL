@@ -10,7 +10,6 @@ data:
   dataset_name: pickapic-anonymous/pickapic_v1
   cache_dir: ""
   split: train
-  max_train_samples: null
   preprocessing:
     random_crop: false
     horizontal_flip: true

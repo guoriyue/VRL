@@ -1,12 +1,7 @@
 # V-GRPO (arXiv:2604.23380): GRPO on the ELBO / flow-matching likelihood
 # surrogate of the final sample. No evaluator, no per-step log-probs; the
 # behaviour policy is the detached current prediction (ratio == 1, the paper's
-# fully on-policy Stage-1 recipe).
+# fully on-policy Stage-1 recipe). adv_soft_clip (VGRPOConfig) is the paper's
+# eta * tanh(A / eta) advantage clip; null switches it off.
 algorithm:
   kind: v_grpo
-  eps: 1.0e-8
-  adv_clip_max: 5.0
-  global_std: false
-
-  # Advantage soft clip eta * tanh(A / eta) (paper Eq. 17); null switches it off.
-  adv_soft_clip: 3.0

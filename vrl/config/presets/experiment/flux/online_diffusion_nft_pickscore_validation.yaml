@@ -37,12 +37,6 @@ actor:
   optim: { lr: 1.0e-4 }        # LoRA; cosmos NFT measured 1e-4 (paper full-param is 3e-5)
   gradient_checkpointing: true
 
-algorithm:                     # cosmos-RL DiffusionNFT parity knobs (base/algorithm/diffusion_nft)
-  nft_beta: 1.0
-  advantage_scale: 5.0
-  kl_coef: 1.0
-  global_std: false
-
 rollout:
   n_samples_per_prompt: 16     # paper uses 24; 16 = single-GPU floor
   prompts_per_batch: 8
