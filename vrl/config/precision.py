@@ -17,9 +17,9 @@ policy because PyTorch process defaults are not a stable trainer/worker contract
 The pydantic sections below are the single declaration of the YAML shape:
 ``parse_config`` validates them (vocabulary, required keys, unknown keys), and
 :func:`PrecisionPolicy` turns the validated section into the two role
-policies. Training quantization is part of the structural schema so the
-eventual training runtime will use the same role shape, but policy resolution
-fails until a real autograd-capable consumer exists. This module remains
+policies. Quantization is a rollout-only axis: the trainer has no
+autograd-capable quantized Linear, so ``precision.training`` carries no
+``quantization`` block and one is rejected as an unknown key. This module remains
 torch-free; runtime boundaries materialize dtype tokens through
 ``vrl.models.dtypes``.
 """
@@ -194,12 +194,6 @@ class PrecisionPolicy:
                 path="precision.rollout.prompt_encoders.dtype",
             ),
         )
-        if self.training.quantization is not None:
-            raise ValueError(
-                "precision.training.quantization is unavailable: the trainer has no "
-                "quantized Linear forward/backward consumer. Remove the block until "
-                "that runtime is implemented; VRL will not accept a silent no-op.",
-            )
 
     @property
     def stages_match(self) -> bool:
@@ -222,7 +216,6 @@ class PrecisionPolicy:
             dtype=section.training.dtype,
             float32_precision=float32_precision,
             outer_autocast=section.training.outer_autocast,
-            quantization=QuantizationPolicy.from_section(section.training.quantization),
         )
         rollout_section = section.rollout or RolloutPrecisionConfig()
         rollout = RolePrecision(
@@ -247,7 +240,7 @@ class PrecisionPolicy:
 
 
 class QuantizationConfig(ConfigBase):
-    """``quantization`` block of one role: a format plus an optional recipe."""
+    """``rollout.quantization`` block: a format plus an optional recipe."""
 
     format: str
     recipe: str | None = None
@@ -263,7 +256,6 @@ class QuantizationConfig(ConfigBase):
 class TrainingPrecisionConfig(ConfigBase):
     dtype: str
     outer_autocast: StrictBool = True
-    quantization: QuantizationConfig | None = None
 
     @field_validator("dtype", mode="before")
     @classmethod

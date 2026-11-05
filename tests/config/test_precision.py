@@ -327,13 +327,6 @@ def test_quantization_format_is_rejected_in_dtype_position():
         PrecisionPolicy.from_section(_section(block))
 
 
-def test_training_quantization_parses_but_fails_without_runtime():
-    block = _plain_precision()
-    block["training"]["quantization"] = {"format": "fp8"}
-    with pytest.raises(ValueError, match=r"training\.quantization is unavailable"):
-        PrecisionPolicy.from_section(_section(block))
-
-
 def test_quantization_requires_format():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"recipe": "rowwise"}

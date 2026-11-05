@@ -121,6 +121,10 @@ Quantization is layered on `rollout.dtype`; it does not replace that dtype.
 Normalization, residuals, excluded or unsupported Linears, and quantized GEMM
 inputs/outputs still need the rollout base dtype.
 
+Quantization is rollout-only. The trainer has no autograd-capable quantized
+Linear, so `precision.training` carries no `quantization` block; one is rejected
+as an unknown key rather than accepted as a silent no-op.
+
 ### FP8
 
 ```yaml
@@ -164,25 +168,6 @@ are BF16. VRL therefore treats the full role policy as different and enables its
 rollout/replay precision correction; the replay-parity gate then warns on drift
 beyond `trainer.replay_parity.max_abs_logprob_diff` and fails on a non-finite
 replay or an absolute log-ratio above ln(10).
-
-## Training quantization
-
-The training role has the same structural shape for future expansion:
-
-```yaml
-precision:
-  float32_precision: tf32
-  training:
-    dtype: bf16
-    quantization:
-      format: fp8
-      recipe: rowwise
-```
-
-This currently fails during policy resolution. The rollout quantized Linears do
-not provide an autograd-capable forward/backward path, so accepting the block
-would create a silent no-op knob. The shape can become active when a real
-training quantization runtime consumes it.
 
 ## Prompt encoders
 
