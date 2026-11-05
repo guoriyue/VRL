@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pickle
 import threading
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -172,12 +171,6 @@ def test_rollout_profiler_is_resolved_before_launch_config_serialization() -> No
     profiler = inputs.launch_config.torch_profiler
     assert profiler["enabled"] is True
     assert profiler["activities"] == ("cuda",)
-    # An unset trace directory follows the trainer's rule: under the run output.
-    assert profiler["output_dir"] == str(Path(cfg.trainer.output_dir) / "torch_profiler")
-
-    cfg.rollout.torch_profiler.output_dir = "/traces/rollout"
-    inputs, _ = _capture_launch_inputs(cfg, get_model_family_entry("sd3_5"))
-    assert inputs.launch_config.torch_profiler["output_dir"] == "/traces/rollout"
 
 
 def test_diffusion_launch_config_uses_resolved_config_parameter_dtype() -> None:

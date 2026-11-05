@@ -866,6 +866,7 @@ class OnlineTrainer:
                 # manifest.
                 with capture_torch_trace(
                     self.config.torch_profiler,
+                    run_output_dir=self.config.output_dir,
                     step=self.state.step,
                     device=self.device,
                     worker_name="online_trainer",

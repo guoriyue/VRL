@@ -75,23 +75,27 @@ class TimeIntervals[Number: (int, float)]:
         return overlap
 
 
+# What one capture records beyond the activity ranges. All off: shapes, memory,
+# stacks and FLOP counts each raise overhead and extend tensor lifetimes, which
+# would make the captured step unlike the uncaptured ones. A deep dive edits
+# this mapping for the one run that needs it; no recipe has.
+_PROFILE_OPTIONS = {
+    "record_shapes": False,
+    "profile_memory": False,
+    "with_stack": False,
+    "with_flops": False,
+}
+
+
 @dataclass(slots=True)
 class TorchProfilerConfig:
-    """PyTorch profiler settings for one captured step.
-
-    Defaults are a low-overhead short-diagnostic preset: CUDA + CPU ranges, no
-    shape/memory/stack/flops recording (those change overhead and tensor
-    lifetimes, so they are explicit dotlist overrides for deep dives). See
-    ``vrl/config/presets/profile/torch_profiler.yaml``.
+    """PyTorch profiler settings for one captured step: whether, what ranges,
+    and which steps. See ``vrl/config/presets/profile/torch_profiler.yaml``;
+    traces land under ``<trainer.output_dir>/torch_profiler``.
     """
 
     enabled: bool = False
-    output_dir: str = ""
     activities: tuple[str, ...] = ("cpu", "cuda")
-    record_shapes: bool = False
-    profile_memory: bool = False
-    with_stack: bool = False
-    with_flops: bool = False
     # skip_first/max_steps select WHICH outer step indices get a trace; each
     # qualifying step opens its own single-step profiler (not a torch schedule
     # window). See should_capture and capture_torch_trace.
@@ -100,12 +104,7 @@ class TorchProfilerConfig:
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
-        self.output_dir = str(self.output_dir or "")
         self.activities = tuple(str(activity).lower() for activity in self.activities)
-        self.record_shapes = bool(self.record_shapes)
-        self.profile_memory = bool(self.profile_memory)
-        self.with_stack = bool(self.with_stack)
-        self.with_flops = bool(self.with_flops)
         self.skip_first = max(0, int(self.skip_first))
         self.max_steps = int(self.max_steps)
 
@@ -240,12 +239,14 @@ def profile_range(name: str, *, emit_nvtx: bool | None = None) -> Iterator[None]
 def capture_torch_trace(
     config: TorchProfilerConfig,
     *,
+    run_output_dir: str,
     step: int,
     device: Any,
     worker_name: str,
     trace_subdir: str = "trainer",
 ) -> Iterator[None]:
-    """Capture one step into a TensorBoard trace + summary + manifest.
+    """Capture one step into a TensorBoard trace + summary + manifest under
+    ``<run_output_dir>/torch_profiler/<trace_subdir>``.
 
     Single-step semantics: when ``step`` qualifies (see
     :meth:`TorchProfilerConfig.should_capture`) this opens a fresh profiler, captures exactly
@@ -275,12 +276,9 @@ def capture_torch_trace(
         yield
         return
 
-    if not config.output_dir:
-        raise ValueError(
-            "TorchProfilerConfig.output_dir must be resolved before capture; the "
-            "trainer and rollout configs set it to <output_dir>/torch_profiler",
-        )
-    root = Path(config.output_dir)
+    if not run_output_dir:
+        raise ValueError("capture_torch_trace needs the run's output directory")
+    root = Path(run_output_dir) / "torch_profiler"
     trace_dir = root / trace_subdir if trace_subdir else root
     trace_dir.mkdir(parents=True, exist_ok=True)
     safe_worker_name = f"{_safe_label(socket.gethostname())}_{_safe_label(worker_name)}_step{step}"
@@ -298,10 +296,7 @@ def capture_torch_trace(
     try:
         with torch.profiler.profile(
             activities=list(selection.torch_activities),
-            record_shapes=bool(config.record_shapes),
-            profile_memory=bool(config.profile_memory),
-            with_stack=bool(config.with_stack),
-            with_flops=bool(config.with_flops),
+            **_PROFILE_OPTIONS,
             on_trace_ready=handler,
         ) as active_prof:
             prof = active_prof
@@ -338,7 +333,6 @@ def capture_torch_trace(
         )
         _write_manifest(
             trace_dir,
-            config=config,
             selection=selection,
             step=step,
             worker_name=safe_worker_name,
@@ -370,7 +364,6 @@ def _table(prof: Any, *, sort_by: str) -> str:
 def _write_manifest(
     trace_dir: Path,
     *,
-    config: TorchProfilerConfig,
     selection: ProfilerActivitySelection,
     step: int,
     worker_name: str,
@@ -399,10 +392,7 @@ def _write_manifest(
         "requested_activities": list(selection.requested),
         "effective_activities": list(selection.effective),
         "missing_activities": list(selection.missing),
-        "record_shapes": bool(config.record_shapes),
-        "profile_memory": bool(config.profile_memory),
-        "with_stack": bool(config.with_stack),
-        "with_flops": bool(config.with_flops),
+        **_PROFILE_OPTIONS,
         "emit_nvtx": nvtx_enabled(),
         "trace_files": trace_files,
         "summary_file": summary_file,

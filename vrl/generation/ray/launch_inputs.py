@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pickle
-from dataclasses import asdict, dataclass, replace
-from pathlib import Path
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.rank_group import ProcessGroupConfig
@@ -95,12 +94,6 @@ class RayGenerationLaunchInputs:
             )
 
         torch_profiler = root.rollout.torch_profiler if root.rollout is not None else None
-        if torch_profiler is not None and not torch_profiler.output_dir:
-            run_output_dir = root.trainer.output_dir if root.trainer is not None else None
-            torch_profiler = replace(
-                torch_profiler,
-                output_dir=str(Path(run_output_dir or "outputs") / "torch_profiler"),
-            )
 
         return cls(
             launch_config=GenerationLaunchConfig(
@@ -110,6 +103,7 @@ class RayGenerationLaunchInputs:
                 executor_kwargs=family.executor_kwargs(root),
                 policy_version=0,
                 torch_profiler={} if torch_profiler is None else asdict(torch_profiler),
+                run_output_dir=trainer.output_dir,
                 versioned_weight_sync=trainer.versioned_weight_sync,
                 # A rollout that hands its GPUs to another role between phases
                 # parks its workers' memory at the handoff.

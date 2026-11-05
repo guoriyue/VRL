@@ -352,6 +352,7 @@ class GenerationWorkerCore:
             with (
                 capture_torch_trace(
                     self._profiler_config,
+                    run_output_dir=self.launch_config.run_output_dir,
                     step=step,
                     device=device,
                     worker_name=worker_name,

@@ -38,6 +38,9 @@ class GenerationLaunchConfig:
     # The version the launch checkpoint serves; every runtime starts from it.
     policy_version: int = 0
     torch_profiler: dict[str, Any] = field(default_factory=dict)
+    # trainer.output_dir: a worker has no run directory of its own, and writes
+    # its profiler traces under this one.
+    run_output_dir: str = ""
     sleep_offload: bool = False
     # How a parking worker releases its GPU (distributed.resources.rollout.parking.mechanism):
     # ``cumem`` unmaps a pool-built model, ``move`` relocates it to host RAM and is

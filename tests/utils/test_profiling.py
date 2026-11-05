@@ -144,13 +144,12 @@ def test_capture_fails_fast_on_missing_activity(
 ) -> None:
     # Force a CPU-only machine view so requesting cuda is genuinely unsupported.
     monkeypatch.setattr(torch.profiler, "supported_activities", lambda: {CPU})
-    cfg = TorchProfilerConfig(
-        enabled=True, activities=("cuda",), output_dir=str(tmp_path / "torch_profiler")
-    )
+    cfg = TorchProfilerConfig(enabled=True, activities=("cuda",))
     with (
         pytest.raises(RuntimeError, match="unsupported activities"),
         capture_torch_trace(
             cfg,
+            run_output_dir=str(tmp_path),
             step=0,
             device="cpu",
             worker_name="t",
@@ -160,8 +159,10 @@ def test_capture_fails_fast_on_missing_activity(
 
 
 def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
-    cfg = TorchProfilerConfig(enabled=False, output_dir=str(tmp_path / "torch_profiler"))
-    with capture_torch_trace(cfg, step=0, device="cpu", worker_name="t"):
+    cfg = TorchProfilerConfig(enabled=False)
+    with capture_torch_trace(
+        cfg, run_output_dir=str(tmp_path), step=0, device="cpu", worker_name="t"
+    ):
         pass
     assert not (tmp_path / "torch_profiler").exists()
 
@@ -172,12 +173,15 @@ def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
 
 
 def test_cpu_trace_writes_trace_summary_manifest(tmp_path: Path) -> None:
-    config = TorchProfilerConfig(
-        enabled=True, activities=("cpu",), output_dir=str(tmp_path / "torch_profiler")
-    )
+    config = TorchProfilerConfig(enabled=True, activities=("cpu",))
     with (
         capture_torch_trace(
-            config, step=0, device="cpu", worker_name="smoke", trace_subdir="smoke"
+            config,
+            run_output_dir=str(tmp_path),
+            step=0,
+            device="cpu",
+            worker_name="smoke",
+            trace_subdir="smoke",
         ),
         profile_range("test.outer"),
     ):
@@ -230,12 +234,11 @@ def test_config_selects_capture_window(enabled, skip_first, max_steps, expected)
 
 
 def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) -> None:
-    cfg = TorchProfilerConfig(
-        enabled=True, activities=("cpu",), max_steps=0, output_dir=str(tmp_path / "torch_profiler")
-    )
+    cfg = TorchProfilerConfig(enabled=True, activities=("cpu",), max_steps=0)
     for step in (10, 1):
         with capture_torch_trace(
             cfg,
+            run_output_dir=str(tmp_path),
             step=step,
             device="cpu",
             worker_name="trainer",
@@ -250,10 +253,14 @@ def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) ->
 
 
 def test_capture_manifest_excludes_temporary_and_backup_files(tmp_path: Path) -> None:
-    cfg = TorchProfilerConfig(
-        enabled=True, activities=("cpu",), max_steps=0, output_dir=str(tmp_path / "torch_profiler")
-    )
-    with capture_torch_trace(cfg, step=1, device="cpu", worker_name="worker"):
+    cfg = TorchProfilerConfig(enabled=True, activities=("cpu",), max_steps=0)
+    with capture_torch_trace(
+        cfg,
+        run_output_dir=str(tmp_path),
+        step=1,
+        device="cpu",
+        worker_name="worker",
+    ):
         torch.ones(2).sum()
     trace_dir = tmp_path / "torch_profiler" / "trainer"
     manifest = json.loads((trace_dir / "profile_manifest.json").read_text())
@@ -274,7 +281,13 @@ def test_capture_manifest_excludes_temporary_and_backup_files(tmp_path: Path) ->
     (trace_dir / f"{worker_name}.6.pt.trace.json").mkdir()
     (trace_dir / f"{worker_name}.2.pt.trace.json.gz").touch()
 
-    with capture_torch_trace(cfg, step=1, device="cpu", worker_name="worker"):
+    with capture_torch_trace(
+        cfg,
+        run_output_dir=str(tmp_path),
+        step=1,
+        device="cpu",
+        worker_name="worker",
+    ):
         torch.ones(2).sum()
     manifest = json.loads((trace_dir / "profile_manifest.json").read_text())
     assert trace_file in manifest["trace_files"]
