@@ -135,14 +135,11 @@ async def _running_service(
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer.from_section(
-        RewardInferenceConfig(
-            kind="http",
-            endpoint=f"http://{host}:{port}",
-            timeout_s=5,
-            expected_model="unit-model",
-            expected_model_version="unit-v1",
-        ),
+    client = HttpRewardScorer(
+        f"http://{host}:{port}",
+        timeout_s=5,
+        expected_model="unit-model",
+        expected_model_version="unit-v1",
     )
     try:
         yield service, client
@@ -842,13 +839,9 @@ async def test_owner_repeated_cancellation_waits_for_runtime_exit(tmp_path):
         await owner.close()
 
 
-@pytest.mark.parametrize(("entry", "timeout_s"), [("config", 0), ("client", float("nan"))])
-def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:
+def test_client_rejects_non_positive_timeout() -> None:
     with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
-        if entry == "config":
-            RewardInferenceConfig(timeout_s=timeout_s)
-        else:
-            HttpRewardScorer("http://127.0.0.1:8300", timeout_s=timeout_s)
+        HttpRewardScorer("http://127.0.0.1:8300", timeout_s=0)
 
 
 # bool is an int subclass; -1 is an int below the minimum.

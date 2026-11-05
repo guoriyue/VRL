@@ -20,7 +20,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from vrl.config.base import ConfigBase
-from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.config.reward_inference import REWARD_SCORE_TIMEOUT_S, RewardInferenceConfig
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
@@ -226,9 +226,7 @@ class Evaluation:
                         request_id=f"eval-{uuid.uuid4().hex}", artifacts=tuple(artifacts)
                     )
                     results = request.validate_and_order_results(
-                        await asyncio.wait_for(
-                            scorer.score_batch(request), config.inference.timeout_s
-                        )
+                        await asyncio.wait_for(scorer.score_batch(request), REWARD_SCORE_TIMEOUT_S)
                     )
                     if any(not result.scores for result in results):
                         raise ValueError("scorer returned no score axes")

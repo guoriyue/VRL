@@ -41,7 +41,6 @@ inference:
   endpoint: http://127.0.0.1:18316
   expected_model: editreward-qwen25-7b
   expected_model_version: 51b92ab5246295637c4ab3bd71e54a26f0a5189d
-  timeout_s: 1800
 media_mode: tensor
 ```
 `tensor` uploads decoded RGB frames (alpha dropped); `file` needs paths inside the

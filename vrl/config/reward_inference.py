@@ -7,8 +7,14 @@ from dataclasses import dataclass, fields
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from vrl.utils.deadline import require_timeout
 from vrl.utils.validation import require_mapping_keys
+
+# One scoring deadline for every transport (HTTP service round trip, Ray actor
+# call, in-process await), the bound the reward runtime, the Ray scorer, the
+# HTTP client and offline evaluation all enforce. 1800 s covers a VLM judge
+# scoring a full video batch on a cold model; no recipe ever needed another
+# value, so it is a constant rather than a key.
+REWARD_SCORE_TIMEOUT_S = 1800.0
 
 
 def require_http_origin(url: str, *, context: str) -> str:
@@ -54,7 +60,6 @@ class RewardInferenceConfig:
     #          for evaluation scripts and tests that construct rewards directly.
     kind: Literal["in_process", "http", "ray"] = "ray"
     endpoint: str = ""
-    timeout_s: float = 1800.0
     expected_model: str = ""
     expected_model_version: str = ""
 
@@ -69,11 +74,9 @@ class RewardInferenceConfig:
             raise ValueError(
                 f"reward inference.kind must be 'in_process', 'http', or 'ray', got {self.kind!r}",
             )
-        timeout_s = require_timeout(self.timeout_s, name="reward inference.timeout_s")
         endpoint = self.endpoint.strip()
         expected_model = self.expected_model.strip()
         expected_model_version = self.expected_model_version.strip()
-        object.__setattr__(self, "timeout_s", timeout_s)
         object.__setattr__(self, "expected_model", expected_model)
         object.__setattr__(self, "expected_model_version", expected_model_version)
         if self.kind in {"in_process", "ray"}:
@@ -111,6 +114,7 @@ _INFERENCE_FIELDS = frozenset(field.name for field in fields(RewardInferenceConf
 
 
 __all__ = [
+    "REWARD_SCORE_TIMEOUT_S",
     "RewardInferenceConfig",
     "require_http_origin",
 ]

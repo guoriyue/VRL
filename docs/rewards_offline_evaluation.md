@@ -60,7 +60,6 @@ inference:
   endpoint: http://127.0.0.1:8300
   expected_model: deployed-reward-name
   expected_model_version: pinned-reward-version
-  timeout_s: 1800
 media_mode: tensor
 ```
 

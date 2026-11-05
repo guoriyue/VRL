@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from vrl.config.reward_inference import REWARD_SCORE_TIMEOUT_S
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip, require_ray
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
@@ -188,7 +189,7 @@ class RayRewardScorer:
         worker_config: Mapping[str, Any] | None = None,
         *,
         placement: RayRewardPlacement | None = None,
-        timeout_s: float = 1800.0,
+        timeout_s: float = REWARD_SCORE_TIMEOUT_S,
     ) -> None:
         self._worker_config = RewardWorkerConfig.from_mapping(worker_config)
         self._cuda = self._worker_config.device.startswith("cuda")

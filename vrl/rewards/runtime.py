@@ -30,9 +30,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
-from vrl.config.reward_inference import (
-    RewardInferenceConfig,
-)
+from vrl.config.reward_inference import REWARD_SCORE_TIMEOUT_S, RewardInferenceConfig
 from vrl.models.parking import CumemBroken, CumemPool, ParkingSession
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import (
@@ -52,17 +50,13 @@ from vrl.utils.stats import count
 if TYPE_CHECKING:
     from vrl.rewards.ray import RayRewardPlacement
 
-# Matches the HTTP reward client's default request timeout so the two
-# transports share one notion of "scoring took too long".
-_DEFAULT_SCORE_TIMEOUT_S = 1800.0
-
 
 class RewardFunctionRuntime:
     """Expose a reward function through the collector-facing runtime contract."""
 
     def __init__(self, reward_function: RewardFunction) -> None:
         self._reward_function = reward_function
-        self._score_timeout_s = _DEFAULT_SCORE_TIMEOUT_S
+        self._score_timeout_s = REWARD_SCORE_TIMEOUT_S
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
         # SHUTTING_DOWN closes admission (retryable teardown), TERMINATED is
@@ -540,11 +534,7 @@ def build_reward_scorer(
     if deployment.kind == "ray":
         from vrl.rewards.ray import RayRewardScorer
 
-        return RayRewardScorer(
-            cfg,
-            placement=ray_placement,
-            timeout_s=deployment.timeout_s,
-        )
+        return RayRewardScorer(cfg, placement=ray_placement)
     if cfg:
         raise ValueError(
             "HTTP reward runtime cannot consume local worker_config; model and "

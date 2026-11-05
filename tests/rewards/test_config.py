@@ -53,7 +53,6 @@ def test_component_inference_configs_resolve_independently() -> None:
                 "unified_reward_video": {
                     "kind": "http",
                     "endpoint": "http://reward:8300",
-                    "timeout_s": 90,
                     "expected_model": "unified-reward-v1",
                     "expected_model_version": "UnifiedReward@unit-revision",
                 },
@@ -69,7 +68,6 @@ def test_component_inference_configs_resolve_independently() -> None:
     assert resolved["unified_reward_video"] == RewardInferenceConfig(
         kind="http",
         endpoint="http://reward:8300",
-        timeout_s=90,
         expected_model="unified-reward-v1",
         expected_model_version="UnifiedReward@unit-revision",
     )

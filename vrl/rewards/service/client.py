@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from vrl.config.reward_inference import REWARD_SCORE_TIMEOUT_S
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
@@ -57,7 +58,7 @@ class HttpRewardScorer:
         self,
         service_url: str,
         *,
-        timeout_s: float = 1800.0,
+        timeout_s: float = REWARD_SCORE_TIMEOUT_S,
         expected_model: str = "",
         expected_model_version: str = "",
     ) -> None:
@@ -86,7 +87,6 @@ class HttpRewardScorer:
 
         return cls(
             service.endpoint,
-            timeout_s=service.timeout_s,
             expected_model=service.expected_model,
             expected_model_version=service.expected_model_version,
         )

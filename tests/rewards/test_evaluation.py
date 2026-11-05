@@ -141,7 +141,6 @@ async def test_http_uploaded_media_matches_local_scoring(scoring_input):
             endpoint=f"http://{host}:{port}",
             expected_model="sharpness",
             expected_model_version="test-v1",
-            timeout_s=10,
         ),
     )
     try:

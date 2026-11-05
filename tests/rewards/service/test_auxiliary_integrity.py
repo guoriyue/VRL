@@ -9,7 +9,6 @@ import pytest
 import torch
 from PIL import Image
 
-from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.protocol import RemoteRewardServiceError
@@ -48,14 +47,11 @@ async def test_cached_reward_rejects_changed_or_outside_target(tmp_path, monkeyp
     service = RewardService.from_yaml(config)
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer.from_section(
-        RewardInferenceConfig(
-            kind="http",
-            endpoint=f"http://{host}:{port}",
-            expected_model="aux-integrity",
-            expected_model_version="test",
-            timeout_s=5,
-        )
+    client = HttpRewardScorer(
+        f"http://{host}:{port}",
+        timeout_s=5,
+        expected_model="aux-integrity",
+        expected_model_version="test",
     )
     artifact = RewardInferenceArtifact(
         artifact_id="candidate",

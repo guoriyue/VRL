@@ -31,7 +31,6 @@ reward:
     unified_reward_video:
       kind: http
       endpoint: http://reward.internal:8300
-      timeout_s: 1800
       expected_model: unified-reward-2.0
       expected_model_version: UnifiedReward-2.0@pinned-revision
 ```

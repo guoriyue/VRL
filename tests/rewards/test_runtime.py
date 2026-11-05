@@ -32,7 +32,7 @@ async def test_score_deadline_bounds_awaitable_scoring(monkeypatch) -> None:
 
     import vrl.rewards.runtime as runtime_module
 
-    monkeypatch.setattr(runtime_module, "_DEFAULT_SCORE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(runtime_module, "REWARD_SCORE_TIMEOUT_S", 0.05)
 
     class _StuckReward(RewardFunction):
         async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
