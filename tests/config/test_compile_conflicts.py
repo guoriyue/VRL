@@ -36,33 +36,22 @@ def test_compile_off_never_conflicts() -> None:
         {
             "model": {"family": "sd3_5", "torch_compile": {"enable": False}},
             "actor": {"gradient_checkpointing": True},
-            "distributed": {
-                "training": {"strategy": "fsdp"},
-                "resources": {"rollout": {"gpus_per_engine": 4}},
-            },
+            "distributed": {"training": {"strategy": "fsdp"}},
         },
     )
 
     assert compile_conflicts(parse_config(cfg)) == ()
 
 
-@pytest.mark.parametrize(
-    ("overrides", "expected"),
-    [
-        ({"actor": {"gradient_checkpointing": "full_cpu"}}, "gradient_checkpointing"),
-        (
-            {"distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}}},
-            "gpus_per_engine=2",
-        ),
-    ],
-)
-def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -> None:
+def test_incompatible_checkpointing_is_reported() -> None:
     from vrl.config.validation import compile_conflicts
 
-    conflicts = compile_conflicts(parse_config(_compile_cfg(**overrides)))
+    conflicts = compile_conflicts(
+        parse_config(_compile_cfg(actor={"gradient_checkpointing": "full_cpu"}))
+    )
 
     assert len(conflicts) == 1
-    assert expected in conflicts[0].message
+    assert "gradient_checkpointing" in conflicts[0].message
 
 
 def test_selective_checkpointing_and_fsdp_compile_with_the_replay_policy() -> None:
@@ -84,14 +73,9 @@ def test_several_conflicts_are_reported_together() -> None:
     """One pass over the matrix, not fail-on-first: the user sees all of them."""
     from vrl.config.validation import compile_conflicts
 
-    conflicts = compile_conflicts(
-        parse_config(
-            _compile_cfg(
-                actor={"gradient_checkpointing": "full_cpu"},
-                distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
-            )
-        ),
-    )
+    cfg = _compile_cfg(actor={"gradient_checkpointing": "full_cpu"})
+    cfg.model.fused_kernels = True
+    conflicts = compile_conflicts(parse_config(cfg))
 
     assert len(conflicts) == 2
 
@@ -99,22 +83,21 @@ def test_several_conflicts_are_reported_together() -> None:
 def test_compile_gate_raises_with_every_reason() -> None:
     from vrl.config.validation import require_training_config
 
+    cfg = _compile_cfg(
+        precision={"float32_precision": "tf32", "training": {"dtype": "bf16"}},
+        actor={"gradient_checkpointing": "full_cpu"},
+    )
+    cfg.model.fused_kernels = True
     with pytest.raises(ValueError) as excinfo:
-        require_training_config(
-            _compile_cfg(
-                precision={"float32_precision": "tf32", "training": {"dtype": "bf16"}},
-                actor={"gradient_checkpointing": "full_cpu"},
-                distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
-            ),
-        )
+        require_training_config(cfg)
     message = str(excinfo.value)
     assert "gradient_checkpointing" in message
-    assert "gpus_per_engine=2" in message
+    assert "fused_kernels" in message
 
 
 # Every conflict in the matrix binds one build role, so ``scope`` releases the
-# conflicts of the role it excludes -- and ONLY those. The rollout-scope case is
-# the production unlock: full_cpu-checkpointing trainers with a compiled rollout.
+# conflicts of the role it excludes. The rollout-scope case is the production
+# unlock: full_cpu-checkpointing trainers with a compiled rollout.
 
 
 def _scoped_compile_cfg(scope: str, **overrides) -> OmegaConf:
@@ -127,31 +110,6 @@ def test_rollout_scope_releases_trainer_conflicts() -> None:
     from vrl.config.validation import compile_conflicts
 
     cfg = _scoped_compile_cfg("rollout", actor={"gradient_checkpointing": "full_cpu"})
-
-    assert compile_conflicts(parse_config(cfg)) == ()
-
-
-def test_rollout_scope_keeps_rollout_conflicts() -> None:
-    from vrl.config.validation import compile_conflicts
-
-    cfg = _scoped_compile_cfg(
-        "rollout",
-        distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
-    )
-
-    conflicts = compile_conflicts(parse_config(cfg))
-    assert len(conflicts) == 1
-    assert conflicts[0].feature == "sequence_parallel"
-    assert "gpus_per_engine=2" in conflicts[0].message
-
-
-def test_replay_scope_releases_rollout_conflicts() -> None:
-    from vrl.config.validation import compile_conflicts
-
-    cfg = _scoped_compile_cfg(
-        "replay",
-        distributed={"resources": {"rollout": {"gpus_per_engine": 2}}},
-    )
 
     assert compile_conflicts(parse_config(cfg)) == ()
 

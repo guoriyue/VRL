@@ -304,23 +304,6 @@ class RolePlacement:
     bundle_indices: tuple[int, ...]
     expected_gpu_ids: tuple[int, ...]
 
-    def engine_bundle_groups(self, gpus_per_engine: int) -> tuple[tuple[int, ...], ...]:
-        """This role's bundles split into consecutive per-engine groups.
-
-        The bundles-to-engines rule lives with the type that owns the bundles, so
-        the fleet the launcher starts cannot disagree with the placement.
-        """
-
-        if len(self.bundle_indices) % gpus_per_engine:
-            raise RuntimeError(
-                f"rollout bundles ({len(self.bundle_indices)}) are not divisible "
-                f"into engines of {gpus_per_engine} rank(s)",
-            )
-        return tuple(
-            tuple(self.bundle_indices[start : start + gpus_per_engine])
-            for start in range(0, len(self.bundle_indices), gpus_per_engine)
-        )
-
 
 class _ProbeActor:
     def gpus(self) -> tuple[int, ...]:

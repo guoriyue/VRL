@@ -5,10 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import replace
 from functools import partial
 
-from vrl.generation.execution.rank_group import ProcessGroupConfig
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -32,16 +30,6 @@ class RayGenerationLauncher:
     Callers connect Ray before launching: the rollout placement group this
     launcher schedules into already requires a live cluster.
     """
-
-    @staticmethod
-    def _find_rendezvous_port() -> int:
-        """Find a currently free driver-local port; closing the socket does not reserve it."""
-
-        import socket
-
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            return int(sock.getsockname()[1])
 
     @staticmethod
     def _validate_rank_gpu_ids(
@@ -83,52 +71,20 @@ class RayGenerationLauncher:
         """
 
         bundle_indices = list(placement.bundle_indices)
-        # One engine per gpus_per_engine bundles; the resolver's num_engines
-        # arithmetic guarantees divisibility (single-GPU engines have groups of
-        # one bundle and rank ids equal engine ids). The placement owns the
-        # grouping rule, so the launched fleet cannot disagree with the plan
-        # about where an engine's ranks live.
-        gpus_per_engine = resources.rollout_gpus_per_engine
-        engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
-
+        # One engine per rollout bundle: the engine's single rank owns the
+        # bundle's GPU, so engine ids and worker ids coincide.
         placement_group = placement.placement_group
-
-        engine_ids = [f"rollout-{engine_idx}" for engine_idx in range(engine_count)]
-        rank_ids = [
-            engine_id if gpus_per_engine == 1 else f"{engine_id}.r{rank_idx}"
-            for engine_id in engine_ids
-            for rank_idx in range(gpus_per_engine)
-        ]
+        engine_ids = [f"rollout-{engine_idx}" for engine_idx in range(len(bundle_indices))]
         # The same registry-owned gatherer serves the driver executor and the
         # single-engine pipelined path. Ray serializes it to each rank actor;
         # ranks never re-resolve family identity from the neutral execution layer.
-        # Multi-rank engines additionally get a per-rank process group config: one
-        # process-group port per engine, loopback address (engine groups are
-        # single-node; PACK affinity is enforced at placement).
-        if gpus_per_engine == 1:
-            rank_configs = [launch_inputs for _ in rank_ids]
-        else:
-            rank_configs = [
-                replace(
-                    launch_inputs,
-                    process_group_config=ProcessGroupConfig(
-                        master_addr="127.0.0.1",
-                        master_port=engine_port,
-                        group_rank=rank_idx,
-                        group_world_size=gpus_per_engine,
-                        backend="nccl" if resources.rollout_devices else "gloo",
-                    ),
-                )
-                for engine_port in [self._find_rendezvous_port() for _ in engine_ids]
-                for rank_idx in range(gpus_per_engine)
-            ]
         actor_group: RayActorGroup | None = None
         finalizer_group: RayActorGroup | None = None
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
-                worker_configs=rank_configs,
-                worker_ids=rank_ids,
+                worker_configs=[launch_inputs for _ in engine_ids],
+                worker_ids=engine_ids,
                 num_cpus=worker.cpus_per_worker,
                 # Each GPU rank owns one whole GPU; a CPU fleet grants none.
                 num_gpus=1 if resources.rollout_devices else 0,
@@ -140,24 +96,19 @@ class RayGenerationLauncher:
             )
             self._validate_rank_gpu_ids(resources, actor_group.handles)
             engines = [
-                RayGenerationEngine(
-                    engine_id,
-                    actor_group.handles[
-                        engine_idx * gpus_per_engine : (engine_idx + 1) * gpus_per_engine
-                    ],
-                )
-                for engine_idx, engine_id in enumerate(engine_ids)
+                RayGenerationEngine(engine_id, [handle])
+                for engine_id, handle in zip(engine_ids, actor_group.handles, strict=True)
             ]
             actor_dispatcher = RayActorDispatcher(
                 tuple(engine.engine_id for engine in engines),
             )
             finalizer_handles: list[RayActorHandle] = []
             if worker.pipelined:
-                # One CPU finalizer per engine, pinned to the engine's primary
-                # bundle. That keeps the merge local for a single-engine fleet;
-                # with several engines a request's payloads come from every
-                # engine, so part of the input crosses nodes either way. It
-                # reserves no CPU: bundles are sized for the rank.
+                # One CPU finalizer per engine, pinned to the engine's bundle.
+                # That keeps the merge local for a single-engine fleet; with
+                # several engines a request's payloads come from every engine,
+                # so part of the input crosses nodes either way. It reserves no
+                # CPU: bundles are sized for the rank.
                 finalizer_group = RayActorGroup.launch(
                     worker_cls=RayGenerationFinalizer,
                     worker_configs=[launch_inputs.gatherer for _ in engine_ids],
@@ -167,10 +118,7 @@ class RayGenerationLauncher:
                     rpc_timeout_s=worker.worker_rpc_timeout_s,
                     operation_prefix="rollout.finalize",
                     placement_group=placement_group,
-                    bundle_indices=[
-                        bundle_indices[engine_idx * gpus_per_engine]
-                        for engine_idx in range(engine_count)
-                    ],
+                    bundle_indices=bundle_indices,
                 )
                 finalizer_handles = list(finalizer_group.handles)
 

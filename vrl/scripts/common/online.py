@@ -481,7 +481,6 @@ async def run_online_recipe(
         TrainingCheckpoint.load(built.resume_from) if built.resume_from is not None else None
     )
     resources.validate_schedule_mode(trainer_config.rollout_orchestration.schedule_mode)
-    family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
     if resources.rollout_num_engines < 1:
         raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
     logger.info("%s", resources)

@@ -6,7 +6,6 @@ import pickle
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
-from vrl.generation.execution.rank_group import ProcessGroupConfig
 from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.protocols import GenerationBatchGatherer
 
@@ -22,13 +21,10 @@ class RayGenerationLaunchInputs:
 
     The driver executor and single-engine pipelined path receive the same
     binding; neither side re-resolves family identity after composition.
-    ``process_group_config`` is None for single-rank engines; the launcher stamps one per
-    rank when an engine spans multiple GPUs.
     """
 
     launch_config: GenerationLaunchConfig
     gatherer: GenerationBatchGatherer
-    process_group_config: ProcessGroupConfig | None = None
 
     def __post_init__(self) -> None:
         try:

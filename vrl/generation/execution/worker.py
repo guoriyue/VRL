@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import traceback
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from vrl.generation.execution.memory_parking import GenerationWorkerParking, executor_device
-from vrl.generation.execution.rank_group import (
-    EngineProcessGroup,
-    ProcessGroupConfig,
-)
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
@@ -39,17 +34,8 @@ logger = init_logger(__name__)
 class GenerationWorkerCore:
     """Own one generation executor and execute a request's sample batches."""
 
-    def __init__(
-        self,
-        worker_id: str,
-        launch_config: GenerationLaunchConfig,
-        process_group_config: ProcessGroupConfig | None = None,
-    ) -> None:
+    def __init__(self, worker_id: str, launch_config: GenerationLaunchConfig) -> None:
         self.worker_id = worker_id
-        # None for single-rank engines. A process group config makes this rank join its
-        # engine's process group around the model lifetime (load -> release).
-        self.process_group_config = process_group_config
-        self._rank_process_group: EngineProcessGroup | None = None
         self.launch_config = launch_config
         from vrl.models.families.registry import get_model_family_entry
 
@@ -83,8 +69,6 @@ class GenerationWorkerCore:
 
         host_memory.log(f"generation_worker:{self.worker_id}:before_load_policy")
         try:
-            if self.process_group_config is not None:
-                self._rank_process_group = EngineProcessGroup.open(self.process_group_config)
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
@@ -121,9 +105,6 @@ class GenerationWorkerCore:
         # weights or their retained slots. Sleep/wake keeps both with the model.
         self._policy_version = self.launch_config.policy_version
         self._uses_versioned_slots = False
-        if self._rank_process_group is not None:
-            self._rank_process_group.shutdown()
-            self._rank_process_group = None
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.
@@ -194,8 +175,6 @@ class GenerationWorkerCore:
             executor=self.executor,
         )
         self.load_policy()
-        # Loading owns rank-group initialization, including after cold eviction.
-        self._synchronize_rank_rng()
         request = envelope.request
         batch = envelope.batch
         expected_version = request.policy_version
@@ -286,7 +265,6 @@ class GenerationWorkerCore:
             executor=self.executor,
         )
         self.load_policy()
-        self._synchronize_rank_rng()
         expected_version = request.policy_version
         model = getattr(self.executor, "model", None)
         if self._uses_versioned_slots and expected_version is not None:
@@ -376,67 +354,6 @@ class GenerationWorkerCore:
         batch_output.memory = None
         return reading
 
-    def _install_sequence_parallel(self, model: Any) -> None:
-        """Make every rollout policy core sequence-parallel over the engine group.
-
-        Reached only when the launcher stamped a rank group (gpus_per_engine
-        > 1); the launch preflight gate already required the family installer,
-        so a missing one here is an internal contract break, not user error.
-
-        Walks ``policy_cores`` rather than probing ``model.transformer``: a
-        multi-expert family must shard EVERY expert it samples through, or the
-        ranks disagree about sequence layout the moment sampling crosses to the
-        unsharded one.
-        """
-
-        installer_path = self.family_entry.runtime_capabilities.sequence_parallel_installer
-        if installer_path is None:
-            raise RuntimeError(
-                f"rank {self.worker_id} joined a multi-rank engine group but "
-                f"family {self.family_entry.family!r} declares no "
-                "sequence_parallel_installer; the launch preflight gate should "
-                "have rejected this configuration",
-            )
-        cores = model.policy_cores
-        if not cores:
-            raise RuntimeError(
-                f"family {self.family_entry.family!r} model declares no policy "
-                "cores for the sequence-parallel install",
-            )
-        import torch.distributed as dist
-
-        install = import_from_path(installer_path)
-        for core in cores.values():
-            install(core, dist.group.WORLD)
-
-    def _synchronize_rank_rng(self) -> None:
-        """Give every rank of the engine one fresh, shared RNG stream.
-
-        The pipeline is replicated across ranks (text encode, initial noise,
-        SDE steps); sequence-parallel attention is only correct when their
-        tensors are identical, and online RL still wants fresh noise per
-        request. Rank 0 draws entropy per call and broadcasts it; every rank
-        then reseeds python and torch RNGs identically.
-        """
-
-        if self.process_group_config is None:
-            return
-        import random
-
-        import torch
-        import torch.distributed as dist
-
-        device = "cuda" if dist.get_backend() == "nccl" else "cpu"
-        seed_tensor = torch.empty(1, dtype=torch.int64, device=device)
-        if dist.get_rank() == 0:
-            seed_tensor[0] = int.from_bytes(os.urandom(8), "little") % (2**63 - 1)
-        dist.broadcast(seed_tensor, src=0)
-        shared = int(seed_tensor.item())
-        random.seed(shared)
-        torch.manual_seed(shared)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(shared)
-
     def _build_executor(self) -> GenerationBatchExecutor:
         launch_config = self.launch_config
         from vrl.models.interfaces.runtime import ModelBuild
@@ -461,8 +378,6 @@ class GenerationWorkerCore:
         # (``apply_rollout_optimizations``), which fails loud on a zero-match swap
         # and on a pass that misses a declared policy core. The forgotten-wiring
         # failure it guarded against is now structurally unreachable.
-        if self.process_group_config is not None:
-            self._install_sequence_parallel(model)
         executor_cls = import_from_path(self.family_entry.executor_cls)
         # Ranks only produce batches; merging runs driver-side on the registry
         # gatherer, so the rank's executor is built without one.

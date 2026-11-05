@@ -162,9 +162,9 @@ def test_sde_window_is_resolved_once_at_parse_time() -> None:
 
 
 def test_seeded_sde_window_is_deterministic_per_request() -> None:
-    """Same request seed -> same window on every parse (multi-rank engines and
-    re-parses agree without relying on the worker RNG sync); the seed does
-    actually steer the draw."""
+    """Same request seed -> same window on every parse (re-parses agree
+    without relying on the worker RNG); the seed does actually steer the
+    draw."""
 
     denoise = DenoiseRequestOptions(sde_window_size=1, sde_window_range=(0, 10))
     first = _layout().parse_sampling_params(_request({"seed": 1234}, denoise=denoise))

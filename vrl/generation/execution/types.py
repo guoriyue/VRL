@@ -240,8 +240,6 @@ class StagedBatchRefs:
     only references to it and the finalizer forwards them without fetching or
     re-staging the media. The driver hands the references to a finalizer actor,
     which merges them while the rank already generates the next request.
-    Non-primary ranks of a multi-rank engine run the same loop for its
-    collectives but stage nothing and report empty tuples.
     """
 
     request_id: str

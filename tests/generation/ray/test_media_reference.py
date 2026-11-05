@@ -63,16 +63,15 @@ async def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(
     assert stats.phase_seconds["generation.denoise_s"] > 0.0
 
 
-@pytest.mark.parametrize("references,rank", [(False, None), (False, 0), (True, 1)])
-def test_direct_eval_and_secondary_rank_never_put_media(monkeypatch, references, rank):
+def test_direct_eval_never_puts_media(monkeypatch):
     def unexpected_put(media):
         pytest.fail("unexpected object-store materialization")
 
     monkeypatch.setattr("ray.put", unexpected_put)
     batch = _batch()
     original = batch.video
-    reference_reward_media(batch, _request(references=references), primary=rank in (None, 0))
-    assert batch.video is (None if references else original)
+    reference_reward_media(batch, _request(references=False))
+    assert batch.video is original
 
 
 def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
@@ -210,7 +209,7 @@ def _cross_node_media_probe():
                 output = SimpleNamespace(
                     reward_media=torch.full((2, 3, 4, 4), 128, dtype=torch.uint8)
                 )
-                reference_reward_media(output, _request(), primary=True)
+                reference_reward_media(output, _request())
                 return output.reward_media, ray.get_runtime_context().get_node_id(), os.getpid()
 
         @ray.remote(num_cpus=1)

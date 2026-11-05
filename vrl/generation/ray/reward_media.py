@@ -14,18 +14,13 @@ from vrl.generation.types import GenerationRequest
 from vrl.utils.media_reference import MediaReference
 
 
-def reference_reward_media(output: Any, request: GenerationRequest, *, primary: bool) -> None:
+def reference_reward_media(output: Any, request: GenerationRequest) -> None:
     """Replace ``output.reward_media`` with boxed per-sample object-store views.
 
-    No-op unless the request asked for references. A non-primary rank of a
-    multi-rank engine drops its media instead: engine combination keeps only
-    the primary payload, so a redundant object-store copy would be wasted.
+    No-op unless the request asked for references.
     """
 
     if not request.reward_media_refs:
-        return
-    if not primary:
-        output.reward_media = None
         return
     import ray
 

@@ -158,21 +158,12 @@ class RolloutResourceConfig(_CountedRoleResourceBase):
     # verbatim: disjoint ids are a dedicated rollout pool, intersecting ids
     # declare sharing. The resolved plan is announced in the startup receipt.
 
-    # Engine replica count (the data-parallel degree). A GPU fleet grants
-    # ``gpus_per_engine`` GPUs to each engine, so the count derives from the
-    # resolved GPU set; the knob carries information only for the two
-    # GPU-less shapes: ``0`` = no fleet at all (offline recipes), explicit
-    # ``N`` with ``num_gpus: 0`` = a CPU engine fleet (defaults to 1).
+    # Engine replica count (the data-parallel degree). A GPU fleet grants one
+    # GPU to each engine, so the count derives from the resolved GPU set; the
+    # knob carries information only for the two GPU-less shapes: ``0`` = no
+    # fleet at all (offline recipes), explicit ``N`` with ``num_gpus: 0`` = a
+    # CPU engine fleet (defaults to 1).
     num_engines: int | str = "auto"
-
-    # Ranks (GPUs) per engine (public key:
-    # distributed.resources.rollout.gpus_per_engine; slime's
-    # --rollout-num-gpus-per-engine). 1 = single-GPU engines. > 1 groups
-    # consecutive rollout GPUs into one sequence-parallel engine and requires
-    # the family capability supports_multi_gpu_engine — validated at launch
-    # preflight so an unsupporting family fails loud instead of silently
-    # computing every batch N times.
-    gpus_per_engine: int = 1
 
     def requests_cpu_fleet(self) -> bool:
         """True when the config explicitly asks for GPU-less rollout engines."""
@@ -201,46 +192,30 @@ class RolloutResourceConfig(_CountedRoleResourceBase):
             field_name=f"{self.key_prefix}.num_engines",
         )
         if parsed_engines != "auto":
-            # gpus_per_engine GPUs per engine; num_engines: 0 declares no fleet.
-            return int(parsed_engines) * self.parsed_gpus_per_engine()
+            # One GPU per engine; num_engines: 0 declares no fleet.
+            return int(parsed_engines)
         return int(available_count)
-
-    def parsed_gpus_per_engine(self) -> int:
-        gpus_per_engine = int(self.gpus_per_engine)
-        if gpus_per_engine < 1:
-            raise ValueError(f"{self.key_prefix}.gpus_per_engine must be >= 1")
-        return gpus_per_engine
 
     def resolve_num_engines(self, *, resolved_gpu_count: int) -> int:
         """Engine replica count for the GPUs this role actually resolved to.
 
         ``resolved_gpu_count`` is the length of the resolved device tuple, not
-        the ``num_gpus`` request field. A GPU fleet groups its GPUs into
-        engines of ``gpus_per_engine`` ranks; with zero resolved GPUs the
-        fleet is either explicitly CPU (``num_gpus: 0`` -> ``num_engines``
-        engines, default 1) or absent.
+        the ``num_gpus`` request field. A GPU fleet runs one engine per GPU;
+        with zero resolved GPUs the fleet is either explicitly CPU
+        (``num_gpus: 0`` -> ``num_engines`` engines, default 1) or absent.
         """
 
         requested = _parse_num_engines(
             self.num_engines,
             field_name=f"{self.key_prefix}.num_engines",
         )
-        gpus_per_engine = self.parsed_gpus_per_engine()
         if resolved_gpu_count > 0:
-            if resolved_gpu_count % gpus_per_engine:
-                raise ValueError(
-                    f"{self.key_prefix}: {resolved_gpu_count} rollout GPU(s) are "
-                    f"not divisible into engines of {gpus_per_engine} rank(s); "
-                    "adjust the GPU count or gpus_per_engine",
-                )
-            derived = resolved_gpu_count // gpus_per_engine
             if requested == "auto":
-                return derived
-            if int(requested) != derived:
+                return resolved_gpu_count
+            if int(requested) != resolved_gpu_count:
                 raise ValueError(
-                    f"{self.key_prefix}.num_engines must equal rollout GPUs / "
-                    f"gpus_per_engine: {int(requested)} != "
-                    f"{resolved_gpu_count} / {gpus_per_engine}",
+                    f"{self.key_prefix}.num_engines must equal the rollout GPU count: "
+                    f"{int(requested)} != {resolved_gpu_count}",
                 )
             return int(requested)
 
@@ -368,9 +343,6 @@ class ResourcePlan:
     # rank-local device; False with an empty reservation means CPU scoring.
     reward_follows_trainer: bool
     rollout_num_engines: int
-    # Ranks (GPUs) per rollout engine; consumed by the launcher's engine
-    # grouping and BundleLayout's per-engine bundle groups.
-    rollout_gpus_per_engine: int
     cross_node: bool
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
@@ -505,7 +477,6 @@ class ResourcePlan:
             f"rollout={list(self.rollout_devices)}",
             f"reward={list(self.reward_devices)}",
             f"engines={self.rollout_num_engines}",
-            f"gpus_per_engine={self.rollout_gpus_per_engine}",
             "reward_mode="
             + (
                 "reserved"
@@ -602,19 +573,6 @@ class ResourcePlan:
             symmetric_colocated=fsdp_symmetric_colocated,
         )
 
-        rollout_gpus_per_engine = config.rollout.parsed_gpus_per_engine()
-        if rollout_gpus_per_engine > 1:
-            if config.cross_node:
-                raise ValueError(
-                    "distributed.resources.rollout.gpus_per_engine > 1 is not "
-                    "supported with cross_node=true: an engine's ranks must share "
-                    "one node for its process group and PACK placement",
-                )
-            if config.rollout.requests_cpu_fleet():
-                raise ValueError(
-                    "distributed.resources.rollout.gpus_per_engine > 1 requires a "
-                    "GPU fleet; a CPU engine (num_gpus: 0) has no ranks to group",
-                )
         rollout_devices = _resolve_rollout_devices(
             visible_devices=visible_devices,
             trainer_devices=trainer_devices,
@@ -667,7 +625,6 @@ class ResourcePlan:
             reward_devices=reward_devices,
             reward_follows_trainer=reward_follows_trainer,
             rollout_num_engines=rollout_num_engines,
-            rollout_gpus_per_engine=rollout_gpus_per_engine,
             cross_node=config.cross_node,
             lifecycle=lifecycle,
             rollout_parking=config.rollout.parking,

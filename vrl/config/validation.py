@@ -55,10 +55,10 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     """Every feature this config turns on that cannot coexist with torch.compile.
 
     ONE home for the compile compatibility matrix. Each of these was discovered
-    separately and used to be enforced somewhere different — grad-checkpointing
-    in the trainer, sequence parallelism nowhere at all — so adding the next
-    one meant first finding the others. They are
-    all decided by config keys, so config load is where they belong: a
+    separately and used to be enforced somewhere different (grad-checkpointing
+    in the trainer, say), so adding the next one meant first finding the
+    others. They are all decided by config keys, so config load is where they
+    belong: a
     combination that can never run should fail before a GPU is touched.
 
     Returns one entry per conflict (empty when compatible).
@@ -70,12 +70,11 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
 
     # Each conflict below binds one build role, so the matrix honors
     # ``model.torch_compile.scope``: trainer constraints cannot veto a
-    # rollout-only compile, and rollout constraints cannot veto a replay-only
-    # one. The (block, role) decision is owned by the typed build contract.
+    # rollout-only compile. The (block, role) decision is owned by the typed
+    # build contract.
     from vrl.models.interfaces.runtime import torch_compile_for_role
 
     compiles_replay = torch_compile_for_role(compile_block, "replay") is not None
-    compiles_rollout = torch_compile_for_role(compile_block, "rollout") is not None
 
     conflicts: list[CompileConflict] = []
 
@@ -131,26 +130,6 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     # reshard-after-forward, trains like the same compiled module unsharded
     # (tests/trainers/test_fsdp_compile_distributed.py): FSDP2's all-gather
     # and reduce-scatter hooks run outside the compiled graphs.
-    distributed = root.distributed
-
-    # Sequence parallelism is installed by the rollout WORKER, after the family
-    # builder has already compiled the policy core: the installer swaps every
-    # attention processor and registers forward hooks on the first/last block,
-    # mutating a module inductor has already traced. sd3_5 declares BOTH
-    # supports_torch_compile and a sequence_parallel_installer, so this is
-    # reachable from config -- and it had no gate at all before.
-    resources = None if distributed is None else distributed.resources
-    gpus_per_engine = 1 if resources is None else int(resources.rollout.gpus_per_engine)
-    if compiles_rollout and gpus_per_engine > 1:
-        conflicts.append(
-            CompileConflict(
-                "sequence_parallel",
-                f"distributed.resources.rollout.gpus_per_engine={gpus_per_engine}: "
-                "sequence parallelism installs attention processors and forward hooks "
-                "on the policy core AFTER the model is built and compiled, mutating "
-                "the module torch.compile already traced.",
-            )
-        )
 
     return tuple(conflicts)
 

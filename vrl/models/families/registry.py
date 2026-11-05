@@ -40,17 +40,6 @@ class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
 
     supports_torch_compile: bool = False
-    # Dotted path of the family's sequence-parallel installer
-    # (``module:function`` taking (transformer, process_group)). Its presence
-    # IS the multi-GPU engine capability — one source, no capability bool to
-    # drift. The launch preflight gate and the rank program both read it.
-    sequence_parallel_installer: str | None = None
-
-    @property
-    def supports_multi_gpu_engine(self) -> bool:
-        """Derived: a family is multi-GPU capable iff it ships an installer."""
-
-        return self.sequence_parallel_installer is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,25 +96,6 @@ class ModelFamilyEntry:
             )
         if not self.gatherer_cls:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
-
-    def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
-        """Gate multi-GPU engines on this family's sequence-parallel install.
-
-        Without one, N ranks would each redundantly compute the full batch —
-        N times the GPU cost for zero benefit. The knob therefore either works
-        or fails loud here, before any actor launches.
-        """
-
-        if gpus_per_engine <= 1:
-            return
-        if not self.runtime_capabilities.supports_multi_gpu_engine:
-            raise ValueError(
-                f"model family {self.family!r} does not support multi-GPU "
-                "engines, but distributed.resources.rollout.gpus_per_engine="
-                f"{gpus_per_engine}. Remove the key (single-GPU engines) or "
-                "use a family whose runtime capabilities declare a "
-                "sequence_parallel_installer.",
-            )
 
     def validate_model_executor(
         self,
@@ -382,15 +352,7 @@ _register_model_family(
             replay_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             transformer_classname="SD3Transformer2DModel",
         ),
-        # MMDiT joint attention has a verified Ulysses install (numeric
-        # N=2-vs-reference equivalence in tests/models/test_sequence_parallel.py);
-        # declaring it here is what opens gpus_per_engine > 1.
-        runtime_capabilities=GenerationRuntimeCapabilities(
-            supports_torch_compile=True,
-            sequence_parallel_installer=(
-                "vrl.models.sequence_parallel:install_sd3_sequence_parallel"
-            ),
-        ),
+        runtime_capabilities=GenerationRuntimeCapabilities(supports_torch_compile=True),
     ),
 )
 

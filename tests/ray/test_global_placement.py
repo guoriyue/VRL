@@ -18,7 +18,7 @@ from tests.rollouts.collector._helpers import Trace
 from vrl.config.schema import parse_config
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner, RolePlacement, _ProbeActor
+from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner, _ProbeActor
 from vrl.ray.resources import ResourcePlan
 
 
@@ -31,33 +31,6 @@ def _resolve(resources: dict):
 
 
 # ----------------------------------------------------------------- bundle plan
-
-
-def test_bundle_plan_groups_rollout_bundles_per_engine() -> None:
-    """gpus_per_engine=2 over 4 rollout GPUs -> two consecutive bundle groups."""
-    resolved = _resolve(
-        {
-            "visible_devices": [0, 1, 2, 3, 4],
-            "trainer": {"devices": [0]},
-            "rollout": {"devices": [1, 2, 3, 4], "gpus_per_engine": 2},
-        },
-    )
-    plan = BundleLayout.from_resources(resolved)
-
-    assert resolved.rollout_gpus_per_engine == 2
-    # The grouping rule lives on RolePlacement (the type that owns the bundles),
-    # which is what the generation launcher calls to size its engine fleet.
-    placement = RolePlacement(
-        placement_group=None,
-        bundle_indices=plan.rollout_bundle_indices,
-        expected_gpu_ids=(),
-    )
-    groups = placement.engine_bundle_groups(resolved.rollout_gpus_per_engine)
-    assert len(groups) == 2
-    assert all(len(group) == 2 for group in groups)
-    assert tuple(index for group in groups for index in group) == plan.rollout_bundle_indices
-    with pytest.raises(RuntimeError, match="not divisible"):
-        placement.engine_bundle_groups(3)
 
 
 def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None:

@@ -108,8 +108,8 @@ Attention backends are a separate source. Each SDPA backend is batch-invariant
 on its own, but flash, efficient and cuDNN attention reduce in different orders:
 on SD3.5 a flash rollout replayed with cuDNN or efficient attention reaches
 max |Δlogprob| 8.8e-2 on the last step. Ring context parallelism forces
-`_native_cudnn` on the trainer while an unsharded or Ulysses rollout lets SDPA
-pick, so such recipes cannot be held to bitwise replay parity.
+`_native_cudnn` on the trainer while the rollout lets SDPA pick, so such
+recipes cannot be held to bitwise replay parity.
 
 Denoise step time did not change: SD3.5 Medium 131 ms/step (batch 4, 512px) and
 309-310 ms/step (batch 2, 1024px); SANA 1600M 225 ms/step (batch 4, 1024px).

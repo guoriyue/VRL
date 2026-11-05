@@ -298,19 +298,6 @@ def test_reward_device_and_parking_derive_from_resource_topology() -> None:
     assert http_plan.reward_parking_mechanism is None
 
 
-def test_multi_gpu_engine_gate_requires_family_capability() -> None:
-    """gpus_per_engine > 1 fails loud for a family without an installer."""
-    from vrl.models.families.registry import get_model_family_entry
-
-    wan = get_model_family_entry("wan_2_1")
-    with pytest.raises(ValueError, match=r"wan_2_1.*gpus_per_engine=2"):
-        wan.validate_gpus_per_engine(2)
-
-    # Single-GPU engines never consult the capability; a capable family passes.
-    wan.validate_gpus_per_engine(1)
-    get_model_family_entry("sd3_5").validate_gpus_per_engine(2)
-
-
 def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_path) -> None:
     """A run-owned scorer transfers media without making an artifact directory."""
     from vrl.rewards.ray import RayRewardScorer

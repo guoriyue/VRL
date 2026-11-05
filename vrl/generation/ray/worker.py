@@ -36,11 +36,7 @@ class RayGenerationWorker:
         # their pinned host buffers instead of pickled storages, so a request's
         # return does not stall the actor for a copy of every trajectory tensor.
         register_tensor_wire_serializer()
-        self.core = GenerationWorkerCore(
-            worker_id,
-            launch_inputs.launch_config,
-            process_group_config=launch_inputs.process_group_config,
-        )
+        self.core = GenerationWorkerCore(worker_id, launch_inputs.launch_config)
 
     def load_policy(self) -> None:
         self.core.load_policy()
@@ -74,13 +70,8 @@ class RayGenerationWorker:
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         result = self.core.execute_batch(envelope)
         if result.output is not None and not result.error:
-            reference_reward_media(result.output, envelope.request, primary=self._is_primary_rank)
+            reference_reward_media(result.output, envelope.request)
         return result
-
-    @property
-    def _is_primary_rank(self) -> bool:
-        config = self.core.process_group_config
-        return config is None or config.group_rank == 0
 
     @recorded
     def execute_request_batches(
@@ -93,8 +84,7 @@ class RayGenerationWorker:
         Each batch payload is staged into the object store right after its host
         copy, its reward media boxed into an object of its own first, so the
         returned value carries only references and this rank is free for the
-        next request the moment its last batch is staged. A
-        non-primary rank of a multi-rank engine stages nothing. A stale policy
+        next request the moment its last batch is staged. A stale policy
         slot comes back as a ``StaleSlotDiscard`` value, not a raised error, so
         the driver releases the actor slot and counts a graceful discard. See
         GenerationWorkerCore.execute_request_batches for version safety and the
@@ -103,20 +93,18 @@ class RayGenerationWorker:
 
         request_id = str(request.request_id)
         total_batches = len(sample_batches)
-        primary = self._is_primary_rank
 
         def stage(payload: Any) -> Any:
             # The media goes into an object of its own first; the payload then
             # carries only references to it.
-            reference_reward_media(payload, request, primary=True)
+            reference_reward_media(payload, request)
             return ray.put(payload)
 
         try:
             staged = self.core.execute_request_batches(
                 request,
                 sample_batches,
-                # Non-primary ranks keep nothing: the engine result is the primary's.
-                stage_batch_result=stage if primary else (lambda payload: None),
+                stage_batch_result=stage,
             )
         except StaleSlotDiscard as discard:
             return discard
@@ -126,13 +114,6 @@ class RayGenerationWorker:
             raise RuntimeError(
                 f"pipelined worker {self.core.worker_id} staged {len(staged)} batches "
                 f"of the {total_batches} it was given",
-            )
-        if not primary:
-            return StagedBatchRefs(
-                request_id=request_id,
-                worker_id=self.core.worker_id,
-                batch_keys=(),
-                batch_refs=(),
             )
         return StagedBatchRefs(
             request_id=request_id,

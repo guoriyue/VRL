@@ -27,7 +27,7 @@ def test_launch_gates_do_not_run_inside_parse_config() -> None:
         {
             "model": {"family": "sd3_5", "torch_compile": {"enable": True}},
             "precision": {"float32_precision": "tf32", "training": {"dtype": "bf16"}},
-            "distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}},
+            "actor": {"gradient_checkpointing": "full_cpu"},
         }
     )
 

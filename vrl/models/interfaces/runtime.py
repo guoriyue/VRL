@@ -28,8 +28,8 @@ TORCH_COMPILE_MODEL_KEY = "torch_compile"
 # Which build roles ``model.torch_compile`` applies to. ``rollout`` exists
 # because the trainer's constraints (gradient checkpointing, FSDP2) forbid
 # compiling the replay policy while the rollout policy — a plain inference
-# module — remains compile-clean; ``replay`` is the mirror for sequence-parallel
-# rollouts whose worker mutates the module tree after tracing.
+# module — remains compile-clean; ``replay`` is the mirror, keeping the rollout
+# policy eager while the replay policy compiles.
 class TorchCompileScope(StrEnum):
     """Which build role(s) ``model.torch_compile`` applies to.
 
@@ -340,8 +340,8 @@ class ModelBuild:
 
         ``scope`` narrows compilation to one side of the rollout/replay split:
         a recipe can keep a measured eager replay (or full_cpu checkpointing)
-        while the rollout policy compiles, and mirrored for sequence-parallel
-        rollouts. The role is decided by the build itself —
+        while the rollout policy compiles, or the mirror. The role is decided
+        by the build itself —
         ``rollout`` present or ``None`` — so every consumer (the rollout
         ``CompilePass``, ``build_family_replay_runtime_bundle``, the loader's
         quantization conflict) reads one role-correct answer instead of
