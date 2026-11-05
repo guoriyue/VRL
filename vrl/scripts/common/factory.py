@@ -9,7 +9,6 @@ from vrl.algorithms.base import OnlineAlgorithm
 from vrl.config.algorithm import algorithm_class
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.evaluators.base import Evaluator
 
@@ -36,13 +35,6 @@ class AlgorithmEvaluatorPair:
         # config before it pairs the algorithm.
         kind = built.root.algorithm.kind
         diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
-        precision = built.precision
-        if precision.denoise_math != "fp32" and kind not in diffusion_logprob_kinds:
-            raise ValueError(
-                "precision.denoise_math.dtype overrides are supported only by "
-                "diffusion log-prob "
-                f"objectives; algorithm.kind={kind!r} keeps its protected math in fp32",
-            )
 
         if kind in diffusion_logprob_kinds:
             # These are flow-matching GRPO-family algorithms on the same SDE
@@ -59,7 +51,6 @@ class AlgorithmEvaluatorPair:
                 algorithm = algorithm_class(kind)(algorithm_config, scheduler=scheduler)
             else:
                 algorithm = algorithm_class(kind)(algorithm_config)
-            math_dtype = resolve_torch_dtype(precision.denoise_math)
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
                 DenoiseSDELogProbEvaluator,
             )
@@ -70,7 +61,6 @@ class AlgorithmEvaluatorPair:
                     scheduler,
                     noise_level=denoise.noise_level,
                     sde_type=denoise.sde_type or "flow_grpo",
-                    math_dtype=math_dtype,
                 ),
             )
 

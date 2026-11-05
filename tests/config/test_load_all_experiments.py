@@ -321,8 +321,6 @@ def test_all_online_experiments_pass_static_launch_preflight(monkeypatch) -> Non
             continue
         if built.precision.training != built.precision.rollout:
             failures.append(f"{name}: training and rollout precision differ")
-        if built.precision.denoise_math != "fp32":
-            failures.append(f"{name}: denoise_math is {built.precision.denoise_math!r}")
 
     assert failures == []
 

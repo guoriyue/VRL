@@ -10,8 +10,8 @@ the role dtype.
 Rollout dtype and outer-autocast behavior default to the training role.
 Prompt-encoder dtype defaults to the resolved rollout dtype unless explicitly
 overridden. VAE precision is family-owned and is not represented by this
-prompt-encoder axis.
-Diffusion math defaults to fp32. FP32 matmul precision is an explicit run-wide
+prompt-encoder axis. Denoise SDE and log-prob math always runs in fp32; that
+is an evaluator constant, not a key. FP32 matmul precision is an explicit run-wide
 policy because PyTorch process defaults are not a stable trainer/worker contract.
 
 The pydantic sections below are the single declaration of the YAML shape:
@@ -179,22 +179,13 @@ class RolePrecision:
 
 @dataclass(frozen=True, slots=True)
 class PrecisionPolicy:
-    """Resolved precision for both roles, protected math, and prompt encoders."""
+    """Resolved precision for both roles and the prompt encoders."""
 
     training: RolePrecision
     rollout: RolePrecision
-    denoise_math: str
     prompt_encoder_dtype: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "denoise_math",
-            _normalize_plain_dtype(
-                self.denoise_math,
-                path="precision.denoise_math.dtype",
-            ),
-        )
         object.__setattr__(
             self,
             "prompt_encoder_dtype",
@@ -248,7 +239,6 @@ class PrecisionPolicy:
         return cls(
             training=training,
             rollout=rollout,
-            denoise_math=section.denoise_math.dtype if section.denoise_math else "fp32",
             prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
         )
 
@@ -306,22 +296,12 @@ class RolloutPrecisionConfig(ConfigBase):
         return _normalize_plain_dtype(value, path="precision.rollout.dtype")
 
 
-class DenoiseMathPrecisionConfig(ConfigBase):
-    dtype: str
-
-    @field_validator("dtype", mode="before")
-    @classmethod
-    def _normalize_dtype(cls, value: Any) -> str:
-        return _normalize_plain_dtype(value, path="precision.denoise_math.dtype")
-
-
 class PrecisionConfig(ConfigBase):
     """Top-level ``precision`` section."""
 
     float32_precision: Float32Precision
     training: TrainingPrecisionConfig
     rollout: RolloutPrecisionConfig | None = None
-    denoise_math: DenoiseMathPrecisionConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -341,7 +321,6 @@ class PrecisionConfig(ConfigBase):
 
 
 __all__ = [
-    "DenoiseMathPrecisionConfig",
     "Float32Precision",
     "PrecisionConfig",
     "PrecisionPolicy",

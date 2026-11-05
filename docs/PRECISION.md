@@ -19,19 +19,15 @@ precision:
       recipe: rowwise
     prompt_encoders:
       dtype: fp16
-
-  denoise_math:
-    dtype: fp32
 ```
 
 `precision.float32_precision` and `precision.training.dtype` are required.
 `float32_precision` accepts `ieee` or `tf32`. `rollout.dtype` inherits the
 training dtype, `training.outer_autocast` defaults to true, and
 `rollout.outer_autocast` inherits the training value.
-`rollout.prompt_encoders.dtype` inherits the resolved rollout dtype, and
-`denoise_math.dtype` defaults to FP32. Set prompt encoders to FP16 explicitly
-when that memory/accuracy trade-off is desired; quantization never changes their
-dtype implicitly.
+`rollout.prompt_encoders.dtype` inherits the resolved rollout dtype. Set prompt
+encoders to FP16 explicitly when that memory/accuracy trade-off is desired;
+quantization never changes their dtype implicitly.
 
 ## Role precision and the model forward boundary
 
@@ -209,23 +205,14 @@ decode modules in FP32 for output fidelity. The previous
 `frozen_components` name incorrectly implied that one public dtype controlled
 every frozen pipeline module and has been removed.
 
-## Protected diffusion math
+## Protected denoise math
 
-```yaml
-precision:
-  float32_precision: tf32
-  training:
-    dtype: bf16
-  denoise_math:
-    dtype: fp32
-```
-
-This controls custom diffusion SDE, scheduler, and log-probability math outside
-the transformer. It defaults to FP32 and is independent of training/rollout base
-dtypes, outer autocast, quantization, and `float32_precision`. Selecting FP32
-protected math chooses the tensor dtype; `float32_precision` still chooses which
-FP32 matmul backend executes any matrix multiplications inside that boundary.
-Non-diffusion objectives reject a non-FP32 override.
+Custom denoise SDE, scheduler, and log-probability math outside the transformer
+always runs in FP32, independent of training/rollout base dtypes, outer autocast,
+and quantization. There is no key for it: no run has ever used another dtype,
+so the SDE log-prob math defaults to it. `float32_precision` still chooses
+which FP32 matmul backend executes any matrix multiplications inside that
+boundary.
 
 ## Separate precision boundaries
 
@@ -250,7 +237,7 @@ actor:
 precision:
   train: bf16                 # use training.dtype
   rollout: fp8                # use rollout.dtype + rollout.quantization
-  math: fp32                  # use denoise_math.dtype
+  math: fp32                  # removed; protected denoise math is always FP32
   frozen: fp16                # use rollout.prompt_encoders.dtype
   frozen_components: fp16     # removed misleading name
   rollout_recipe: rowwise     # move under rollout.quantization for FP8

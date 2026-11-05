@@ -109,7 +109,6 @@ def test_plain_block_resolves_to_the_same_policy_for_both_roles():
     assert policy == PrecisionPolicy(
         training=RolePrecision(dtype="bf16", float32_precision="tf32"),
         rollout=RolePrecision(dtype="bf16", float32_precision="tf32"),
-        denoise_math="fp32",
         prompt_encoder_dtype="bf16",
     )
 
@@ -126,7 +125,6 @@ def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
     assert p == PrecisionPolicy(
         training=RolePrecision(dtype="bf16", float32_precision="tf32"),
         rollout=RolePrecision(dtype="bf16", float32_precision="tf32"),
-        denoise_math="fp32",
         prompt_encoder_dtype="bf16",
     )
     assert p.stages_match is True
@@ -196,12 +194,10 @@ def test_prompt_encoders_default_to_rollout_dtype_even_for_fp32():
     assert p.prompt_encoder_dtype == "fp32"
 
 
-def test_denoise_math_and_prompt_encoders_can_be_explicit():
+def test_prompt_encoders_can_be_explicit():
     block = _plain_precision()
-    block["denoise_math"] = {"dtype": "bf16"}
     block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
     p = PrecisionPolicy.from_section(_section(block))
-    assert p.denoise_math == "bf16"
     assert p.prompt_encoder_dtype == "fp16"
 
 
@@ -262,7 +258,6 @@ def test_fp8_rollout_split_keeps_bf16_base_and_prompt_default():
         quantization=QuantizationPolicy(format="fp8", recipe="rowwise"),
     )
     assert p.prompt_encoder_dtype == "bf16"
-    assert p.denoise_math == "fp32"
     assert p.rollout.label == "bf16+fp8"
     assert p.stages_match is False
 
@@ -363,7 +358,7 @@ def test_resolve_torch_dtype_subbyte(spelling, torch_name):
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
-@pytest.mark.parametrize("section", ["training", "denoise_math", "prompt_encoders"])
+@pytest.mark.parametrize("section", ["training", "prompt_encoders"])
 def test_required_precision_dtype_does_not_default_empty_values(section):
     block = {"float32_precision": "ieee", "training": {"dtype": "bf16"}}
     if section == "prompt_encoders":

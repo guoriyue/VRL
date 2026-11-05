@@ -33,7 +33,8 @@ Callers import the new names directly; there are no old-name forwarding aliases.
 Driver and workers must run the same code revision when exchanging Python objects.
 
 This rename does not change generation regime values, checkpoint state keys, or
-algorithm names. One YAML key did follow: `precision.diffusion_math` is now
-`precision.denoise_math` (`DenoiseMathPrecisionConfig`), and a config that still
-spells the old key is rejected as unknown. Historical audit and sprint documents
-retain the names used at the time.
+algorithm names. One YAML key did follow, `precision.diffusion_math` to
+`precision.denoise_math`, and both have since been removed: protected denoise
+math always runs in FP32, and a config that still spells either key is rejected
+as unknown. Historical audit and sprint documents retain the names used at the
+time.
