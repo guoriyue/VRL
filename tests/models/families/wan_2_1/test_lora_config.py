@@ -32,39 +32,24 @@ def _model() -> WanT2VPipelineModel:
     )
 
 
-def _lora_values(dropout: float | None) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        "rank": 2,
-        "alpha": 4,
-        "target_modules": ["proj"],
-    }
-    if dropout is not None:
-        values["dropout"] = dropout
-    return values
+_LORA_VALUES: dict[str, Any] = {"rank": 2, "alpha": 4, "target_modules": ["proj"]}
 
 
-@pytest.mark.parametrize(
-    ("configured_dropout", "expected_dropout"),
-    ((0.4, 0.4), (None, 0.0)),
-)
-def test_wan_fresh_adapter_preserves_base_output_and_effective_dropout(
-    configured_dropout: float | None,
-    expected_dropout: float,
-) -> None:
+def test_wan_fresh_adapter_preserves_base_output_and_trains_without_dropout() -> None:
     model = _model()
     inputs = torch.ones(1, 2)
     before = model.transformer.proj(inputs).detach()
 
     model.apply_lora(
         lora_test_build(
-            _lora_values(configured_dropout),
+            _LORA_VALUES,
             family="wan_2_1",
             lora_path=None,
             model_config={"boundary_ratio": None, "trainable_transformers": ["transformer"]},
         ),
     )
 
-    assert model.transformer.peft_config["default"].lora_dropout == expected_dropout
+    assert model.transformer.peft_config["default"].lora_dropout == 0.0
     torch.testing.assert_close(model.transformer.proj(inputs), before, rtol=0, atol=0)
 
 
@@ -81,7 +66,7 @@ def test_wan_adapter_storage_preserves_frozen_base(
     before = base.detach().clone()
     pointer = base.data_ptr()
     build = lora_test_build(
-        {**_lora_values(0.0), "parameter_dtype": adapter_dtype},
+        {**_LORA_VALUES, "parameter_dtype": adapter_dtype},
         family="wan_2_1",
         lora_path=None,
     )

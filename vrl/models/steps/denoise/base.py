@@ -368,9 +368,10 @@ class DenoiseModelBase(nn.Module, ABC):
 
         from peft import LoraConfig, get_peft_model
 
-        from vrl.models.peft_adapter import load_trainable_lora_adapter
+        from vrl.models.peft_adapter import LORA_DROPOUT, load_trainable_lora_adapter
 
         lora_config = build.require_lora_config()
+        autocast_adapter_dtype = build.lora_autocast_adapter_dtype
         roots = self.trainable_modules
         if not roots:
             raise RuntimeError(f"{type(self).__name__} exposes no trainable module for LoRA")
@@ -388,10 +389,9 @@ class DenoiseModelBase(nn.Module, ABC):
                     lora_path,
                     expected_rank=lora_config.rank,
                     expected_alpha=lora_config.alpha,
-                    expected_dropout=lora_config.dropout,
                     expected_target_modules=lora_config.target_modules,
                     adapter_name="default",
-                    autocast_adapter_dtype=lora_config.autocast_adapter_dtype,
+                    autocast_adapter_dtype=autocast_adapter_dtype,
                 )
                 wrapped.set_adapter("default")
             else:
@@ -400,11 +400,11 @@ class DenoiseModelBase(nn.Module, ABC):
                     LoraConfig(
                         r=lora_config.rank,
                         lora_alpha=lora_config.alpha,
-                        lora_dropout=lora_config.dropout,
+                        lora_dropout=LORA_DROPOUT,
                         init_lora_weights=lora_config.init_lora_weights,
                         target_modules=lora_config.target_modules,
                     ),
-                    autocast_adapter_dtype=lora_config.autocast_adapter_dtype,
+                    autocast_adapter_dtype=autocast_adapter_dtype,
                 )
             if lora_config.parameter_dtype == "float32":
                 for parameter in wrapped.parameters():

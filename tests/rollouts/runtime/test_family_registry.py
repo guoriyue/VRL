@@ -78,7 +78,6 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
                 "lora": {
                     "path": None,
                     "target_modules": [],
-                    "dropout": 0,
                 },
                 "memory": {
                     "vae_decode": {
@@ -119,7 +118,6 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
         "lora": {
             "path": None,
             "target_modules": [],
-            "dropout": 0.0,
         },
         "torch_compile": {
             "enable": False,

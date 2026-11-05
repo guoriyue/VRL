@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
-from vrl.config.model_schema import LoraSection
+from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
@@ -298,21 +298,25 @@ class ModelBuild:
         """
         return bool((self.model_config or {}).get("use_lora", False))
 
-    def _resolved_lora(self) -> LoraSection:
+    def _model_section_cls(self) -> type[ModelSection]:
         # Only the lightweight schema is imported, never the model/backend.
         from vrl.models.families.registry import get_model_family_entry
         from vrl.utils.config import import_from_path
 
         entry = get_model_family_entry(self.family)
-        schema = import_from_path(entry.model_section_cls)
-        return schema.resolve_lora((self.model_config or {}).get("lora"))
+        return import_from_path(entry.model_section_cls)
 
     @property
     def lora(self) -> LoraSection | None:
         """Typed adapter settings, with the selected family's defaults applied."""
         if not self.use_lora:
             return None
-        return self._resolved_lora()
+        return self._model_section_cls().resolve_lora((self.model_config or {}).get("lora"))
+
+    @property
+    def lora_autocast_adapter_dtype(self) -> bool:
+        """PEFT's fp32 adapter upcast, decided per family by its model section."""
+        return self._model_section_cls().lora_autocast_adapter_dtype
 
     def require_lora_config(self) -> LoraSection:
         """Require the adapter configuration at a LoRA attach boundary."""

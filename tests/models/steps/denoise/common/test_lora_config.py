@@ -29,15 +29,7 @@ class _Policy(DenoiseModelBase):
         raise NotImplementedError
 
 
-def _lora_values(dropout: float | None) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        "rank": 2,
-        "alpha": 4,
-        "target_modules": ["proj"],
-    }
-    if dropout is not None:
-        values["dropout"] = dropout
-    return values
+_LORA_VALUES: dict[str, Any] = {"rank": 2, "alpha": 4, "target_modules": ["proj"]}
 
 
 def test_shared_warm_start_validates_effective_topology(
@@ -66,7 +58,7 @@ def test_shared_warm_start_validates_effective_topology(
 
     policy.apply_lora(
         lora_test_build(
-            _lora_values(0.35),
+            _LORA_VALUES,
             family="sd3_5",
             lora_path="/adapter",
         ),
@@ -77,7 +69,6 @@ def test_shared_warm_start_validates_effective_topology(
         "adapter_path": "/adapter",
         "expected_rank": 2,
         "expected_alpha": 4,
-        "expected_dropout": 0.35,
         "expected_target_modules": ["proj"],
         "adapter_name": "default",
         "autocast_adapter_dtype": True,
@@ -101,7 +92,7 @@ def test_shared_warm_start_validation_failure_keeps_raw_transformer(
     with pytest.raises(ValueError, match="topology mismatch"):
         policy.apply_lora(
             lora_test_build(
-                _lora_values(0.35),
+                _LORA_VALUES,
                 family="sd3_5",
                 lora_path="/adapter",
             ),

@@ -276,7 +276,6 @@ def test_disabled_lora_ignores_topology_initializer_and_warm_start_path() -> Non
                 "rank": 8,
                 "alpha": 16,
                 "target_modules": ["q"],
-                "dropout": 0.1,
                 "init": "gaussian",
                 "path": "/first",
             },
@@ -289,7 +288,6 @@ def test_disabled_lora_ignores_topology_initializer_and_warm_start_path() -> Non
                 "rank": 64,
                 "alpha": 128,
                 "target_modules": ["v"],
-                "dropout": 0.9,
                 "init": False,
                 "path": "/second",
             },
@@ -308,7 +306,6 @@ def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path()
                 "rank": 8,
                 "alpha": 16,
                 "target_modules": ["q", "v"],
-                "dropout": 0.25,
                 "init_lora_weights": "gaussian",
                 "path": "/first",
             },
@@ -321,7 +318,6 @@ def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path()
                 "rank": 8,
                 "alpha": 16,
                 "target_modules": ["v", "q", "q"],
-                "dropout": 0.25,
                 "init_lora_weights": False,
                 "path": "/second",
             },
@@ -329,11 +325,12 @@ def test_enabled_lora_includes_topology_but_not_initializer_or_warm_start_path()
     )
 
     assert first == second
+    # ``dropout`` is a persisted v1 member, not a key: adapters train without it.
     assert first["build"]["lora"] == {
         "rank": 8,
         "alpha": 16,
         "target_modules": ["q", "v"],
-        "dropout": 0.25,
+        "dropout": 0.0,
     }
 
     changed = resolve_checkpoint_model_identity(
@@ -388,20 +385,6 @@ def test_wan_adapter_storage_identity_is_opt_in() -> None:
     assert "lora_parameter_dtype" not in baseline["build"]
     assert fp32["build"]["lora_parameter_dtype"] == "float32"
     assert fp32 != baseline
-
-
-def test_lora_storage_autocast_changes_identity() -> None:
-    field = "autocast_adapter_dtype"
-    lora = {"rank": 8, "alpha": 16, "target_modules": ["to_q"]}
-    identities = [
-        resolve_checkpoint_model_identity(
-            _build(family="flux", use_lora=True, lora={**lora, field: value}),
-        )
-        for value in (False, True)
-    ]
-    assert identities[0]["build"]["lora"][field] is False
-    assert field not in identities[1]["build"]["lora"]
-    assert identities[0] != identities[1]
 
 
 def test_runtime_only_fields_do_not_change_wan_identity() -> None:

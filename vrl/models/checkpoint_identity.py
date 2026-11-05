@@ -505,9 +505,10 @@ def resolve_checkpoint_model_identity(build: ModelBuild) -> dict[str, Any]:
             adapter_dtype = lora_values.pop("parameter_dtype", None)
             if adapter_dtype is not None:
                 build_values["lora_parameter_dtype"] = adapter_dtype
-            autocast = lora_values.pop("autocast_adapter_dtype")
-            if autocast != schema_cls.resolve_lora(None).autocast_adapter_dtype:
-                lora_values["autocast_adapter_dtype"] = autocast
+            # Dropout stopped being configurable (adapters train without it,
+            # ``peft_adapter.LORA_DROPOUT``); the v1 identity keeps the member
+            # so checkpoints written with the default stay resumable.
+            lora_values["dropout"] = 0.0
             build_values["lora"] = lora_values
 
     return {

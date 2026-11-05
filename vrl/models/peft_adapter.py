@@ -22,6 +22,12 @@ from vrl.models.weight_utils import unwrap_compile_and_ddp
 
 _MISSING = object()
 
+# Adapters train without dropout: the batch-invariant LoRA linears
+# (``vrl.nn.kernels.batch_invariant``) take the fused path only over an
+# Identity dropout, and a dropout would silently cost bitwise rollout/replay
+# parity. A warm-started adapter must have been saved the same way.
+LORA_DROPOUT = 0.0
+
 
 @dataclass(frozen=True, slots=True)
 class _LoraAdapterTopology:
@@ -68,7 +74,6 @@ def load_trainable_lora_adapter(
     *,
     expected_rank: int,
     expected_alpha: int,
-    expected_dropout: float,
     expected_target_modules: Iterable[str],
     expected_task_type: str | None = None,
     adapter_name: str = "default",
@@ -88,7 +93,7 @@ def load_trainable_lora_adapter(
     expected = _LoraAdapterTopology.from_values(
         rank=expected_rank,
         alpha=expected_alpha,
-        dropout=expected_dropout,
+        dropout=LORA_DROPOUT,
         target_modules=expected_target_modules,
         owner="configured LoRA",
     )

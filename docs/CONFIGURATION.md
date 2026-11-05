@@ -55,7 +55,7 @@ adding a new model/reward preset:
 
 ```bash
 model.use_lora=true model.lora.rank=32 model.lora.alpha=64 \
-model.lora.dropout=0.0 model.lora.init_lora_weights=gaussian
+model.lora.init_lora_weights=gaussian
 ```
 
 `ModelBuild.lora` resolves these settings into the shared `LoraSection`, then
@@ -64,14 +64,20 @@ There is no second adapter manager. This follows the separation in
 [Miles Diffusion's PEFT setup](https://github.com/radixark/miles_diffusion/blob/ebd55fc1e597520322e0225997552c0807e9293b/miles/backends/fsdp_utils/actor.py#L603):
 shared run inputs, with real family defaults kept separate.
 
-The lightweight family schemas own defaults: Gaussian initialization and
-PEFT adapter upcasting normally; Wan retains `init_lora_weights=true`,
-and Wan retains `autocast_adapter_dtype=false` for weight-sync dtype parity.
-Both initialization choices start with zero B weights; the A distribution
-and RNG recipe differ. `path` loads a trainable PEFT adapter after topology
-validation. `parameter_dtype: float32` explicitly stores trainable adapters
-in FP32; with FSDP it requires `distributed.training.fsdp.precision_policy=none`.
-`autocast_adapter_dtype` is PEFT's storage upcast option, not forward autocast.
+The lightweight family schemas own defaults: Gaussian initialization
+normally; Wan retains `init_lora_weights=true`. Both initialization choices
+start with zero B weights; the A distribution and RNG recipe differ. `path`
+loads a trainable PEFT adapter after topology validation. `parameter_dtype:
+float32` explicitly stores trainable adapters in FP32; with FSDP it requires
+`distributed.training.fsdp.precision_policy=none`.
+
+Two adapter settings are not keys. Dropout is fixed at zero
+(`vrl/models/peft_adapter.py`, `LORA_DROPOUT`): the batch-invariant LoRA
+linears run only over an Identity dropout, and a warm-started adapter saved
+with dropout is refused. PEFT's storage upcast (`autocast_adapter_dtype`, not
+forward autocast) is decided per family by the schema's
+`lora_autocast_adapter_dtype`: on normally, off for Wan so rollout adapters
+match the FSDP actor's synchronized storage dtype.
 
 Migration from the former layout:
 

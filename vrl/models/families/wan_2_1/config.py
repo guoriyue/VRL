@@ -24,10 +24,8 @@ class WanModelSection(ModelSection):
 
     # Keep the established initialization/RNG recipe. No PEFT fp32 upcast:
     # rollout adapters must match the FSDP actor's synchronized storage dtype.
-    lora_defaults: ClassVar[LoraSection] = LoraSection(
-        init_lora_weights=True,
-        autocast_adapter_dtype=False,
-    )
+    lora_defaults: ClassVar[LoraSection] = LoraSection(init_lora_weights=True)
+    lora_autocast_adapter_dtype: ClassVar[bool] = False
 
     trainable_transformers: (
         list[WanTransformerName] | Literal["all", "both"] | WanTransformerName | None

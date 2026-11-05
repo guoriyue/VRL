@@ -31,27 +31,18 @@ def test_disabled_lora_has_no_attach_config(model_config) -> None:
         build.require_lora_config()
 
 
-@pytest.mark.parametrize(
-    "extras",
-    [{}, {"dropout": 0.2, "init_lora_weights": False}],
-)
+@pytest.mark.parametrize("extras", [{}, {"init_lora_weights": False}])
 def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
     values = {"rank": 2, "alpha": 4, "target_modules": ["proj"], **extras}
     build = _build({"use_lora": True, "lora": {**values, "path": "/adapter"}})
 
     assert build.require_lora_config() == LoraSection(
-        **{
-            "dropout": 0.0,
-            "init_lora_weights": "gaussian",
-            "autocast_adapter_dtype": True,
-            **values,
-            "path": "/adapter",
-        }
+        **{"init_lora_weights": "gaussian", **values, "path": "/adapter"}
     )
     assert build.require_lora_config().path == "/adapter"
 
 
-# One row per distinct ``lora_defaults``: the shared ModelSection default
+# One row per distinct family decision: the shared ModelSection defaults
 # (sd3_5) and WanModelSection (both wan entries).
 @pytest.mark.parametrize(
     ("family", "init_lora_weights", "autocast_adapter_dtype"),
@@ -65,8 +56,5 @@ def test_family_lora_defaults_are_resolved_by_the_build(
     build = _build({"use_lora": True, "lora": {"rank": 2, "alpha": 4, "target_modules": ["proj"]}})
     build.family = family
 
-    config = build.require_lora_config()
-
-    assert config.init_lora_weights == init_lora_weights
-    assert config.autocast_adapter_dtype is autocast_adapter_dtype
-    assert config.dropout == 0.0
+    assert build.require_lora_config().init_lora_weights == init_lora_weights
+    assert build.lora_autocast_adapter_dtype is autocast_adapter_dtype

@@ -23,7 +23,7 @@ def _save_lora_config(path: Path) -> None:
     peft.LoraConfig(
         r=2,
         lora_alpha=4,
-        lora_dropout=0.25,
+        lora_dropout=0.0,
         target_modules=["q_proj", "v_proj"],
     ).save_pretrained(path)
 
@@ -39,7 +39,6 @@ def _load(base: nn.Module, path: str | Path, **overrides: Any) -> Any:
     expected = {
         "expected_rank": 2,
         "expected_alpha": 4,
-        "expected_dropout": 0.25,
         "expected_target_modules": ["q_proj", "v_proj"],
     }
     expected.update(overrides)
@@ -52,7 +51,7 @@ def test_local_adapter_load_accepts_target_order_only_difference(tmp_path: Path)
         peft.LoraConfig(
             r=2,
             lora_alpha=4,
-            lora_dropout=0.25,
+            lora_dropout=0.0,
             target_modules=["q_proj", "v_proj"],
         ),
     )
@@ -68,7 +67,7 @@ def test_local_adapter_load_accepts_target_order_only_difference(tmp_path: Path)
     config = loaded.peft_config["default"]
     assert config.r == 2
     assert config.lora_alpha == 4
-    assert config.lora_dropout == 0.25
+    assert config.lora_dropout == 0.0
     assert config.target_modules == {"q_proj", "v_proj"}
     assert all(
         parameter.requires_grad for name, parameter in loaded.named_parameters() if "lora_" in name
@@ -109,6 +108,32 @@ def test_topology_mismatch_fails_before_base_model_mutation(
     assert load_calls == 0
     assert type(base.q_proj) is nn.Linear
     assert type(base.v_proj) is nn.Linear
+
+
+def test_saved_dropout_fails_before_base_model_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adapters train without dropout, so one saved with it cannot warm-start."""
+
+    adapter_path = tmp_path / "adapter"
+    _save_lora_config(adapter_path)
+    _mutate_adapter_config(adapter_path, {"lora_dropout": 0.25})
+    load_calls = 0
+
+    def unexpected_load(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal load_calls
+        load_calls += 1
+        raise AssertionError("adapter weights must not load after a topology mismatch")
+
+    monkeypatch.setattr(peft.PeftModel, "from_pretrained", unexpected_load)
+    base = _TinyModel()
+
+    with pytest.raises(ValueError, match=r"dropout saved=0\.25 configured=0\.0"):
+        _load(base, adapter_path)
+
+    assert load_calls == 0
+    assert type(base.q_proj) is nn.Linear
 
 
 @pytest.mark.parametrize(
