@@ -147,7 +147,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch(
             ["p0", "p1"],
             group_size=2,
             metadata={"collector": "metadata"},
-            request_overrides={"seed": 5},
+            request_overrides={"negative_prompt": "blurry"},
             policy_version=7,
         ),
     )
@@ -156,7 +156,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch(
     request = bench.trace.requests[0]
     assert request.prompts == ["p0", "p1"]
     assert request.samples_per_prompt == 2
-    assert request.sampling["seed"] == 5
+    assert request.sampling["negative_prompt"] == "blurry"
     assert request.policy_version == 7
     call = bench.reward.calls[0]
     assert all(metadata["collector"] == "metadata" for metadata in call["metadata"])

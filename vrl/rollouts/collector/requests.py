@@ -25,7 +25,7 @@ class GenerationRequestBuilder:
 
     Callers hand over ready ``GenerationInput`` conditioning (or bare prompt
     strings) plus one opaque reward-metadata dict; this builder only applies
-    family defaults, sampling config and a driver-owned seed when unspecified.
+    family defaults, sampling config and a driver-owned seed.
     It never picks example fields out of
     an untyped kwargs dict — ``PromptExample.generation_input()`` /
     ``reward_metadata()`` own that mapping.
@@ -67,13 +67,13 @@ class GenerationRequestBuilder:
                 overrides, section="sampling"
             )
             sampling.update(section.model_dump(mode="python", exclude_unset=True))
-        if sampling.get("seed") is None:
-            # The online checkpoint captures the driver's Python RNG, not the
-            # remote workers' RNGs. Drawing the request seed here makes a
-            # resumed run (fresh worker processes) reproduce the same rollout
-            # noise as the uninterrupted one; an explicit config or override
-            # seed is honored and consumes nothing.
-            sampling["seed"] = random.getrandbits(63)
+        # The online checkpoint captures the driver's Python RNG, not the
+        # remote workers' RNGs. Drawing every request seed here makes a
+        # resumed run (fresh worker processes) reproduce the same rollout
+        # noise as the uninterrupted one. Sampling has no seed key of its
+        # own: one seed shared by a group with samples_per_generation_batch=1
+        # would start every member from the same initial latent.
+        sampling["seed"] = random.getrandbits(63)
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:

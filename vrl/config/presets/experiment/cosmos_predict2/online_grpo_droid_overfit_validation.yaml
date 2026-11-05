@@ -19,8 +19,8 @@
 #   can-it-climb validation. Fallback if rewards turn out all-mush: raise
 #   num_steps to 15 and KEEP the window at [0, 10] (flow_grpo's low-step-train /
 #   clean-tail trick) at ~1.5x gen cost.
-# - seedless rollouts + per-index eval seed: a fixed sampling.seed with
-#   samples_per_generation_batch=1 would make group members share the initial latent (the
+# - seedless rollouts + per-index eval seed: one seed shared by the group with
+#   samples_per_generation_batch=1 would make its members share the initial latent (the
 #   seed IS the same-latent mechanism), collapsing intra-group diversity to SDE
 #   exploration noise alone. Running seedless instead gives genuine init-latent
 #   (content) diversity at group_size 8; fixed eval stays paired via its own
@@ -108,7 +108,7 @@ rollout:
   samples_per_generation_batch: 1                # generation only: full-param 480p_93f OOMs at 4
                                       # (25.3GiB worker + 4.2GiB driver-resident); P1's 1.4x
                                       # larger-batch evidence measured this phase only
-  # Seedless rollouts (2026-07-07): NO per-row manifest seeds. A fixed seed would
+  # Seedless rollouts (2026-07-07): every request seed comes from the driver RNG. A fixed seed would
   # make every batch share the initial latent (the seed IS the same-latent
   # mechanism), so the group's only diversity was SDE noise paths — run10 showed
   # GRPO then optimizes path luck. Seedless gives genuine init-latent (content)

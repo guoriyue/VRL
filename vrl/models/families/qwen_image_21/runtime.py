@@ -41,9 +41,7 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
         item = generation_request.inputs[batch.prompt_index]
         if item.reference_video:
             raise ValueError("Qwen-Image-2.1 accepts reference images, not reference_video")
-        options = QwenImage21SamplingSection.revalidate(
-            generation_request.sampling, section="sampling"
-        )
+        options = QwenImage21SamplingSection.from_request(generation_request.sampling)
         return self.model.encode_prompt(
             item.prompt,
             params.model_request.negative_prompt or None,

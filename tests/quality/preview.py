@@ -21,16 +21,15 @@ def build_preview_request(
 ) -> Any:
     """Adapt one real training example into a one-image production request."""
 
-    overrides = dict(example.request_overrides)
-    # Preserve the current precedence: an explicit seed in the example's
-    # request_overrides wins; otherwise the deterministic preview seed is used.
-    overrides.setdefault("seed", seed)
     request = builder.build(
         [example.generation_input()],
         group_size=1,
         metadata=example.reward_metadata(),
-        request_overrides=overrides,
+        request_overrides=example.request_overrides,
     ).request
+    # The builder draws a fresh seed per request; the preview pins one so
+    # repeated previews of the same config are directly comparable.
+    request.sampling["seed"] = seed
     return request
 
 

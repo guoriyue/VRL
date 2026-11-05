@@ -7,6 +7,7 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field, StrictInt
@@ -22,10 +23,20 @@ class SamplingSection(ConfigBase):
     before it reaches a ``GenerationRequest``.
     """
 
-    # Usually a per-prompt request override (paired rollouts/evals); a YAML value
-    # seeds every request identically. The online collector draws unspecified
-    # seeds from the checkpointed driver RNG; direct generation owns its policy.
-    seed: StrictInt | None = None
+    @classmethod
+    def from_request[SectionT: SamplingSection](
+        cls: type[SectionT], sampling: Mapping[str, Any]
+    ) -> SectionT:
+        """Parse a ``GenerationRequest.sampling`` dict back into the family section.
+
+        The wire dict is the family's keys plus the request seed the collector
+        draws (``DenoiseRequest.seed``), which is engine-owned and not a field.
+        """
+
+        return cls.revalidate(
+            {key: value for key, value in sampling.items() if key != "seed"},
+            section="sampling",
+        )
 
 
 class DenoiseImageSamplingSection(SamplingSection):

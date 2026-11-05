@@ -35,7 +35,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
             ),
         ],
         3,
-        request_overrides={"seed": 7},
+        request_overrides={"negative_prompt": "blurry"},
         policy_version=11,
         metadata={"difficulty": "easy", "target_text": "HELLO"},
     )
@@ -44,10 +44,12 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
     assert collector_request.request.task == "t2i"
     assert collector_request.request.samples_per_prompt == 3
     assert collector_request.request.policy_version == 11
-    assert collector_request.request.sampling == {
+    sampling = dict(collector_request.request.sampling)
+    assert type(sampling.pop("seed")) is int
+    assert sampling == {
         "alpha": 1,
         "window": [0, 2],
-        "seed": 7,
+        "negative_prompt": "blurry",
     }
     assert collector_request.request.inputs[0].task_type == "text_to_image"
     assert collector_request.metadata == {
@@ -104,7 +106,7 @@ def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict(
     assert type(request.sampling["seed"]) is int
 
 
-def test_missing_rollout_seed_uses_checkpointed_driver_rng() -> None:
+def test_rollout_seed_comes_from_the_checkpointed_driver_rng() -> None:
     from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
 
     previous = capture_rng_state()
@@ -129,36 +131,3 @@ def test_missing_rollout_seed_uses_checkpointed_driver_rng() -> None:
         assert builder.config.request_sampling == {}
     finally:
         restore_rng_state(previous)
-
-
-@pytest.mark.parametrize(
-    ("sampling", "overrides", "expected"),
-    [
-        ({"seed": 0}, None, 0),
-        ({"seed": 7}, {"seed": 0}, 0),
-        ({}, {"seed": 123}, 123),
-    ],
-)
-def test_explicit_rollout_seed_does_not_consume_driver_rng(sampling, overrides, expected) -> None:
-    before = random.getstate()
-    builder = GenerationRequestBuilder(
-        entry=get_model_family_entry("cosmos-predict2.5"),
-        config=RolloutCollectorConfig(request_sampling=sampling),
-    )
-    request = builder.build(["prompt"], 2, request_overrides=overrides).request
-    assert request.sampling["seed"] == expected
-    assert random.getstate() == before
-
-
-def test_explicit_null_override_draws_a_fresh_rollout_seed() -> None:
-    before = random.getstate()
-    try:
-        builder = GenerationRequestBuilder(
-            entry=get_model_family_entry("cosmos-predict2.5"),
-            config=RolloutCollectorConfig(request_sampling={"seed": 7}),
-        )
-        request = builder.build(["prompt"], 2, request_overrides={"seed": None}).request
-        assert type(request.sampling["seed"]) is int
-        assert random.getstate() != before
-    finally:
-        random.setstate(before)

@@ -103,8 +103,6 @@ def _stack(
             "sampling.num_frames=8",
             "sampling.num_steps=3",
             "sampling.max_sequence_length=8",
-            # One fixed request seed: every collect draws the same rollout noise.
-            "sampling.seed=17",
             "rollout.sde.window_range=[0,3]",
             "rollout.n_samples_per_prompt=2",
             "rollout.prompts_per_batch=1",

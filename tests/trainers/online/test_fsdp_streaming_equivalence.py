@@ -27,6 +27,7 @@ from tests.rollouts.collector._helpers import real_collector
 from tests.trainers._strategy_policies import run_ranks
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.trainer import OnlineTrainer
@@ -35,8 +36,7 @@ from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
 _WORLD = 4
 _PROMPTS = [str(index) for index in range(2 * _WORLD)]
-# LoRA adapters over a BF16 base, global-std streaming, and one fixed request
-# seed so a prompt's rollout is the same in whichever process generates it.
+# LoRA adapters over a BF16 base and global-std streaming.
 _OVERRIDES = (
     "model.use_lora=true",
     "precision.training.dtype=bf16",
@@ -47,7 +47,6 @@ _OVERRIDES = (
     "rollout.n_samples_per_prompt=4",
     "rollout.samples_per_generation_batch=4",
     "actor.training_microbatch_size=4",
-    "sampling.seed=7",
 )
 
 
@@ -80,6 +79,16 @@ def _trainer(
 ) -> OnlineTrainer:
     """The online recipe's trainer wiring on tiny SANA under ``strategy``."""
 
+    # One fixed request seed in place of the collector's per-request draw, so a
+    # prompt's rollout is the same in whichever process generates it.
+    build = GenerationRequestBuilder.build
+
+    def build_pinned(self: GenerationRequestBuilder, *args: Any, **kwargs: Any) -> Any:
+        built = build(self, *args, **kwargs)
+        built.request.sampling["seed"] = 7
+        return built
+
+    monkeypatch.setattr(GenerationRequestBuilder, "build", build_pinned)
     bench = real_collector(
         monkeypatch,
         root,

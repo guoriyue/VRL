@@ -31,9 +31,7 @@ class QwenImageLayeredBatchExecutor(ReferenceConditionedBatches, DenoiseBatchExe
     def _options(generation_request: GenerationRequest) -> Any:
         from vrl.config.sampling_schema import QwenImageLayeredSamplingSection
 
-        return QwenImageLayeredSamplingSection.revalidate(
-            generation_request.sampling, section="sampling"
-        )
+        return QwenImageLayeredSamplingSection.from_request(generation_request.sampling)
 
     def encode_prompt_for_batch(
         self,

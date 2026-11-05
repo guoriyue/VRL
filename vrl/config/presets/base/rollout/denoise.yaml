@@ -14,7 +14,8 @@ rollout:
     window_size: 0
     window_range: [0, 10]
 
-  # Group-shared initial latent has no dedicated flag: a fixed sampling.seed with
-  # samples_per_generation_batch=1 makes group members share the initial latent (each batch
-  # re-seeds the prepare_sampling generator with the same seed). The seed IS the
-  # same-latent mechanism.
+  # Rollouts are seedless: the collector draws every request's seed from the
+  # checkpointed driver RNG, so group members start from different initial
+  # latents. (One seed shared by a group with samples_per_generation_batch=1
+  # would make them share the latent, since each batch re-seeds the
+  # prepare_sampling generator with the same seed.)
