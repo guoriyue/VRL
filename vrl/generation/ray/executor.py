@@ -75,43 +75,9 @@ class RayGenerationExecutor:
         """Map a result's producing rank id (or an engine id) to its engine."""
 
         for engine in self.engines:
-            if engine.engine_id == worker_id:
-                return engine
-            if any(rank.worker_id == worker_id for rank in engine.ranks):
+            if worker_id in (engine.engine_id, engine.rank.worker_id):
                 return engine
         return None
-
-    @staticmethod
-    def _select_request_rank_result(
-        rank_results: list[Any],
-    ) -> Recorded[StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard]:
-        """Return a stale discard, then an OOM, reported by any rank; else the primary's refs.
-
-        Each rank's result arrives with what it recorded; the chosen rank's
-        recording stays with it, so a successful engine reports the primary's.
-        """
-
-        if not all(
-            isinstance(recorded, Recorded)
-            and isinstance(
-                recorded.value, (StagedBatchRefs, RequestBatchOutOfMemory, StaleSlotDiscard)
-            )
-            for recorded in rank_results
-        ):
-            raise TypeError(
-                "pipelined engine ranks must return StagedBatchRefs, "
-                "RequestBatchOutOfMemory, or StaleSlotDiscard"
-            )
-        results = [recorded.value for recorded in rank_results]
-        for recorded, result in zip(rank_results, results, strict=True):
-            if isinstance(result, StaleSlotDiscard):
-                return recorded
-        if any(result.request_id != results[0].request_id for result in results[1:]):
-            raise RuntimeError("pipelined engine ranks returned different request identities")
-        for recorded, result in zip(rank_results, results, strict=True):
-            if isinstance(result, RequestBatchOutOfMemory):
-                return recorded
-        return rank_results[0]
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         """Execute one request.
@@ -154,7 +120,7 @@ class RayGenerationExecutor:
                 RayActorJob(
                     job_index=job_index,
                     worker_id=engine.engine_id,
-                    remote_method=engine.execute_batch(),
+                    remote_method=engine.remote("execute_batch"),
                     payload=envelope,
                 ),
             )
@@ -248,10 +214,7 @@ class RayGenerationExecutor:
                 RayActorJob(
                     job_index=job_index,
                     worker_id=engine.engine_id,
-                    remote_method=engine.remote(
-                        "execute_request_batches",
-                        combine=self._select_request_rank_result,
-                    ),
+                    remote_method=engine.remote("execute_request_batches"),
                     payload=request,
                     keyword_args={"sample_batches": batches},
                 )
@@ -280,10 +243,10 @@ class RayGenerationExecutor:
                     "pipelined generation request_id mismatch: "
                     f"{result.request_id!r} != {request.request_id!r}",
                 )
-            if result.worker_id not in {rank.worker_id for rank in engine.ranks}:
+            if result.worker_id != engine.rank.worker_id:
                 raise RuntimeError(
                     "pipelined generation rank mismatch: "
-                    f"{result.worker_id!r} is not a rank of engine {engine.engine_id!r}",
+                    f"{result.worker_id!r} is not the rank of engine {engine.engine_id!r}",
                 )
             if isinstance(result, RequestBatchOutOfMemory):
                 return result
@@ -294,7 +257,7 @@ class RayGenerationExecutor:
                     f"{result.batch_keys}, expected {expected_keys}",
                 )
             refs_by_key.update(zip(result.batch_keys, result.batch_refs, strict=True))
-        # Only a request every engine staged reports what its ranks recorded.
+        # Only a request every engine staged reports what its rank recorded.
         for recorded in recorded_results:
             unwrap(recorded)
         ordered_refs = [refs_by_key[batch.batch_key] for batch in sample_batches]
@@ -429,7 +392,7 @@ class RayGenerationExecutor:
                         RayActorJob(
                             job_index=len(retry_jobs),
                             worker_id=engine.engine_id,
-                            remote_method=engine.execute_batch(),
+                            remote_method=engine.remote("execute_batch"),
                             payload=child_envelope,
                         ),
                     )

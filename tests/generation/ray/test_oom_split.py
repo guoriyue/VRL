@@ -25,11 +25,8 @@ import vrl.generation.ray.launcher as launcher_module
 from tests.generation.ray._helpers import RaySanaRuntime, ray_sana_runtime
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import BatchMemoryReading, StaleSlotDiscard
-from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.finalizer import RayGenerationFinalizer
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.media_reference import MediaReference
 from vrl.utils.stats import recording
@@ -208,7 +205,7 @@ async def _fleet(
 
 def _histories(ray: Any, run: RaySanaRuntime) -> list[dict[str, list[Any]]]:
     engines = run.runtime._session.executor.engines
-    return ray.get([engine.ranks[0].actor.history.remote() for engine in engines])
+    return ray.get([engine.rank.actor.history.remote() for engine in engines])
 
 
 def _merges(ray: Any, run: RaySanaRuntime) -> list[int]:
@@ -216,23 +213,6 @@ def _merges(ray: Any, run: RaySanaRuntime) -> list[int]:
     return [
         count for merged in ray.get([h.actor.merges.remote() for h in handles]) for count in merged
     ]
-
-
-def _one_engine_of_every_rank(run: RaySanaRuntime) -> RayGenerationExecutor:
-    """Assemble the launched single-rank engines into ONE multi-rank engine.
-
-    A CPU fleet cannot group ranks (gloo rank groups need a GPU fleet), so each
-    real actor stands for one rank of the engine the executor drives.
-    """
-
-    session = run.runtime._session
-    engine = RayGenerationEngine("engine", [e.ranks[0] for e in session.executor.engines])
-    return RayGenerationExecutor(
-        engines=[engine],
-        gatherer=run.built.family.new_gatherer(),
-        actor_dispatcher=RayActorDispatcher(("engine",)),
-        generation_stall_timeout_s=30.0,
-    )
 
 
 @pytest.mark.gpu
@@ -259,25 +239,6 @@ async def test_failed_gather_rejects_misaligned_media_references(
     async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=1) as run:
         with pytest.raises(ValueError, match="has 2 rows, expected 1"):
             await run.runtime.generate(run.request(["p"], group_size=1, reward_media_refs=True))
-
-
-@_OOM_WIRE_FORMAT
-@pytest.mark.slow_test
-@pytest.mark.asyncio
-async def test_nonprimary_oom_retries_whole_engine(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    worker = _fault_worker(capacity={"rollout-0": 4, "rollout-1": 2})
-    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=4, engines=2) as run:
-        executor = _one_engine_of_every_rank(run)
-
-        with recording() as stats:
-            output = await executor.execute(run.request(["p"], group_size=4))
-
-        histories = _histories(local_ray, run)
-        assert [h["batch_calls"] for h in histories] == [[_key(0, 4), _key(0, 2), _key(2, 2)]] * 2
-        assert output.output.shape[0] == 4
-        assert stats.counters["generation.oom_splits"] == 1
 
 
 @_OOM_WIRE_FORMAT

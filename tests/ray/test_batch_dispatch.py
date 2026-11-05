@@ -698,7 +698,7 @@ class _ListGatherer:
 
 def _executor(actors: list[tuple[str, Any]]) -> RayGenerationExecutor:
     engines = [
-        RayGenerationEngine(worker_id, [RayActorHandle(worker_id=worker_id, actor=actor)])
+        RayGenerationEngine(worker_id, RayActorHandle(worker_id=worker_id, actor=actor))
         for worker_id, actor in actors
     ]
     return RayGenerationExecutor(

@@ -96,7 +96,7 @@ class RayGenerationLauncher:
             )
             self._validate_rank_gpu_ids(resources, actor_group.handles)
             engines = [
-                RayGenerationEngine(engine_id, [handle])
+                RayGenerationEngine(engine_id, handle)
                 for engine_id, handle in zip(engine_ids, actor_group.handles, strict=True)
             ]
             actor_dispatcher = RayActorDispatcher(

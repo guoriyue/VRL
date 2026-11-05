@@ -13,15 +13,14 @@ import.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any, Literal, get_args
 
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import GenerationRequest
-from vrl.utils.cuda_memory import is_cuda_out_of_memory, validate_parking_residual
-from vrl.utils.stats import Recorded
+from vrl.utils.cuda_memory import validate_parking_residual
 
 
 class StaleSlotDiscard(Exception):
@@ -176,54 +175,6 @@ class GenerationBatchResult:
     # real generation failure so the caller counts it as a stale discard, not an
     # error — see SPRINT_shadow_model_weight_sync.md.
     stale_slot: bool = False
-
-    @classmethod
-    def from_rank_results(
-        cls,
-        rank_results: list[Any],
-        *,
-        expected_worker_ids: Sequence[str],
-    ) -> Recorded[GenerationBatchResult]:
-        """Fold one generation batch's per-rank results into the result the driver acts on.
-
-        Every rank must return a ``GenerationBatchResult`` for the same request and
-        batch (and, when ``expected_worker_ids`` is given, its own worker id),
-        wrapped with what it recorded (the actor method is ``recorded``). A
-        terminal failure on any rank wins over another rank's retryable OOM or
-        graceful stale-slot discard, and keeps the reporting rank's identity, so
-        the executor's stale-slot and OOM handling still sees it; otherwise the
-        primary rank's result, with its recording, stands for the engine: an
-        engine reports one rank's stage timings, not their sum.
-        """
-
-        if not all(
-            isinstance(recorded, Recorded) and isinstance(recorded.value, cls)
-            for recorded in rank_results
-        ):
-            raise TypeError("generation engine ranks must return a recorded GenerationBatchResult")
-        results = [recorded.value for recorded in rank_results]
-        first = results[0]
-        if expected_worker_ids is not None:
-            for worker_id, result in zip(expected_worker_ids, results, strict=True):
-                if result.worker_id != worker_id:
-                    raise RuntimeError(f"rank {worker_id!r} returned another worker's result")
-        for result in results[1:]:
-            if result.request_id != first.request_id or result.batch != first.batch:
-                raise RuntimeError(
-                    "generation engine ranks returned different request/batch identities"
-                )
-        for recorded, result in zip(rank_results, results, strict=True):
-            if result.error and not result.stale_slot and not is_cuda_out_of_memory(result.error):
-                return recorded
-        for recorded, result in zip(rank_results, results, strict=True):
-            if result.stale_slot:
-                return recorded
-        for recorded, result in zip(rank_results, results, strict=True):
-            if result.error:
-                return recorded
-        if any(result.policy_version != first.policy_version for result in results[1:]):
-            raise RuntimeError("generation engine ranks returned different policy versions")
-        return rank_results[0]
 
 
 @dataclass(frozen=True, slots=True)

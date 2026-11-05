@@ -43,8 +43,8 @@ def _record_submissions(
     log: list[tuple[str, str, tuple[Any, ...], Any]] = []
     real_remote = RayGenerationEngine.remote
 
-    def remote(self: RayGenerationEngine, method_name: str, *, combine: Any = None) -> Any:
-        submit = real_remote(self, method_name, combine=combine)
+    def remote(self: RayGenerationEngine, method_name: str) -> Any:
+        submit = real_remote(self, method_name)
 
         def submitted(*args: Any, **kwargs: Any) -> Any:
             ref = submit(*args, **kwargs)
@@ -138,7 +138,7 @@ async def test_remote_update_puts_the_state_once_for_every_engine(
         # serves version 4: a batch stamped 4 runs on both.
         envelope = _envelope(ray_run.request(["a cat"], group_size=1, policy_version=4))
         results = local_ray.get(
-            [engine.ranks[0].actor.execute_batch.remote(envelope) for engine in session.engines],
+            [engine.rank.actor.execute_batch.remote(envelope) for engine in session.engines],
             timeout=60,
         )
         assert [result.value.error for result in results] == [None, None]
@@ -155,7 +155,7 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
         stalled = session.engines[1]
         # Another caller holds rollout-1's actor with a long generation, so its
         # install queues behind it while rollout-0 acknowledges.
-        busy = stalled.ranks[0].actor.execute_batch.remote(_envelope(_busy_request(ray_run)))
+        busy = stalled.rank.actor.execute_batch.remote(_envelope(_busy_request(ray_run)))
         session.worker_rpc_timeout_s = 0.5
         submissions = _record_submissions(monkeypatch)
         cancelled: list[Any] = []
@@ -317,7 +317,7 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
                     RayActorJob(
                         0,
                         busy_engine.engine_id,
-                        busy_engine.execute_batch(),
+                        busy_engine.remote("execute_batch"),
                         _envelope(_busy_request(ray_run)),
                     )
                 ],

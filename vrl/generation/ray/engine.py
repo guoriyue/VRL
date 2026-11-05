@@ -1,172 +1,67 @@
-"""One generation engine replica: driver-side composition of its rank actors.
+"""One generation engine replica: the driver-side handle on its rank actor.
 
 An engine is the data-parallel unit the driver talks to — the dispatch target,
-weight-sync target, and health-verdict unit. A rank is one per-GPU worker actor
-inside it (``RayGenerationWorker``). Engines may own multiple ranks; calls
-fan out to their rank actors and aggregate before returning to the dispatcher.
+weight-sync target, and health-verdict unit. Its rank is the per-GPU worker
+actor behind it (``RayGenerationWorker``); one engine owns one rank, so an
+engine call is that actor's call and its result is that rank's result.
 
 Lifecycle stays rank-level on purpose: launching, killing, and liveness-probing
 operate on rank actors (``RayActorGroup`` / the health monitor); the engine
-only derives the verdict "any dead rank == dead engine".
+carries the id the dispatcher, executor and session address it by, and vouches
+for its rank's parking report.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Sequence
-from functools import partial
+from collections.abc import Callable
 from typing import Any
 
-from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
+from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.operation_deadline import cancel_ray_refs
-from vrl.runtime_errors import TerminalRuntimeError
-
-
-class EngineCallRef:
-    """Awaitable aggregate over one engine call's per-rank Ray refs.
-
-    All rank awaitables must finish without raising. The combined result is
-    ``combine(results)`` (default: rank 0's result). Error payloads returned as
-    ordinary values need an explicit combiner; the default does not inspect them.
-    Any raised rank failure cancels the sibling refs and
-    re-raises immediately — waiting only on rank 0 would turn a crashed
-    non-zero rank into a hang once ranks run collectives, not into an error.
-
-    ``child_refs`` is the duck-typed surface ``cancel_ray_refs`` flattens, so
-    the generic pool can cancel an aggregate without importing this module.
-    """
-
-    __slots__ = ("_combine", "child_refs")
-
-    def __init__(
-        self,
-        refs: Sequence[Any],
-        *,
-        combine: Callable[[list[Any]], Any] | None = None,
-    ) -> None:
-        if not refs:
-            raise ValueError("EngineCallRef requires at least one rank ref")
-        self.child_refs = tuple(refs)
-        self._combine = combine
-
-    def __await__(self) -> Any:
-        return self._gather().__await__()
-
-    async def _gather(self) -> Any:
-        tasks = [asyncio.ensure_future(ref) for ref in self.child_refs]
-        try:
-            results = await asyncio.gather(*tasks)
-        except BaseException:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            cancel_ray_refs(None, self.child_refs, root_error=None)
-            raise
-        return results[0] if self._combine is None else self._combine(results)
 
 
 class RayGenerationEngine:
-    """Driver-side engine object over its rank actor handles.
+    """Driver-side engine object over its rank actor handle."""
 
-    The dispatcher, executor, weight sync, and session speak to this object;
-    it fans control-plane calls out to every rank and aggregates. The
-    single-rank case returns raw rank refs; multi-rank calls wait for all rank
-    refs before applying their result-combination policy.
-    """
+    __slots__ = ("engine_id", "rank")
 
-    __slots__ = ("engine_id", "ranks")
-
-    def __init__(self, engine_id: str, ranks: Sequence[RayActorHandle]) -> None:
+    def __init__(self, engine_id: str, rank: RayActorHandle) -> None:
         if not engine_id:
             raise ValueError("engine_id must be non-empty")
-        ranks = tuple(ranks)
-        if not ranks:
-            raise ValueError(f"engine {engine_id!r} requires at least one rank")
-        self.engine_id = engine_id
-        self.ranks = ranks
-
-    def remote(
-        self,
-        method_name: str,
-        *,
-        combine: Callable[[list[Any]], Any] | None = None,
-    ) -> Callable[..., Any]:
-        """Submission surface for the dispatcher: the returned callable submits
-        one call to every rank and returns a single awaitable ref.
-
-        ``combine`` is called only for multi-rank engines. It must implement
-        cross-rank aggregation; validation or transformation required for every
-        result belongs in the caller after awaiting the ref.
-
-        Single-rank engines return the raw rank ref and skip ``combine`` to
-        preserve the pool's completion/cancellation timing for the common case.
-        """
-
-        if len(self.ranks) == 1:
-            return getattr(self.ranks[0].actor, method_name).remote
-
-        def submit(*args: Any, **kwargs: Any) -> EngineCallRef:
-            refs = self._submit_rank_calls(method_name, *args, **kwargs)
-            return EngineCallRef(refs, combine=combine)
-
-        return submit
-
-    def execute_batch(self) -> Callable[..., Any]:
-        """``execute_batch`` submitter: the ranks' recorded results fold into one
-        ``GenerationBatchResult``, each rank vouched for by its own worker id."""
-
-        return self.remote(
-            "execute_batch",
-            combine=partial(
-                GenerationBatchResult.from_rank_results,
-                expected_worker_ids=[rank.worker_id for rank in self.ranks],
-            ),
-        )
-
-    def _submit_rank_calls(self, method_name: str, *args: Any, **kwargs: Any) -> list[Any]:
-        """Own rank refs until the complete fan-out can be handed to its waiter."""
-
-        refs: list[Any] = []
-        try:
-            for rank in self.ranks:
-                refs.append(getattr(rank.actor, method_name).remote(*args, **kwargs))
-        except BaseException as cause:
-            if not refs:
-                raise
-            error = TerminalRuntimeError(
-                f"engine {self.engine_id!r} partially submitted {method_name!r}: "
-                f"{len(refs)}/{len(self.ranks)} ranks received the call",
+        if not isinstance(rank, RayActorHandle):
+            raise TypeError(
+                f"engine {engine_id!r} requires one RayActorHandle, got {type(rank).__name__}",
             )
-            cancel_ray_refs(None, refs, root_error=error)
-            raise error from cause
-        return refs
+        self.engine_id = engine_id
+        self.rank = rank
 
-    async def sleep(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
-        """Park every rank and return its validated physical-memory evidence."""
+    def remote(self, method_name: str) -> Callable[..., Any]:
+        """Submission surface for the dispatcher: the rank actor's own ``.remote``,
+        so completion and cancellation timing are the rank's."""
 
-        refs = self._submit_rank_calls("sleep")
-        values = await asyncio.gather(*refs)
-        snapshots: list[WorkerMemoryParkingSnapshot] = []
-        for rank, value in zip(self.ranks, values, strict=True):
-            if not isinstance(value, WorkerMemoryParkingSnapshot):
-                raise TypeError(
-                    f"rank {rank.worker_id!r} returned invalid memory-parking "
-                    f"report {type(value).__name__}",
-                )
-            if value.worker_id != rank.worker_id:
-                raise RuntimeError(
-                    "mismatched rank memory-parking report: "
-                    f"expected={rank.worker_id!r} actual={value.worker_id!r}",
-                )
-            value.validate()
-            snapshots.append(value)
-        return tuple(snapshots)
+        return getattr(self.rank.actor, method_name).remote
+
+    async def sleep(self) -> WorkerMemoryParkingSnapshot:
+        """Park the rank and return its validated physical-memory evidence."""
+
+        value = await self.rank.actor.sleep.remote()
+        if not isinstance(value, WorkerMemoryParkingSnapshot):
+            raise TypeError(
+                f"rank {self.rank.worker_id!r} returned invalid memory-parking "
+                f"report {type(value).__name__}",
+            )
+        if value.worker_id != self.rank.worker_id:
+            raise RuntimeError(
+                "mismatched rank memory-parking report: "
+                f"expected={self.rank.worker_id!r} actual={value.worker_id!r}",
+            )
+        value.validate()
+        return value
 
     async def wake(self) -> None:
-        """Restore every parked rank onto its assigned GPU."""
+        """Restore the parked rank onto its assigned GPU."""
 
-        await asyncio.gather(*self._submit_rank_calls("wake"))
+        await self.rank.actor.wake.remote()
 
 
-__all__ = ["EngineCallRef", "RayGenerationEngine"]
+__all__ = ["RayGenerationEngine"]

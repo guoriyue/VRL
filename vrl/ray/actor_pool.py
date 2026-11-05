@@ -321,22 +321,13 @@ class RayActorDispatcher:
             # the linearization point: a call Ray reports finished already
             # happened (it may have committed a weight install), so let the
             # loop deliver its outcome before deciding between a completed
-            # result and a cancellation. An aggregate engine ref is finished
-            # when every rank ref is.
+            # result and a cancellation.
             unobserved = {task: ref for task, ref in waiters.items() if not task.done()}
             if unobserved:
-                rank_refs = {
-                    task: tuple(getattr(ref, "child_refs", (ref,)))
-                    for task, ref in unobserved.items()
-                }
-                flat = [child for children in rank_refs.values() for child in children]
-                finished, _ = require_ray().wait(flat, num_returns=len(flat), timeout=0)
+                refs = list(unobserved.values())
+                finished, _ = require_ray().wait(refs, num_returns=len(refs), timeout=0)
                 finished = set(finished)
-                settled = [
-                    task
-                    for task, children in rank_refs.items()
-                    if all(child in finished for child in children)
-                ]
+                settled = [task for task, ref in unobserved.items() if ref in finished]
                 if settled:
                     # A second cancellation while the settled wrappers deliver
                     # must not escape this handler: the bookkeeping below is

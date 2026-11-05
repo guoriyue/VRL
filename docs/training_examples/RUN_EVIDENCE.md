@@ -92,6 +92,5 @@ No model family registry, algorithm list, or second RNG checkpoint format is add
 This policy applies to the trainer process, including local code that uses its
 global RNGs. It does not configure remote Ray actors, external reward services,
 independently constructed NumPy Generator instances, or opaque backend RNGs.
-The existing multi-rank rollout entropy broadcast remains unchanged. Actual
-repeatability must therefore be tested across the complete selected recipe;
+Actual repeatability must therefore be tested across the complete selected recipe;
 strict trainer flags alone are insufficient.

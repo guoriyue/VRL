@@ -6,7 +6,7 @@ only references. Merging (the gatherer's concatenation and trajectory build)
 then runs here, in a process without a model, so the rank is free for the next
 request while this one is assembled; the media references are concatenated,
 never fetched or staged again. One
-finalizer is launched per engine, pinned to the engine's primary bundle; the
+finalizer is launched per engine, pinned to the engine's bundle; the
 executor hands each request to whichever finalizer is free, so with several
 engines the merge reads part of its input from other nodes' object stores.
 """

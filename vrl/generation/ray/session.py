@@ -48,17 +48,17 @@ class RayGenerationSession:
         # Own copies: shutdown empties them as actors die, which must not
         # change what the executor dispatches over.
         self.engines = list(executor.engines)
-        self.rank_handles = [rank for engine in self.engines for rank in engine.ranks]
+        self.rank_handles = [engine.rank for engine in self.engines]
         # Finalizers hold no policy: they are killed with the ranks, never released.
         self.finalizer_handles = list(executor.finalizers)
         self._release_wait_task: asyncio.Task[Any] | None = None
         self._force_close = False
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
-        """Broadcast ``update_weights`` to every rank of every generation engine.
+        """Broadcast ``update_weights`` to every generation engine.
 
-        The engine call fans out to all its ranks and completes when every rank
-        has installed the payload; a rank failure fails the whole sync.
+        The sync completes when every engine has installed the payload; one
+        engine's failure fails the whole sync.
         """
 
         engines = self.executor.engines
@@ -87,7 +87,7 @@ class RayGenerationSession:
         )
 
     async def sleep_engines(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
-        """Park every engine and return validated per-rank physical evidence."""
+        """Park every engine and return each one's validated physical evidence."""
 
         if not self.engines:
             return ()
@@ -97,7 +97,7 @@ class RayGenerationSession:
             context=f"engines={len(self.engines)}",
         )
         try:
-            per_engine = await asyncio.wait_for(
+            snapshots = await asyncio.wait_for(
                 asyncio.gather(*[engine.sleep() for engine in self.engines]),
                 timeout=deadline.remaining_s(),
             )
@@ -107,10 +107,10 @@ class RayGenerationSession:
             if deadline.remaining_s() > 0:
                 raise
             raise deadline.timeout_error() from cause
-        return tuple(snapshot for snapshots in per_engine for snapshot in snapshots)
+        return tuple(snapshots)
 
     async def wake_engines(self) -> None:
-        """Restore every parked engine onto its assigned GPUs."""
+        """Restore every parked engine onto its assigned GPU."""
 
         if not self.engines:
             return
