@@ -90,7 +90,6 @@ def _run_rank(
         strategy = FSDPStrategy(
             context,
             precision_policy=config.precision_policy,
-            reshard_after_forward=config.reshard_after_forward,
             cpu_offload=config.cpu_offload,
             shard_trainable_only=config.shard_trainable_only,
         )

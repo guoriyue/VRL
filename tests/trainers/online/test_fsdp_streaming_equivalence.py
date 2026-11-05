@@ -174,7 +174,6 @@ def _rank(rank: int, world_size: int, port: int, queue: Any, root: str, uneven: 
         strategy = FSDPStrategy(
             DistributedTrainingContext("fsdp", rank, world_size, torch.device("cpu")),
             precision_policy="none",
-            reshard_after_forward=True,
             cpu_offload=False,
             shard_trainable_only=True,
         )

@@ -96,7 +96,6 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
             model,
             mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
-            reshard_after_forward=True,
         )
         frozen_before = {
             name: value
@@ -186,7 +185,6 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
             model,
             mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
-            reshard_after_forward=True,
         )
         params = list(model.parameters())
 
@@ -330,7 +328,6 @@ def _run_checkpoint_ema_export_rank(
             model,
             mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
-            reshard_after_forward=True,
         )
         bundle = type(
             "_Bundle",
@@ -354,7 +351,6 @@ def _run_checkpoint_ema_export_rank(
         strategy = FSDPStrategy(
             ctx,
             precision_policy="none",
-            reshard_after_forward=True,
             cpu_offload=False,
         )
         if rank == fail_swap_rank:

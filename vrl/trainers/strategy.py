@@ -466,7 +466,6 @@ class FSDPStrategy(TrainerParking):
         context: DistributedTrainingContext,
         *,
         precision_policy: str,
-        reshard_after_forward: bool,
         cpu_offload: bool,
         shard_trainable_only: bool = False,
         ulysses_degree: int = 1,
@@ -475,7 +474,6 @@ class FSDPStrategy(TrainerParking):
         self.context = context
         self.collectives = TrainingCollectives(context)
         self._precision_policy = precision_policy
-        self._reshard_after_forward = reshard_after_forward
         self._cpu_offload = cpu_offload
         self._parking_directory = parking_directory
         self._shard_trainable_only = shard_trainable_only
@@ -603,7 +601,6 @@ class FSDPStrategy(TrainerParking):
                 handle,
                 mesh=mesh,
                 mp_policy=mixed_precision_policy(self._precision_policy),
-                reshard_after_forward=self._reshard_after_forward,
                 cpu_offload=self._cpu_offload,
                 ignored_params=(
                     {p for p in handle.parameters() if not p.requires_grad}
@@ -999,7 +996,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             context,
             ulysses_degree=fsdp.context_parallel.ulysses_degree,
             precision_policy=fsdp.precision_policy,
-            reshard_after_forward=fsdp.reshard_after_forward,
             cpu_offload=fsdp.cpu_offload,
             shard_trainable_only=fsdp.shard_trainable_only,
             parking_directory=(

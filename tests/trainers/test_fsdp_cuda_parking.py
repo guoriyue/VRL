@@ -99,7 +99,6 @@ def _equivalence_worker(rank, port, shard_trainable_only=True, parking_directory
     strategy = FSDPStrategy(
         DistributedTrainingContext("fsdp", rank, 4, device),
         precision_policy="none",
-        reshard_after_forward=True,
         cpu_offload=False,
         shard_trainable_only=shard_trainable_only,
         parking_directory=parking_directory,
@@ -170,7 +169,6 @@ def _worker(rank, port):
     strategy = FSDPStrategy(
         DistributedTrainingContext("fsdp", rank, 4, device),
         precision_policy="none",
-        reshard_after_forward=True,
         cpu_offload=False,
         shard_trainable_only=True,
     )

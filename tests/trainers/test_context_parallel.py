@@ -137,7 +137,6 @@ def test_backward_scales_the_loss_by_the_cp_size() -> None:
     strategy = FSDPStrategy(
         ctx,
         precision_policy="none",
-        reshard_after_forward=True,
         cpu_offload=False,
         ulysses_degree=2,
     )

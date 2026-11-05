@@ -171,7 +171,6 @@ def apply_fsdp(
     *,
     mesh: Any,
     mp_policy: Any,
-    reshard_after_forward: bool = True,
     cpu_offload: bool = False,
     ignored_params: set[nn.Parameter] | None = None,
 ) -> nn.Module:
@@ -179,9 +178,9 @@ def apply_fsdp(
 
     Per-block then root: each block becomes its own FSDP module (so its
     params/grads reshard independently) and the root call wraps whatever is left.
-    ``reshard_after_forward=True`` is ZeRO-3 (re-gather params each forward, lowest
-    memory); ``False`` trades memory for fewer all-gathers. After this the handle's
-    parameters are DTensors sharded over ``mesh``; its ``forward`` is unchanged.
+    Always ``reshard_after_forward=True``, ZeRO-3 (re-gather params each forward,
+    lowest memory). After this the handle's parameters are DTensors sharded over
+    ``mesh``; its ``forward`` is unchanged.
     """
 
     from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
@@ -196,14 +195,14 @@ def apply_fsdp(
             block,
             mesh=mesh,
             mp_policy=mp_policy,
-            reshard_after_forward=reshard_after_forward,
+            reshard_after_forward=True,
             **offload_kwargs,
         )
     fully_shard(
         handle,
         mesh=mesh,
         mp_policy=mp_policy,
-        reshard_after_forward=reshard_after_forward,
+        reshard_after_forward=True,
         **offload_kwargs,
     )
     return handle

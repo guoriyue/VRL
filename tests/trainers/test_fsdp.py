@@ -82,7 +82,6 @@ def _fsdp_strategy(
     return FSDPStrategy(
         context,
         precision_policy=config.precision_policy,
-        reshard_after_forward=config.reshard_after_forward,
         cpu_offload=config.cpu_offload,
         shard_trainable_only=config.shard_trainable_only,
     )
@@ -542,7 +541,6 @@ def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
     FSDPStrategy(
         _cpu_fsdp_context(),
         precision_policy="actor",
-        reshard_after_forward=True,
         cpu_offload=False,
     ).prepare_model(policy)
     output = policy.transformer(torch.randn(2, 4, dtype=torch.bfloat16))

@@ -82,7 +82,6 @@ def _strategy() -> FSDPStrategy:
             device=torch.device("cpu"),
         ),
         precision_policy="none",
-        reshard_after_forward=True,
         cpu_offload=False,
     )
 

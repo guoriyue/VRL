@@ -113,7 +113,6 @@ def _run_rank(rank: int, world_size: int, port: int, queue) -> None:
                     device=torch.device("cpu"),
                 ),
                 precision_policy="none",
-                reshard_after_forward=True,
                 cpu_offload=False,
             )
             strategy.prepare_model(policy)

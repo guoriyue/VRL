@@ -144,7 +144,6 @@ def _fsdp_strategy(
     return FSDPStrategy(
         context,
         precision_policy=config.precision_policy,
-        reshard_after_forward=config.reshard_after_forward,
         cpu_offload=config.cpu_offload,
     )
 
