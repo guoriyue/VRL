@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from vrl.algorithms.logprob_mismatch import (
+    RS_LOG_RATIO_LOW,
     LogprobMismatchStats,
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -110,9 +111,6 @@ def test_aggregate_weights_means_but_preserves_max_and_finite() -> None:
 # Reject-sampling (RS) config validation
 # ---------------------------------------------------------------------------
 
-LN_HALF = math.log(0.5)
-LN_TWO = math.log(2.0)
-
 
 class TestRejectSampleConfig:
     """RS knobs sit on the same PrecisionCorrectionConfig as TIS (orthogonal)."""
@@ -124,12 +122,6 @@ class TestRejectSampleConfig:
     def test_unknown_rs_mode_rejected(self) -> None:
         with pytest.raises(ValueError, match="rs_mode"):
             PrecisionCorrectionConfig(rs_mode="seq_median_k1")
-
-    def test_inverted_band_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"rs_log_ratio_low.*<.*rs_log_ratio_high"):
-            PrecisionCorrectionConfig(
-                rs_mode="seq_mean_k1", rs_log_ratio_low=1.0, rs_log_ratio_high=0.0
-            )
 
     def test_recompute_on_uses_the_detached_replay_log_prob_as_behavior(self) -> None:
         new = torch.tensor([0.5, -1.0], requires_grad=True)
@@ -150,15 +142,12 @@ class TestRejectSampleConfig:
 
 
 class TestRejectSampleMask:
-    """apply_rejection_sample_mask judges the LOG-RATIO (not the IS weight)."""
+    """apply_rejection_sample_mask judges the LOG-RATIO (not the IS weight)
+    against the fixed band ln 0.5 .. ln 2."""
 
     @staticmethod
     def _cfg(mode: str) -> PrecisionCorrectionConfig:
-        return PrecisionCorrectionConfig(
-            rs_mode=mode,
-            rs_log_ratio_low=LN_HALF,
-            rs_log_ratio_high=LN_TWO,
-        )
+        return PrecisionCorrectionConfig(rs_mode=mode)
 
     def test_off_returns_none(self) -> None:
         out = apply_rejection_sample_mask(torch.tensor([0.0, 5.0]), self._cfg("off"))
@@ -172,7 +161,7 @@ class TestRejectSampleMask:
 
     def test_per_sample_modes_coincide(self) -> None:
         # No sequence axis: seq_mean and seq_max give the identical per-sample mask.
-        log_ratio = torch.tensor([0.0, math.log(3.0), LN_HALF])
+        log_ratio = torch.tensor([0.0, math.log(3.0), RS_LOG_RATIO_LOW])
         mean = apply_rejection_sample_mask(log_ratio, self._cfg("seq_mean_k1"))
         mx = apply_rejection_sample_mask(log_ratio, self._cfg("seq_max_k1"))
         assert torch.equal(mean, mx)

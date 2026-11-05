@@ -18,7 +18,7 @@ from vrl.algorithms.grpo.continuous import (
     GRPOGuard,
     GRPOGuardConfig,
 )
-from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+from vrl.algorithms.logprob_mismatch import TIS_IMP_WEIGHT_CAP, PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
 
@@ -212,18 +212,15 @@ def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
         dt=torch.full((1, 1, 1, 1), 0.1),
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
-    algo.config.precision_correction = PrecisionCorrectionConfig(
-        tis_mode="truncate",
-        tis_imp_weight_cap=1.5,
-    )
+    algo.config.precision_correction = PrecisionCorrectionConfig(tis_mode="truncate")
     loss, _ = algo.compute_loss(_input(sig, torch.tensor([1.0])))
-    assert loss.item() == pytest.approx(-1.5, rel=1e-5)  # capped, not ~-20
+    assert loss.item() == pytest.approx(-TIS_IMP_WEIGHT_CAP, rel=1e-5)  # capped, not ~-20
 
 
 def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
     # RS drops a whole sample whose rollout->replay log-ratio is out of band, even
     # though the trust region (inf threshold) keeps everything. Sample 2's drift
-    # (log-ratio 5) is far outside [-1, 1] -> rejected.
+    # (log-ratio 5) is far outside the ln 0.5 .. ln 2 band -> rejected.
     n = 4
     sig = _signals(
         log_prob=torch.tensor([0.0, 0.0, 5.0, 0.0]),
@@ -234,11 +231,7 @@ def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
         dt=torch.full((n, 1, 1, 1), 0.1),
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
-    algo.config.precision_correction = PrecisionCorrectionConfig(
-        rs_mode="seq_mean_k1",
-        rs_log_ratio_low=-1.0,
-        rs_log_ratio_high=1.0,
-    )
+    algo.config.precision_correction = PrecisionCorrectionConfig(rs_mode="seq_mean_k1")
     _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
     assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 
@@ -258,11 +251,7 @@ def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
         dt=torch.ones(n, 1, 2, 2),
     )
     algo = GRPOGuard(GRPOGuardConfig())
-    algo.config.precision_correction = PrecisionCorrectionConfig(
-        rs_mode="seq_mean_k1",
-        rs_log_ratio_low=-1.0,
-        rs_log_ratio_high=1.0,
-    )
+    algo.config.precision_correction = PrecisionCorrectionConfig(rs_mode="seq_mean_k1")
     _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
     assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 

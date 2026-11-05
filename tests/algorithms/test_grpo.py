@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+from vrl.algorithms.logprob_mismatch import TIS_IMP_WEIGHT_CAP, PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import FlowSDESignal, SegmentSignal, TrajectorySignalBatch
 
@@ -217,20 +217,20 @@ class TestGRPOTruncatedImportanceSampling:
     def test_truncate_caps_unclipped_negative_advantage_gradient(self) -> None:
         """truncate caps the ratio, so the dangerous adv<0 unclipped branch is bounded.
 
-        Without TIS, adv=-3 at ratio=e gives loss -adv*e ≈ 8.15. With cap=2.0 the
-        ratio is truncated to 2.0 → loss -adv*2.0 = 6.0.
+        Without TIS, adv=-3 at ratio=e gives loss -adv*e ≈ 8.15. With the cap
+        (2.0 < e) the ratio is truncated to the cap → loss -adv*cap = 6.0.
         """
-        cap = 2.0
-        grpo = self._grpo(tis_mode="truncate", tis_imp_weight_cap=cap)
+        assert math.e > TIS_IMP_WEIGHT_CAP
+        grpo = self._grpo(tis_mode="truncate")
         signals = _flow_signals(log_prob=torch.full((1,), 1.0), old_log_prob=torch.zeros(1))
         adv = torch.tensor([-3.0])
         loss, metrics = grpo.compute_loss(AlgorithmInput(signals=signals, advantages=adv))
-        assert loss.item() == pytest.approx(-adv.item() * cap)
+        assert loss.item() == pytest.approx(-adv.item() * TIS_IMP_WEIGHT_CAP)
         assert metrics.update.tis_clip_fraction == pytest.approx(1.0)
 
     def test_truncate_leaves_in_range_samples_untouched(self) -> None:
         """A ratio below the cap is unchanged; clip fraction reflects only altered ones."""
-        grpo = self._grpo(tis_mode="truncate", tis_imp_weight_cap=2.0)
+        grpo = self._grpo(tis_mode="truncate")
         # ratio: e (>cap, truncated) and 1.0 (untouched)
         signals = _flow_signals(log_prob=torch.tensor([1.0, 0.0]), old_log_prob=torch.zeros(2))
         _, metrics = grpo.compute_loss(
@@ -240,7 +240,7 @@ class TestGRPOTruncatedImportanceSampling:
 
     def test_mask_drops_out_of_range_samples_from_mean(self) -> None:
         """mask mode rejects catastrophic-drift samples entirely (masked mean)."""
-        grpo = self._grpo(tis_mode="mask", tis_imp_weight_cap=2.0)
+        grpo = self._grpo(tis_mode="mask")
         # sample0 ratio=e>cap rejected; sample1 ratio=1 kept → loss = -adv1*1 = -1.0
         signals = _flow_signals(log_prob=torch.tensor([1.0, 0.0]), old_log_prob=torch.zeros(2))
         loss, metrics = grpo.compute_loss(
@@ -249,16 +249,9 @@ class TestGRPOTruncatedImportanceSampling:
         assert loss.item() == pytest.approx(-1.0)
         assert metrics.update.tis_clip_fraction == pytest.approx(0.5)
 
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            {"tis_mode": "nope"},
-            {"tis_mode": "clip", "tis_clip_low": 2.0, "tis_imp_weight_cap": 2.0},
-        ],
-    )
-    def test_invalid_precision_correction_config_raises(self, kwargs) -> None:
-        with pytest.raises(ValueError):
-            PrecisionCorrectionConfig(**kwargs)
+    def test_unknown_tis_mode_raises(self) -> None:
+        with pytest.raises(ValueError, match="tis_mode"):
+            PrecisionCorrectionConfig(tis_mode="nope")
 
 
 class TestGRPORejectSampling:
@@ -290,9 +283,10 @@ class TestGRPORejectSampling:
         assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.5)
 
     def test_rs_and_tis_combine_in_denominator(self) -> None:
-        # ratios [3, 1.5, 1]; TIS(mask,cap=2) drops s0; RS(band) also drops s0.
-        # kept = {s1, s2}; loss = mean over the two kept per-sample losses.
-        grpo = self._grpo(tis_mode="mask", tis_imp_weight_cap=2.0, rs_mode="seq_mean_k1")
+        # ratios [3, 1.5, 1]; TIS(mask, cap 2) drops s0; RS(band up to ln 2)
+        # also drops s0. kept = {s1, s2}; loss = mean over the two kept
+        # per-sample losses.
+        grpo = self._grpo(tis_mode="mask", rs_mode="seq_mean_k1")
         signals = _flow_signals(
             log_prob=torch.tensor([math.log(3.0), math.log(1.5), 0.0]),
             old_log_prob=torch.zeros(3),

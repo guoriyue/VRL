@@ -29,6 +29,23 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import torch
 
+# TIS bound on the importance weight exp(replay - rollout). Two is the cap the
+# TIS reference setting uses for a bf16/fp8 rollout against a higher-precision
+# trainer: a weight above twice its on-policy value is precision drift on a
+# single element, not a policy change worth that gradient. No run has retuned
+# it.
+TIS_IMP_WEIGHT_CAP = 2.0
+# Lower bound of the clip/mask modes. Zero leaves the lower side open, so
+# ``clip`` equals ``truncate`` and ``mask`` drops only inflated weights: a
+# deflated weight shrinks its own gradient and needs no cut.
+TIS_CLIP_LOW = 0.0
+# RS acceptance band [low, high] on the sequence log-ratio replay - rollout,
+# stored as log-ratio numbers (not the verl-omni "low_high" string). A factor
+# of two either way (ln 0.5 .. ln 2) is verl-omni's recommended LLM preset;
+# a sequence drifting further is treated as off-policy, not as kernel noise.
+RS_LOG_RATIO_LOW = math.log(0.5)
+RS_LOG_RATIO_HIGH = math.log(2.0)
+
 
 @dataclass(frozen=True, slots=True)
 class LogprobMismatchStats:
@@ -137,7 +154,8 @@ class PrecisionCorrectionConfig:
 
     **TIS** (per-element weight magnitude). ``off`` keeps legacy behavior;
     ``truncate`` = one-sided upper cap; ``clip`` = two-sided; ``mask`` = drop
-    out-of-range elements entirely. All three are ``clamp``-style: an element
+    out-of-range elements entirely (bounds ``TIS_CLIP_LOW`` and
+    ``TIS_IMP_WEIGHT_CAP``). All three are ``clamp``-style: an element
     outside the band contributes no gradient through the ratio (the clamped
     value is a constant), so TIS bounds the weight by cutting it off, not by
     scaling it. Judges the IS *weight* ``exp(replay - rollout)``: catches a
@@ -145,8 +163,9 @@ class PrecisionCorrectionConfig:
 
     **RS** (whole-sequence off-policy rejection). Judges the *log-ratio*
     ``replay - rollout`` aggregated over the sequence and rejects the entire
-    sample (weight 0) when its trajectory drift is out of band — the complement
-    to TIS's "keep but clamp". Modes are ``seq_mean_k1`` / ``seq_max_k1`` only:
+    sample (weight 0) when its trajectory drift is out of band
+    (``RS_LOG_RATIO_LOW`` .. ``RS_LOG_RATIO_HIGH``) — the complement to TIS's
+    "keep but clamp". Modes are ``seq_mean_k1`` / ``seq_max_k1`` only:
     on diffusion the SDE window is short (``sde_window_size`` is usually 2), so a
     per-token statistic has near-zero power (each per-step stat is already a mean
     over thousands of latent dims). ``token_*`` RS is intentionally *not*
@@ -183,15 +202,8 @@ class PrecisionCorrectionConfig:
     """
 
     tis_mode: str = "off"  # "off" | "truncate" | "clip" | "mask"
-    tis_imp_weight_cap: float = 2.0  # upper bound C on the weight
-    tis_clip_low: float = 0.0  # lower bound (clip/mask modes)
     # RS axis (orthogonal to TIS). Whole-sequence rejection on the log-ratio.
     rs_mode: str = "off"  # "off" | "seq_mean_k1" | "seq_max_k1"
-    # Log-ratio acceptance band [low, high]. Stored as log-ratio numbers (not the
-    # verl-omni "low_high" string), defaulting to ln(0.5)/ln(2.0) ~= [-0.69, 0.69]
-    # to match verl-omni's recommended LLM preset.
-    rs_log_ratio_low: float = math.log(0.5)
-    rs_log_ratio_high: float = math.log(2.0)
     # Bypass (off): the rollout-recorded old log-prob is the PPO "old".
     # Recompute (on): the trainer's own pre-update replay forward is the "old"
     # (ratio == 1); see the class docstring for when that approximation holds.
@@ -202,15 +214,6 @@ class PrecisionCorrectionConfig:
             raise ValueError(
                 "precision_correction.tis_mode must be off/truncate/clip/mask; "
                 f"got {self.tis_mode!r}",
-            )
-        if float(self.tis_imp_weight_cap) <= 0:
-            raise ValueError("precision_correction.tis_imp_weight_cap must be > 0")
-        if float(self.tis_clip_low) < 0:
-            raise ValueError("precision_correction.tis_clip_low must be >= 0")
-        if self.tis_mode != "off" and float(self.tis_clip_low) >= float(self.tis_imp_weight_cap):
-            raise ValueError(
-                "precision_correction.tis_clip_low must be < tis_imp_weight_cap "
-                f"(got low={self.tis_clip_low}, cap={self.tis_imp_weight_cap})",
             )
         if self.rs_mode not in ("off", "seq_mean_k1", "seq_max_k1"):
             if str(self.rs_mode).startswith("token"):
@@ -223,11 +226,6 @@ class PrecisionCorrectionConfig:
             raise ValueError(
                 "precision_correction.rs_mode must be off/seq_mean_k1/seq_max_k1; "
                 f"got {self.rs_mode!r}",
-            )
-        if self.rs_mode != "off" and float(self.rs_log_ratio_low) >= float(self.rs_log_ratio_high):
-            raise ValueError(
-                "precision_correction.rs_log_ratio_low must be < rs_log_ratio_high "
-                f"(got low={self.rs_log_ratio_low}, high={self.rs_log_ratio_high})",
             )
         if self.recompute_old_logprob not in ("off", "on"):
             raise ValueError(
@@ -268,7 +266,7 @@ def apply_truncated_importance_weight(
     mode = config.tis_mode
     if mode == "off":
         return ratio, None
-    cap, low = config.tis_imp_weight_cap, config.tis_clip_low
+    cap, low = TIS_IMP_WEIGHT_CAP, TIS_CLIP_LOW
     if mode == "mask":
         keep = (ratio <= cap) & (ratio >= low)
         return ratio, keep.to(ratio.dtype)
@@ -310,7 +308,7 @@ def apply_rejection_sample_mask(
     mode = config.rs_mode
     if mode == "off":
         return None
-    low, high = config.rs_log_ratio_low, config.rs_log_ratio_high
+    low, high = RS_LOG_RATIO_LOW, RS_LOG_RATIO_HIGH
 
     if log_ratio.dim() <= 1:
         # Continuous diffusion supplies one scalar per sample for the current
