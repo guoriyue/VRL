@@ -409,7 +409,6 @@ def test_runtime_only_fields_do_not_change_wan_identity() -> None:
         _build(
             family="wan_2_1_i2v",
             offload=None,
-            expert_lifecycle_profiling=False,
             trainable_transformers=["transformer_2"],
             memory={"vae_decode": {"tiling": False}},
             torch_compile={"enable": False},
@@ -419,7 +418,6 @@ def test_runtime_only_fields_do_not_change_wan_identity() -> None:
         _build(
             family="wan_2_1_i2v",
             offload={},
-            expert_lifecycle_profiling=True,
             trainable_transformers=["transformer_2"],
             memory={"vae_decode": {"tiling": True}},
             torch_compile={"enable": True, "mode": "reduce-overhead"},

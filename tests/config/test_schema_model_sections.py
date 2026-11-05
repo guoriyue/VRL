@@ -148,7 +148,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "expert_lifecycle_profiling": True,
+                "trainable_transformers": ["transformer_2"],
                 "offload": {},
             },
         },
@@ -157,7 +157,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
     parsed = parse_config(cfg)
 
     assert isinstance(parsed.model, WanModelSection)
-    assert parsed.model.expert_lifecycle_profiling is True
+    assert parsed.model.trainable_transformers == ["transformer_2"]
     assert parsed.model_dump()["model"]["offload"] is not None
 
 

@@ -29,10 +29,6 @@ class WanModelSection(ModelSection):
         autocast_adapter_dtype=False,
     )
 
-    expert_lifecycle_profiling: bool = Field(
-        default=False,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
     trainable_transformers: (
         list[WanTransformerName] | Literal["all", "both"] | WanTransformerName | None
     ) = Field(

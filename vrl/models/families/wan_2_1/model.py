@@ -30,7 +30,6 @@ Differences from SD3:
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import random
 import sys
@@ -120,7 +119,6 @@ class WanT2VModel(DiffusersModelBase):
         self._init_wan_state(
             boundary_ratio=boundary_ratio,
             trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=False,
         )
 
     def prepare_replay(self, build: ModelBuild) -> None:
@@ -142,9 +140,6 @@ class WanT2VModel(DiffusersModelBase):
             )
         self._boundary_ratio = boundary_ratio
         self._trainable_transformer_names = trainable_transformers
-        self._expert_lifecycle_profiling = bool(
-            (build.model_config or {}).get("expert_lifecycle_profiling", False),
-        )
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
@@ -157,14 +152,13 @@ class WanT2VModel(DiffusersModelBase):
         *,
         boundary_ratio: float | None,
         trainable_transformers: tuple[WanTransformerName, ...] | None,
-        expert_lifecycle_profiling: bool,
     ) -> None:
         """The Wan-owned state every constructor must establish.
 
         The model's constructor and the pipeline class's set up different
-        module roots, but the expert topology and profiling state are the same
-        object graph; one initializer keeps a field added here from being
-        missed by the other constructor.
+        module roots, but the expert topology is the same object graph; one
+        initializer keeps a field added here from being missed by the other
+        constructor.
 
         ``trainable_transformers`` is the canonical tuple from
         ``wan_topology_from_build``; None selects the topology default.
@@ -176,8 +170,6 @@ class WanT2VModel(DiffusersModelBase):
             if trainable_transformers is None
             else tuple(trainable_transformers)
         )
-        self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
-        self._last_expert_name: str | None = None
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
@@ -299,9 +291,9 @@ class WanT2VModel(DiffusersModelBase):
         self,
         state: WanT2VSamplingState | WanI2VSamplingState,
         step_idx: int,
-    ) -> tuple[str, Any, float]:
+    ) -> tuple[Any, float]:
         if state.boundary_ratio is None:
-            return "transformer", self.transformer, state.guidance_scale
+            return self.transformer, state.guidance_scale
         if state.num_train_timesteps is None:
             raise ValueError(
                 "Wan dual-stage routing requires scheduler.config.num_train_timesteps",
@@ -327,8 +319,8 @@ class WanT2VModel(DiffusersModelBase):
             transformer_2 = self.transformer_2
             if transformer_2 is None:
                 raise RuntimeError("Wan dual-stage sampling requires transformer_2")
-            return "transformer_2", transformer_2, state.guidance_scale
-        return "transformer", self.transformer, state.guidance_scale
+            return transformer_2, state.guidance_scale
+        return self.transformer, state.guidance_scale
 
     def forward_step(
         self,
@@ -348,10 +340,7 @@ class WanT2VModel(DiffusersModelBase):
 
         bsz = state.latents.shape[0]
         timestep = state.timesteps[step_idx]
-        expert_name, transformer, guidance_scale = self._transformer_for_step(
-            state,
-            step_idx,
-        )
+        transformer, guidance_scale = self._transformer_for_step(state, step_idx)
         td = getattr(transformer, "dtype", None)
         if td is None:
             try:
@@ -373,60 +362,15 @@ class WanT2VModel(DiffusersModelBase):
         uncond = None
         if state.do_cfg:
             uncond = {**cond, "encoder_hidden_states": state.negative_prompt_embeds.to(td)}
-        with self._expert_lifecycle_trace(expert_name, timestep):
-            noise_pred = predict_with_cfg(
-                transformer,
-                cond,
-                uncond,
-                guidance_scale=guidance_scale,
-                batched=True,
-                dtype=td,
-            )
+        noise_pred = predict_with_cfg(
+            transformer,
+            cond,
+            uncond,
+            guidance_scale=guidance_scale,
+            batched=True,
+            dtype=td,
+        )
         return {"noise_pred": noise_pred}
-
-    @contextlib.contextmanager
-    def _expert_lifecycle_trace(
-        self,
-        expert_name: str,
-        timestep: torch.Tensor,
-    ) -> Iterator[None]:
-        if not self._expert_lifecycle_profiling or not torch.cuda.is_available():
-            yield
-            return
-
-        device = torch.device(self.device)
-        if device.type != "cuda":
-            yield
-            return
-        torch.cuda.synchronize(device)
-        switched = self._last_expert_name not in {None, expert_name}
-        before_allocated = torch.cuda.memory_allocated(device)
-        before_reserved = torch.cuda.memory_reserved(device)
-        before_free, total = torch.cuda.mem_get_info(device)
-        torch.cuda.reset_peak_memory_stats(device)
-        with torch.cuda.nvtx.range(f"wan.expert.{expert_name}"):
-            yield
-        torch.cuda.synchronize(device)
-        after_free, _ = torch.cuda.mem_get_info(device)
-        modules = self._wan_transformers()
-        inactive_name = "transformer_2" if expert_name == "transformer" else "transformer"
-        record = {
-            "event": "wan_expert_lifecycle",
-            "expert": expert_name,
-            "timestep": float(torch.as_tensor(timestep).reshape(-1)[0].item()),
-            "switched": switched,
-            "allocated_before_bytes": before_allocated,
-            "allocated_after_bytes": torch.cuda.memory_allocated(device),
-            "reserved_before_bytes": before_reserved,
-            "reserved_after_bytes": torch.cuda.memory_reserved(device),
-            "peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
-            "physical_used_before_bytes": total - before_free,
-            "physical_used_after_bytes": total - after_free,
-            "active_cuda_parameter_bytes": _cuda_parameter_bytes(modules[expert_name]),
-            "inactive_cuda_parameter_bytes": _cuda_parameter_bytes(modules[inactive_name]),
-        }
-        logger.info("WAN_EXPERT_LIFECYCLE %s", json.dumps(record, sort_keys=True))
-        self._last_expert_name = expert_name
 
     # -- forward_step --------------------------------------------------
 
@@ -478,7 +422,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         pipeline: Any,
         device: Any = None,
         trainable_transformers: tuple[WanTransformerName, ...] | None = None,
-        expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
@@ -488,7 +431,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
                 field_name="pipeline boundary_ratio",
             ),
             trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=expert_lifecycle_profiling,
         )
 
     def _set_transformer_2(self, transformer: Any) -> None:
@@ -519,9 +461,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             pipeline=pipeline,
             device=build.device,
             trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=bool(
-                (build.model_config or {}).get("expert_lifecycle_profiling", False),
-            ),
         )
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
@@ -812,9 +751,6 @@ class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
             pipeline=pipeline,
             device=build.device,
             trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=bool(
-                (build.model_config or {}).get("expert_lifecycle_profiling", False),
-            ),
         )
 
     def encode_prompt(
@@ -991,17 +927,6 @@ def _stage_eager_wan_modules(
 def _scheduler_num_train_timesteps(scheduler: Any) -> int | None:
     value = _config_value(getattr(scheduler, "config", None), "num_train_timesteps")
     return None if value is None else int(value)
-
-
-def _cuda_parameter_bytes(module: Any) -> int:
-    """Bytes of this expert's parameter shards currently resident on CUDA."""
-
-    total = 0
-    for parameter in module.parameters():
-        local = getattr(parameter, "_local_tensor", parameter)
-        if local.device.type == "cuda":
-            total += local.numel() * local.element_size()
-    return total
 
 
 def _config_value(config: Any, name: str, default: Any = None) -> Any:

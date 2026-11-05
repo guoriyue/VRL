@@ -613,7 +613,6 @@ def _run_dual_cuda_offload_rank(
         )
         policy = _build_dual_policy()
         policy._device = device
-        policy._expert_lifecycle_profiling = True
         frozen_fp32 = {}
         reference_predictions = {}
         if mixed_dtype:
@@ -631,7 +630,6 @@ def _run_dual_cuda_offload_rank(
             assert frozen_fp32
             policy.precision = RolePrecision("bf16", "ieee", outer_autocast=True)
             reference = deepcopy(policy).to(device)
-            reference._expert_lifecycle_profiling = False
             with torch.no_grad():
                 for timestep in (750.0, 250.0):
                     reference_predictions[timestep] = reference.forward_step(
