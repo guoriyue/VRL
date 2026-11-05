@@ -45,7 +45,7 @@ full-sequence replay recipe runs either objective.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from vrl.algorithms.forward_process import ForwardProcessAlgorithm, ForwardProcessConfig
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -66,11 +66,10 @@ class VGRPOConfig(ForwardProcessConfig):
     reward total once (``weighted_sum_raw``).
     """
 
-    advantage_combine: str = "weighted_sum_raw"
+    advantage_combine: ClassVar[str] = "weighted_sum_raw"
     adv_soft_clip: float | None = 3.0
 
     def __post_init__(self) -> None:
-        ForwardProcessConfig.__post_init__(self)
         if self.adv_soft_clip is not None and float(self.adv_soft_clip) <= 0.0:
             raise ValueError(
                 f"VGRPOConfig.adv_soft_clip must be > 0 or null, got {self.adv_soft_clip}"

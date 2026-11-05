@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 
 def nonzero_advantage_mask(advantages: Any) -> Any:
@@ -158,35 +158,27 @@ def group_relative_advantages(
     return torch.clamp(advantages, -adv_clip_max, adv_clip_max)
 
 
-# How a multi-component reward turns into one advantage. ``normalized_sum``
-# standardizes each configured component within its group before weighting,
-# so no reward's units can dominate the update; ``weighted_sum_raw``
-# standardizes the weighted total the reward runtime already produced.
-ADVANTAGE_COMBINE_STRATEGIES = ("weighted_sum_raw", "normalized_sum")
-
-
 @dataclass(slots=True)
 class GroupAdvantageConfig:
     """Normalization settings shared by group-relative policy objectives."""
 
+    # How a multi-component reward turns into one advantage. ``normalized_sum``
+    # standardizes each configured component within its group before
+    # weighting, so no reward's units can dominate the update;
+    # ``weighted_sum_raw`` standardizes the weighted total the reward runtime
+    # already produced. The algorithm decides (V-GRPO's paper recipe is the
+    # raw total), so it is a class attribute, not a YAML key.
+    advantage_combine: ClassVar[str] = "normalized_sum"
+
     eps: float = 1e-8
     adv_clip_max: float = 5.0
     global_std: bool = False
-    advantage_combine: str = "normalized_sum"
     # Bridged by ``BuiltConfigs.from_cfg`` from ``reward.components``, never a YAML key:
     # the objective weights ``normalized_sum`` combines.
     component_weights: dict[str, float] = field(default_factory=dict, init=False)
 
-    def __post_init__(self) -> None:
-        if self.advantage_combine not in ADVANTAGE_COMBINE_STRATEGIES:
-            raise ValueError(
-                f"unknown advantage_combine strategy {self.advantage_combine!r}; "
-                f"available: {sorted(ADVANTAGE_COMBINE_STRATEGIES)}",
-            )
-
 
 __all__ = [
-    "ADVANTAGE_COMBINE_STRATEGIES",
     "GroupAdvantageConfig",
     "group_relative_advantages",
     "nonzero_advantage_mask",

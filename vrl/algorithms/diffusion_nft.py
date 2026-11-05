@@ -20,7 +20,6 @@ class DiffusionNFTConfig(ForwardProcessConfig):
     advantage_scale: float = 5.0
 
     def __post_init__(self) -> None:
-        ForwardProcessConfig.__post_init__(self)
         if float(self.nft_beta) <= 0:
             raise ValueError(f"DiffusionNFTConfig.nft_beta must be > 0, got {self.nft_beta}")
         if float(self.advantage_scale) <= 0:

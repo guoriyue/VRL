@@ -16,8 +16,8 @@
 - **出处**：DanceGRPO `A_i = Σ_k (r_i^k − μ^k)/σ^k`；Flow-Factory 的 GDPO 式逐 reward
   归一；MixGRPO 等权多 reward "更稳"；DanceGRPO 教训：HPS 单独用出油腻伪影，要 CLIP
   一起。Seedance 三 RM 也是 composite。
-- **VRL 现状（核对后修正）**：已经实现。`algorithm.advantage_combine:
-  normalized_sum` 走 `GroupAdvantageEstimator._normalize_components_then_sum`，
+- **VRL 现状（核对后修正）**：已经实现。`normalized_sum` 是 `GroupAdvantageConfig`
+  的类属性（不再是 YAML 键 `algorithm.advantage_combine`），走 `GroupAdvantageEstimator._normalize_components_then_sum`，
   trainer 的 `_compute_rollout_advantages` 把 `merge_reward_scores` 的分量送给
   `compute_advantages_from_components`；分量的组统计走同一处。没有 preset 开它。
 - **做什么**：

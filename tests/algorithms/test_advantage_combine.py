@@ -1,20 +1,32 @@
 """Multi-objective advantage combination: per-component normalization must stop
-a high-variance reward from dominating the combined advantage."""
+a high-variance reward from dominating the combined advantage.
+
+The strategy belongs to the algorithm, not the recipe: every group-relative
+objective standardizes each configured component (``normalized_sum``); V-GRPO
+follows its paper and standardizes the weighted total once
+(``weighted_sum_raw``).
+"""
 
 from __future__ import annotations
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.v_grpo import VGRPO, VGRPOConfig
 
-_KW = {"eps": 1e-4, "adv_clip_max": 5.0, "global_std": False}
 
-
-def _objective(strategy: str, component_weights: dict[str, float] | None = None, **config) -> GRPO:
-    settings = GRPOConfig(advantage_combine=strategy, **{**_KW, **config})
+def _normalized_sum(component_weights: dict[str, float] | None = None, **config) -> GRPO:
+    settings = GRPOConfig(**config)
     settings.component_weights = dict(component_weights or {})
     return GRPO(settings)
+
+
+def _weighted_sum_raw(component_weights: dict[str, float] | None = None) -> VGRPO:
+    settings = VGRPOConfig()
+    settings.component_weights = dict(component_weights or {})
+    return VGRPO(settings)
 
 
 def _corr(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -22,6 +34,17 @@ def _corr(a: torch.Tensor, b: torch.Tensor) -> float:
     b = b - b.mean()
     denom = (a.norm() * b.norm()).item()
     return float((a @ b).item() / denom) if denom > 1e-9 else 0.0
+
+
+def test_strategy_is_not_a_recipe_key() -> None:
+    from vrl.config.schema import parse_config
+
+    with pytest.raises(ValueError, match=r"unknown algorithm\.advantage_combine"):
+        parse_config(
+            OmegaConf.create(
+                {"algorithm": {"kind": "v_grpo", "advantage_combine": "normalized_sum"}}
+            )
+        )
 
 
 def test_normalized_sum_de_dominates_high_variance_component() -> None:
@@ -39,12 +62,12 @@ def test_normalized_sum_de_dominates_high_variance_component() -> None:
     weights = {"quality": 1.0, "nsfw": 1.0}
 
     weighted_total = sum(weights[name] * reward for name, reward in comps.items())
-    raw = _objective("weighted_sum_raw", weights).compute_advantages_from_components(
+    raw = _weighted_sum_raw(weights).compute_advantages_from_components(
         weighted_total,
         comps,
         group_ids,
     )
-    norm = _objective("normalized_sum", weights).compute_advantages_from_components(
+    norm = _normalized_sum(weights).compute_advantages_from_components(
         weighted_total,
         comps,
         group_ids,
@@ -68,7 +91,7 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     comps = {"quality": quality, "nsfw": nsfw}
     weights = {"quality": 2.0, "nsfw": 1.0}
 
-    norm = _objective("normalized_sum", weights).compute_advantages_from_components(
+    norm = _normalized_sum(weights).compute_advantages_from_components(
         weights["quality"] * quality + weights["nsfw"] * nsfw,
         comps,
         group_ids,
@@ -80,8 +103,8 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     # Component values are not clipped before weighting; only the combined
     # advantage is clamped. Pre-clipping this outlier would incorrectly yield 1.25.
     sparse = torch.tensor([0.0] * 31 + [1.0])
-    final_only = _objective(
-        "normalized_sum", {"quality": 0.5}, adv_clip_max=2.5
+    final_only = _normalized_sum(
+        {"quality": 0.5}, adv_clip_max=2.5
     ).compute_advantages_from_components(
         0.5 * sparse,
         {"quality": sparse},
@@ -90,16 +113,11 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     assert final_only.max().item() == 2.5
 
 
-def test_unknown_strategy_raises() -> None:
-    with pytest.raises(ValueError, match="unknown advantage_combine strategy"):
-        GRPOConfig(advantage_combine="nope")
-
-
 def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> None:
     """NFT gives every turn the same fused credit, independent of reward units."""
     from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 
-    config = DiffusionNFTConfig(advantage_combine="normalized_sum")
+    config = DiffusionNFTConfig()
     config.component_weights = {"instruction": 1.0, "preservation": 0.3}
     algorithm = DiffusionNFT(config)
     # Three candidate trajectories, each repeated across three editing turns.
@@ -125,8 +143,6 @@ def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> No
         algorithm.compute_advantages_from_components(
             instruction, {"instruction": instruction}, groups
         )
-    with pytest.raises(ValueError, match="unknown advantage_combine"):
-        DiffusionNFTConfig(advantage_combine="invalid")
 
 
 def test_normalized_sum_combines_configured_objectives_and_ignores_observations() -> None:
@@ -136,7 +152,7 @@ def test_normalized_sum_combines_configured_objectives_and_ignores_observations(
 
     group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
     sharpness = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
-    objective = _objective("normalized_sum", {"sharpness": 1.0})
+    objective = _normalized_sum({"sharpness": 1.0})
 
     with_observation = objective.compute_advantages_from_components(
         sharpness,
@@ -151,5 +167,5 @@ def test_normalized_sum_combines_configured_objectives_and_ignores_observations(
     only_observations = objective.compute_advantages_from_components(
         sharpness, {"observer": sharpness + 10.0}, group_ids
     )
-    total = _objective("weighted_sum_raw").compute_advantages_from_tensors(sharpness, group_ids)
+    total = objective.compute_advantages_from_tensors(sharpness, group_ids)
     torch.testing.assert_close(only_observations, total, atol=0.0, rtol=0.0)

@@ -27,10 +27,7 @@ from vrl.trainers.data.prompts import PromptExample
 # drop_zero_advantage), and "b" saturates the 0.5 advantage clip under global std.
 _REWARDS = {"a": [0.0, 1.0], "b": [0.0, 100.0], "c": [3.0, 3.0], "d": [-2.0, 5.0]}
 _GLOBAL_STD = ("actor.ppo_epochs=1", "algorithm.global_std=true", "algorithm.adv_clip_max=0.5")
-_TWO_COMPONENTS = (
-    "reward.components={image_sharpness: 0.3, ocr: 0.7}",
-    "algorithm.advantage_combine=normalized_sum",
-)
+_TWO_COMPONENTS = ("reward.components={image_sharpness: 0.3, ocr: 0.7}",)
 
 
 class _PromptReward(RewardFunction):
