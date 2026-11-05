@@ -57,7 +57,6 @@ def _rank_strategy():
             world_size=dist.get_world_size(),
             device=torch.device("cpu"),
         ),
-        find_unused_parameters=False,
     )
 
 

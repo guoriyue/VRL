@@ -152,10 +152,7 @@ def test_typed_root_is_a_strategy_builder_input() -> None:
 
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=[
-            "distributed.training.strategy=ddp",
-            "distributed.training.ddp.find_unused_parameters=true",
-        ],
+        overrides=["distributed.training.strategy=ddp"],
     )
     built = BuiltConfigs.from_cfg(cfg)
     context = DistributedTrainingContext(
@@ -168,7 +165,6 @@ def test_typed_root_is_a_strategy_builder_input() -> None:
     strategy = build_strategy(built.root, context)
 
     assert isinstance(strategy, DDPStrategy)
-    assert strategy._find_unused_parameters is True
 
 
 @pytest.mark.parametrize(

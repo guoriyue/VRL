@@ -36,9 +36,9 @@ crosses the network.
 - **Genuine 2× batch.** The data loader draws `world_size × prompts_per_batch` prompts and
   hands each rank a **disjoint** slice, so rank0 + rank1 cover 32 distinct conditions for
   `rbs=16` — the all-reduced gradient is over 2× the data, not a duplicated run.
-- **`find_unused_parameters` stays off.** NFT's previous/reference adapter is frozen
-  by the shared adapter primitive, so the reducer only tracks the trainable adapter,
-  which always gets a gradient. (Before that freeze the flag had to be on.)
+- **DDP runs without `find_unused_parameters`.** It is not a config key: NFT's
+  previous/reference adapter is frozen by the shared adapter primitive, so the reducer
+  only tracks the trainable adapter, which always gets a gradient.
 
 ## Run it
 

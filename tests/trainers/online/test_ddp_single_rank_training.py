@@ -27,7 +27,6 @@ def test_sana_trains_one_step_under_ddp(monkeypatch, tmp_path) -> None:
             DistributedTrainingContext(
                 strategy="ddp", rank=0, world_size=1, device=torch.device("cpu")
             ),
-            find_unused_parameters=False,
         )
         tb = real_trainer(
             monkeypatch,

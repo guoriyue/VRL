@@ -44,13 +44,11 @@ distributed:
     strategy: ddp
     num_nodes: 2
     gpus_per_node: 1
-    # ddp.find_unused_parameters stays off: both the frozen base AND NFT's
-    # forward-only "previous" adapter are requires_grad=False (the latter is
-    # frozen in Cosmos apply_lora by the shared checkpoint-owned adapter
-    # primitive), so the only params the reducer tracks are the trainable
-    # "default" adapter, which always gets a grad. (Before that freeze it had
-    # to be true, or the first backward died on the "previous" params getting
-    # no gradient under their no_grad replay.)
+    # DDP runs without find_unused_parameters (no key for it): both the frozen
+    # base AND NFT's forward-only "previous" adapter are requires_grad=False
+    # (the latter is frozen in Cosmos apply_lora by the shared checkpoint-owned
+    # adapter primitive), so the only params the reducer tracks are the
+    # trainable "default" adapter, which always gets a grad.
   # Each rank's unpinned rollout and unpinned Kling reward share its own
   # (trainer) GPU: 2 GPUs total, one per rank. Shared roles always use
   # on-demand phase handoff; the actor processes stay alive while their GPU

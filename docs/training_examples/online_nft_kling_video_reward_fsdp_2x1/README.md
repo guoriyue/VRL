@@ -59,7 +59,6 @@ Override per run via env vars (see the script header), e.g. `OUT=...`,
 
 - **Resume is supported**: pass `trainer.resume_from=<checkpoint>` through
   `EXTRA_OVERRIDES` when resuming an interrupted run.
-- **No `find_unused_parameters`**: a DDP reducer knob; FSDP has no reducer.
 - **EMA on, torch.compile off**: the recipe inherits EMA from the base NFT
   config; a compiled FSDP2 replay is allowed but unmeasured for this recipe.
 

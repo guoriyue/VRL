@@ -205,7 +205,6 @@ class TestOnlineTrainerResumeState:
             DistributedTrainingContext(
                 strategy="ddp", rank=0, world_size=1, device=torch.device("cpu")
             ),
-            find_unused_parameters=False,
         )
         prepared.watch(distributed, "prepare_model", "ddp.prepare_model")
         with pytest.raises(NotImplementedError, match="use BF16 or single_process"):

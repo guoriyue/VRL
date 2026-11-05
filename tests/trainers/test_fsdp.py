@@ -730,25 +730,12 @@ def test_build_strategy_rejects_config_context_mismatch() -> None:
         build_strategy(RootConfig(), _cpu_fsdp_context())
 
 
-@pytest.mark.parametrize(
-    ("strategy", "unused_block"),
-    [
-        ("single_process", {"fsdp": {}}),
-        ("fsdp", {"ddp": {}}),
-    ],
-)
-def test_training_config_rejects_unselected_strategy_blocks(
-    strategy: str,
-    unused_block: dict[str, Any],
-) -> None:
+def test_training_config_rejects_an_unselected_fsdp_block() -> None:
     with pytest.raises(ValueError, match=r"requires distributed\.training\.strategy"):
         RootConfig.model_validate(
             {
                 "distributed": {
-                    "training": {
-                        "strategy": strategy,
-                        **unused_block,
-                    },
+                    "training": {"strategy": "single_process", "fsdp": {}},
                 },
             },
         )

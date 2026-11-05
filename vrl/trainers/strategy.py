@@ -912,13 +912,11 @@ class DDPStrategy(_UnshardedStateStrategy):
         self,
         context: DistributedTrainingContext,
         *,
-        find_unused_parameters: bool,
         offload: Offload | None = None,
     ) -> None:
         self.context = context
         self.offload = offload
         self.collectives = TrainingCollectives(context)
-        self._find_unused_parameters = find_unused_parameters
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         # Nothing to release: the process group belongs to the process.
@@ -945,10 +943,12 @@ class DDPStrategy(_UnshardedStateStrategy):
                 raise ValueError("DDP requires an explicit rank-local CUDA device index")
             device_ids = [self.context.device.index]
         for _name, handle, writer in handles:
+            # The frozen base and any frozen adapter are requires_grad=False, so
+            # the reducer only tracks trainable params, which always get a grad.
             wrapped = DistributedDataParallel(
                 handle,
                 device_ids=device_ids,
-                find_unused_parameters=self._find_unused_parameters,
+                find_unused_parameters=False,
             )
             writer(wrapped)
         return model
@@ -1009,13 +1009,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             ),
         )
     if configured_strategy == "ddp":
-        if training.ddp is None:
-            raise AssertionError("typed ddp config was not resolved")
-        return DDPStrategy(
-            context,
-            find_unused_parameters=training.ddp.find_unused_parameters,
-            offload=offload,
-        )
+        return DDPStrategy(context, offload=offload)
     raise AssertionError(
         f"typed config admitted unknown training strategy {configured_strategy!r}"
     )

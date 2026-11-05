@@ -69,10 +69,7 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
         )
         process.callback(dist.destroy_process_group)
     try:
-        strategy = DDPStrategy(
-            context,
-            find_unused_parameters=False,
-        )
+        strategy = DDPStrategy(context)
         bundle = _Bundle()
         torch.manual_seed(100 + rank)
         random.seed(200 + rank)

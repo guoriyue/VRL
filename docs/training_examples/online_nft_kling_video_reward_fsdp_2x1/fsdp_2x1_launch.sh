@@ -13,7 +13,6 @@
 #
 # DIFFERENT from the DDP launcher:
 #   - trainer.resume_from is supported through EXTRA_OVERRIDES when needed.
-#   - NO find_unused_parameters: that is a DDP reducer knob; FSDP has no reducer.
 #   - EMA stays enabled from the base NFT recipe.
 #   - model.torch_compile.enable=false is set in the config (required for FSDP2).
 #

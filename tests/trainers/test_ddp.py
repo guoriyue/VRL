@@ -23,7 +23,7 @@ from tests.trainers._strategy_policies import (
     FakePolicy,
     ToyTransformer,
 )
-from vrl.config.schema import DDPConfig, RootConfig
+from vrl.config.schema import RootConfig
 from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.strategy import (
     DDPStrategy,
@@ -43,17 +43,6 @@ def _cpu_ddp_context() -> DistributedTrainingContext:
     )
 
 
-def _ddp_strategy(
-    context: DistributedTrainingContext,
-    **overrides: bool,
-) -> DDPStrategy:
-    config = DDPConfig.model_validate(overrides)
-    return DDPStrategy(
-        context,
-        find_unused_parameters=config.find_unused_parameters,
-    )
-
-
 def _ddp_wrap(module: nn.Module) -> nn.Module:
     from torch.nn.parallel import DistributedDataParallel
 
@@ -68,10 +57,7 @@ def test_build_strategy_dispatches_the_ddp_strategy() -> None:
         RootConfig.model_validate(
             {
                 "distributed": {
-                    "training": {
-                        "strategy": "ddp",
-                        "ddp": {"find_unused_parameters": True},
-                    },
+                    "training": {"strategy": "ddp"},
                 },
             },
         ),
@@ -83,7 +69,7 @@ def test_build_strategy_dispatches_the_ddp_strategy() -> None:
 
 def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
-        _ddp_strategy(_cpu_ddp_context()).validate_training_state_parking()
+        DDPStrategy(_cpu_ddp_context()).validate_training_state_parking()
 
 
 def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
@@ -109,7 +95,7 @@ def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
 
     monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", _wrap)
 
-    DDPStrategy(context, find_unused_parameters=False).prepare_model(FakePolicy(ToyTransformer()))
+    DDPStrategy(context).prepare_model(FakePolicy(ToyTransformer()))
 
     assert wrap_calls == [{"device_ids": [0], "find_unused_parameters": False}]
 
@@ -119,7 +105,7 @@ def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> N
     from torch.nn.parallel import DistributedDataParallel
 
     policy = DualStagePolicy(ToyTransformer())
-    out = _ddp_strategy(_cpu_ddp_context()).prepare_model(policy)
+    out = DDPStrategy(_cpu_ddp_context()).prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -144,7 +130,7 @@ def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) 
     replicated.load_state_dict(snapshot)
     wrapped = _ddp_wrap(replicated)
 
-    got = _ddp_strategy(_cpu_ddp_context()).export_rollout_state(Bundle(wrapped))
+    got = DDPStrategy(_cpu_ddp_context()).export_rollout_state(Bundle(wrapped))
     expected = SingleProcessStrategy().export_rollout_state(Bundle(ref))
 
     assert got.keys() == expected.keys()
@@ -190,7 +176,7 @@ def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(
     checkpoint.restore_model(
         bundle=Bundle(restored),
         family="toy",
-        strategy=_ddp_strategy(_cpu_ddp_context()),
+        strategy=DDPStrategy(_cpu_ddp_context()),
     )
 
     assert all(
@@ -233,7 +219,7 @@ def test_ddp_adapter_export_uses_gathered_checkpoint_state(
         progress={"next_epoch": 1},
         rng_state={},
         adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-        strategy=_ddp_strategy(_cpu_ddp_context()),
+        strategy=DDPStrategy(_cpu_ddp_context()),
     )
 
     artifact = load_file(

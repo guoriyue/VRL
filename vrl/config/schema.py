@@ -605,21 +605,6 @@ class FSDPConfig(ConfigBase):
         return self
 
 
-class DDPConfig(ConfigBase):
-    """distributed.training.ddp: the one DDP knob ``build_strategy`` reads.
-
-    DDP replicates the full module per rank (right when the model fits on one
-    card, e.g. a 2B transformer + LoRA), so unlike ``fsdp`` there are no shard/mesh
-    knobs. ``find_unused_parameters`` is the only DDP-specific lever a reader
-    consumes; declare nothing the strategy doesn't read.
-    """
-
-    # DDP's reducer expects every requires_grad param to get a grad each backward;
-    # set True only if a LoRA/grad-checkpoint forward conditionally skips a wrapped
-    # branch (slower — adds an extra graph traversal).
-    find_unused_parameters: bool = False
-
-
 class TrainingSection(ConfigBase):
     """distributed.training: how the trainer process maps onto GPUs.
 
@@ -627,15 +612,17 @@ class TrainingSection(ConfigBase):
     single source of truth for the allowed backends — resource validation and the
     training context dispatch on it; the Literal is the only allow-list), the
     ``num_nodes``/``gpus_per_node`` topology the fsdp/ddp context cross-checks
-    against ``WORLD_SIZE``, and the per-strategy knob block (``fsdp`` / ``ddp``)
-    read by ``build_strategy``.
+    against ``WORLD_SIZE``, and the ``fsdp`` knob block read by
+    ``build_strategy``. DDP has no block: it replicates the full module per
+    rank (right when the model fits on one card, e.g. a 2B transformer + LoRA),
+    so there are no shard/mesh knobs, and it always runs with
+    ``find_unused_parameters=False`` (see ``DDPStrategy.prepare_model``).
     """
 
     strategy: Literal["single_process", "fsdp", "ddp"] = "single_process"
     num_nodes: int = 1
     gpus_per_node: int = 1
     fsdp: FSDPConfig | None = None
-    ddp: DDPConfig | None = None
 
     @model_validator(mode="after")
     def _resolve_strategy_defaults(self) -> TrainingSection:
@@ -649,14 +636,8 @@ class TrainingSection(ConfigBase):
             raise ValueError(
                 "distributed.training.fsdp requires distributed.training.strategy=fsdp",
             )
-        if self.ddp is not None and self.strategy != "ddp":
-            raise ValueError(
-                "distributed.training.ddp requires distributed.training.strategy=ddp",
-            )
         if self.strategy == "fsdp" and self.fsdp is None:
             self.fsdp = FSDPConfig()
-        elif self.strategy == "ddp" and self.ddp is None:
-            self.ddp = DDPConfig()
         return self
 
 
