@@ -35,27 +35,16 @@ from vrl.config.base import ConfigBase
 
 Float32Precision = Literal["ieee", "tf32"]
 
-# Protocol vocabularies are a real config boundary. Keep recipe compatibility in
-# one deliberately isolated table so config resolution, defaults, and error text
+# Protocol vocabularies are a real config boundary. Keep them in one
+# deliberately isolated table so config resolution, defaults, and error text
 # cannot drift when a new format lands.
 _PLAIN_DTYPES = ("fp32", "bf16", "fp16")
 
-
-@dataclass(frozen=True, slots=True)
-class _QuantizationFormatRules:
-    allowed_recipes: tuple[str, ...]
-    default_recipe: str | None
-
-
-_QUANTIZATION_FORMAT_RULES = {
-    "fp8": _QuantizationFormatRules(
-        allowed_recipes=("rowwise", "tensorwise"),
-        default_recipe="rowwise",
-    ),
-    # NVFP4 is the complete two-level scaling scheme, not an FP8-style recipe.
-    "nvfp4": _QuantizationFormatRules(allowed_recipes=(), default_recipe=None),
-}
-_PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
+# Quantization format -> the kernel recipe the policy fills for it. The recipe is
+# not a YAML key: FP8 has only ever run row-wise scaled, and NVFP4 is the
+# complete two-level scaling scheme with no recipe axis.
+_QUANTIZATION_RECIPES: dict[str, str | None] = {"fp8": "rowwise", "nvfp4": None}
+_PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_RECIPES)
 
 
 def normalize_precision(value: Any) -> str:
@@ -102,7 +91,11 @@ def _normalize_float32_precision(value: Any) -> Float32Precision:
 
 @dataclass(frozen=True, slots=True)
 class QuantizationPolicy:
-    """Selective low-precision kernel policy layered on a role's base dtype."""
+    """Selective low-precision kernel policy layered on a role's base dtype.
+
+    ``recipe`` is the scheme's scaling variant, filled from the format; only
+    runtime callers (kernel tests, probes) construct the policy with another one.
+    """
 
     format: str
     recipe: str | None = None
@@ -112,36 +105,23 @@ class QuantizationPolicy:
         """Resolve an optional public quantization section."""
         if section is None:
             return None
-        return cls(format=section.format, recipe=section.recipe)
+        return cls(format=section.format)
 
     def __post_init__(self) -> None:
         format_name = str(self.format).lower().strip()
-        recipe = str(self.recipe).lower().strip() if self.recipe is not None else None
         if format_name == "fp4":
             raise ValueError(
                 "quantization.format='fp4' was replaced by the precise scheme name "
-                "'nvfp4'; use `format: nvfp4` without a recipe.",
+                "'nvfp4'; use `format: nvfp4`.",
             )
-        format_rules = _QUANTIZATION_FORMAT_RULES.get(format_name)
-        if format_rules is None:
+        if format_name not in _QUANTIZATION_RECIPES:
             raise ValueError(
                 "quantization.format must be one of "
-                f"{tuple(_QUANTIZATION_FORMAT_RULES)}; got {self.format!r}",
-            )
-        if recipe is None:
-            recipe = format_rules.default_recipe
-        elif recipe not in format_rules.allowed_recipes:
-            if not format_rules.allowed_recipes:
-                raise ValueError(
-                    f"quantization.format={format_name!r} does not accept a recipe; "
-                    "remove the `recipe` key.",
-                )
-            raise ValueError(
-                f"quantization.recipe={recipe!r} is invalid for format "
-                f"{format_name!r}; expected one of {format_rules.allowed_recipes}.",
+                f"{tuple(_QUANTIZATION_RECIPES)}; got {self.format!r}",
             )
         object.__setattr__(self, "format", format_name)
-        object.__setattr__(self, "recipe", recipe)
+        if self.recipe is None:
+            object.__setattr__(self, "recipe", _QUANTIZATION_RECIPES[format_name])
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,16 +220,15 @@ class PrecisionPolicy:
 
 
 class QuantizationConfig(ConfigBase):
-    """``rollout.quantization`` block: a format plus an optional recipe."""
+    """``rollout.quantization`` block: the format; the policy fills its recipe."""
 
     format: str
-    recipe: str | None = None
 
     @model_validator(mode="after")
-    def _validate_format_and_recipe(self) -> QuantizationConfig:
-        # The runtime policy owns the format/recipe vocabulary; validating it at
-        # parse time keeps a bad block from surviving past parse_config.
-        QuantizationPolicy(format=self.format, recipe=self.recipe)
+    def _validate_format(self) -> QuantizationConfig:
+        # The runtime policy owns the format vocabulary; validating it at parse
+        # time keeps a bad block from surviving past parse_config.
+        QuantizationPolicy(format=self.format)
         return self
 
 

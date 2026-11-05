@@ -16,7 +16,6 @@ precision:
     outer_autocast: true
     quantization:
       format: fp8
-      recipe: rowwise
     prompt_encoders:
       dtype: fp16
 ```
@@ -136,13 +135,11 @@ precision:
     dtype: bf16
     quantization:
       format: fp8
-      recipe: rowwise
 ```
 
-FP8 replaces eligible attention projections and MLP Linears. Its recipes are:
-
-- `rowwise` (default)
-- `tensorwise`
+FP8 replaces eligible attention projections and MLP Linears with row-wise
+scaled `_scaled_mm` GEMMs. There is no `recipe` key: row-wise scaling is the
+only variant a run has ever used, so the policy fixes it.
 
 ### NVFP4
 
@@ -160,8 +157,7 @@ precision:
 NVFP4 is an experimental Blackwell-only rollout path. It conservatively replaces
 eligible MLP Linears; attention projections remain at `rollout.dtype` pending the
 real rollout-to-BF16-replay drift and reward gate. NVFP4 is the complete scaling
-scheme and does not accept a `recipe` key. The old generic `format: fp4` spelling
-is rejected; use `format: nvfp4`.
+scheme. The old generic `format: fp4` spelling is rejected; use `format: nvfp4`.
 
 A quantized rollout differs from an unquantized replay even when both base dtypes
 are BF16. VRL therefore treats the full role policy as different and enables its
@@ -225,7 +221,7 @@ precision:
   math: fp32                  # removed; protected denoise math is always FP32
   frozen: fp16                # use rollout.prompt_encoders.dtype
   frozen_components: fp16     # removed misleading name
-  rollout_recipe: rowwise     # move under rollout.quantization for FP8
+  rollout_recipe: rowwise     # removed; FP8 rollout is always row-wise scaled
 ```
 
 The nested legacy spelling is also removed:

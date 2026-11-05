@@ -175,8 +175,8 @@ class QuantizationPass:
         # The scheme owns its target scope and kernel; the model declares only which
         # roots to walk and what to exclude. Neither knows about the other, so a new
         # scheme needs no model change and a new family needs no scheme change.
-        # ``QuantizationPolicy`` already normalized the recipe and filled the format's
-        # default, so its presence — not a second per-scheme table — decides whether
+        # ``QuantizationPolicy`` fills the format's recipe (FP8 row-wise, NVFP4
+        # none), so its presence — not a second per-scheme table — decides whether
         # this scheme takes one.
         swap_kwargs: dict[str, Any] = {"exclude": model.quantization_exclude}
         if recipe is not None:

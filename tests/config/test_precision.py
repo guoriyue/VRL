@@ -249,7 +249,7 @@ def test_top_level_precision_is_required():
 
 def test_fp8_rollout_split_keeps_bf16_base_and_prompt_default():
     block = _plain_precision()
-    block["rollout"]["quantization"] = {"format": "fp8", "recipe": "rowwise"}
+    block["rollout"]["quantization"] = {"format": "fp8"}
     p = PrecisionPolicy.from_section(_section(block))
     assert p.training == RolePrecision(dtype="bf16", float32_precision="tf32")
     assert p.rollout == RolePrecision(
@@ -291,33 +291,11 @@ def test_legacy_generic_fp4_format_has_a_migration_error():
         PrecisionPolicy.from_section(_section(block))
 
 
-def test_nvfp4_rejects_every_recipe():
-    block = _plain_precision()
-    block["rollout"]["quantization"] = {"format": "nvfp4", "recipe": "rowwise"}
-    with pytest.raises(ValueError, match="does not accept a recipe"):
-        PrecisionPolicy.from_section(_section(block))
-
-
-@pytest.mark.parametrize("recipe", ["rowwise", "tensorwise"])
-def test_fp8_accepts_only_declared_recipes(recipe):
-    block = _plain_precision()
-    block["rollout"]["quantization"] = {"format": "fp8", "recipe": recipe}
-    p = PrecisionPolicy.from_section(_section(block))
-    assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe=recipe)
-
-
-def test_fp8_omitted_recipe_resolves_to_rowwise():
+def test_fp8_resolves_to_the_rowwise_recipe():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8"}
     p = PrecisionPolicy.from_section(_section(block))
     assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe="rowwise")
-
-
-def test_fp8_rejects_unknown_recipe_during_config_resolution():
-    block = _plain_precision()
-    block["rollout"]["quantization"] = {"format": "fp8", "recipe": "nvfp4"}
-    with pytest.raises(ValueError, match="invalid for format 'fp8'"):
-        PrecisionPolicy.from_section(_section(block))
 
 
 def test_quantization_format_is_rejected_in_dtype_position():
@@ -329,7 +307,7 @@ def test_quantization_format_is_rejected_in_dtype_position():
 
 def test_quantization_requires_format():
     block = _plain_precision()
-    block["rollout"]["quantization"] = {"recipe": "rowwise"}
+    block["rollout"]["quantization"] = {}
     with pytest.raises(
         ValueError,
         match=r"config missing required field: precision\.rollout\.quantization\.format",

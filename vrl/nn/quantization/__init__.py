@@ -18,8 +18,9 @@ from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE, LinearTargetProfile
 # Config ``precision.rollout.quantization.format`` -> the scheme that implements
 # it. Derived from each class's own ``quantization_scheme`` so the mapping cannot
 # disagree with the identity the runtime guard reads off a swapped module.
-# New schemes also need their public format/recipe declaration in the torch-free
-# vrl.config.precision policy; this registry owns only runtime dispatch.
+# New schemes also need their public format (and the recipe the policy fills for
+# it) declared in the torch-free vrl.config.precision policy; this registry owns
+# only runtime dispatch.
 QUANTIZATION_SCHEMES: dict[str, type[QuantizedLinear]] = {
     scheme.quantization_scheme: scheme for scheme in (Fp8Linear, Fp4Linear)
 }

@@ -253,7 +253,7 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.generation.full_sequence_
 setsid nohup env CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   RAY_memory_usage_threshold=0.97 \
   .venv/bin/vrl-train --config experiment/sd3_5/online_grpo_pickscore \
-  precision.rollout.quantization.format=fp8 precision.rollout.quantization.recipe=rowwise \
+  precision.rollout.quantization.format=fp8 \
   trainer.replay_parity.every_update=true trainer.total_epochs=500 \
   trainer.output_dir=outputs/sd3_5_pickscore_fp8_drift500 \
   > outputs/sd3_5_pickscore_fp8_drift500.log 2>&1 &
