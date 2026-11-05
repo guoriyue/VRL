@@ -90,9 +90,6 @@ class OffloadSection(ConfigBase):
     # Lock the streamed weights as DMA sources (host RAM equal to the frozen
     # weights; a host that cannot falls back to pageable with a warning).
     pin_host: bool = True
-    # tmpfs directory of the one pinned copy of file-backed weights every
-    # process on the host shares; default /dev/shm/vrl-host-streaming.
-    share_directory: str | None = None
 
     @classmethod
     def from_flag(cls, value: Any) -> Any:

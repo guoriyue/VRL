@@ -50,7 +50,7 @@ process, so they are copied once into one content-keyed file under
 map, register and read from (one pinned physical copy, reused by later runs;
 `vrl/nn/offload/host_pinning.py`). Pinning locks host RAM equal to the frozen
 weights; `offload.pin_host: false` keeps them pageable instead, as does a host
-that cannot pin them (a non-tmpfs or too small `offload.share_directory`, a
+that cannot pin them (a non-tmpfs or too small `/dev/shm`, a
 driver refusal), and each copy is then bounded by the host memcpy at about
 17 GB/s instead of the link at about 50 GB/s. Before
 prefetching, with each block copied synchronously in front of its own compute,

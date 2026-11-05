@@ -7,8 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from vrl.nn.offload.host_pinning import DEFAULT_SHARE_DIRECTORY
-
 if TYPE_CHECKING:
     import torch.nn as nn
 
@@ -29,16 +27,14 @@ class Offload:
 
     ``pin_host`` makes the streamed weights DMA sources
     (``vrl.nn.offload.host_pinning``): locked in place, or, for a loader's
-    file-backed weights, in one content-keyed copy under ``share_directory``
-    (tmpfs, shared by every process on the host). It costs host RAM equal to
-    the frozen weights; ``false`` keeps them pageable at about a third of the
-    copy bandwidth, and a host that cannot pin them falls back to that with a
-    warning.
+    file-backed weights, in one content-keyed copy under the package's tmpfs
+    directory (``host_pinning.DEFAULT_SHARE_DIRECTORY``, shared by every
+    process on the host). It costs host RAM equal to the frozen weights;
+    ``false`` keeps them pageable at about a third of the copy bandwidth, and
+    a host that cannot pin them falls back to that with a warning.
     """
 
     pin_host: bool = True
-    # A string: the section crosses the Ray launch wire as primitives.
-    share_directory: str = str(DEFAULT_SHARE_DIRECTORY)
 
     @classmethod
     def from_section(cls, section: Any) -> Offload | None:
@@ -69,12 +65,7 @@ class Offload:
         for name, root in roots.items():
             if any(parameter.device.type != "cpu" for parameter in root.parameters()):
                 continue
-            streaming = HostStreaming.install(
-                root,
-                device=device,
-                pin_host=self.pin_host,
-                share_directory=self.share_directory,
-            )
+            streaming = HostStreaming.install(root, device=device, pin_host=self.pin_host)
             count = len(streaming.blocks)
             logger.info("%s: %d frozen blocks streamed from the host", name, count)
             streamed += count
