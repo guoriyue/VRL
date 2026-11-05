@@ -27,7 +27,7 @@
 - **prompt 元数据已经能传到 reward**：
   - 链路：JSONL 里未知的 key 进入 `PromptExample.metadata`（`vrl/trainers/data/prompts.py:174-209`）→ `RewardSample.metadata`（`vrl/rollouts/collector/batch_builder.py:60-64`）。
   - `wd_tagger` 和 `qwen3vl_preference` 已经在读元数据；`nsfw_safety` 不读。
-  - `load_prompt_mixture`（`prompts.py:212-246`）能混合多个数据集，但不会写入来源标签。
+  - prompt 清单只有单文件形式（`{path: count}` 混合与 `load_prompt_mixture` 已删除），来源标签只能来自 manifest 行本身。
   - `manifests/danbooru/safety/*.jsonl` 已经带 `metadata.category`。
 - **teacher**：目前没有任何 teacher 或蒸馏代码。可以复用的有三处：
   - `replay_forward_with_latents`（`vrl/models/steps/denoise/base.py:141`）：在 student 的 batch 上做前向，conditioning 已经编码好。
@@ -45,7 +45,7 @@
 
 ### P1. 实验 A：按 prompt 路由 reward（不改 combiner）
 
-1. 在数据侧给 prompt 打上环境标签：用 `load_prompt_mixture` 的来源信息，或 manifest 里已有的 `metadata.category`。
+1. 在数据侧给 prompt 打上环境标签：用 manifest 里已有的 `metadata.category`。
 2. 在实验 preset 中，把每个 reward 包装成"只在本环境的 prompt 上打分，其余返回常数"。优先做成 reward 的一个 metadata 过滤参数，在 reward 注册处解析，一个参数就够。不新建 combiner。
 3. 对照组：在同一个家族（SANA 或 SD3.5）、同一个 prompt 混合、同一个算力预算下，比较"全部 reward 加权"和"按 prompt 路由"。
 4. **判据**：在 P0 联合指标上，路由组的前沿是否外推，即同等安全下质量更高，或反之。给出 CI；差异小于 2σ 不算。

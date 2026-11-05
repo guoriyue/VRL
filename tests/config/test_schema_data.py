@@ -1,5 +1,5 @@
-"""The data section: loader discriminator, prompt manifest formats and mixtures,
-and sampler types."""
+"""The data section: loader discriminator, manifest shapes per loader, and
+sampler types."""
 
 from __future__ import annotations
 
@@ -93,21 +93,9 @@ def test_prompt_image_manifest_requires_image_caption_fields() -> None:
         )
 
 
-def test_prompt_manifest_accepts_mixture_counts() -> None:
-    """A {path: count} manifest is the recipe-level way to declare a prompt mix."""
-    data = DataConfig(
-        loader="prompt_manifest",
-        manifest={"anatomy.jsonl": 6800, "safety.jsonl": 1200},
-        mix_seed=20260818,
-        preprocessing={"format": "jsonl"},
-        sampler={"type": "random_without_replacement"},
-    )
-    assert data.manifest == {"anatomy.jsonl": 6800, "safety.jsonl": 1200}
-
-
-def test_prompt_manifest_mixture_requires_a_seed() -> None:
-    """A mixture without a seed would draw a different prompt set on every rank."""
-    with pytest.raises(ValueError, match=r"data\.mix_seed"):
+def test_prompt_manifest_takes_one_path() -> None:
+    """The {root: count} mapping is the layered_scenes loader's, not a prompt mix."""
+    with pytest.raises(ValueError, match=r"single data\.manifest path"):
         DataConfig(
             loader="prompt_manifest",
             manifest={"anatomy.jsonl": 6800, "safety.jsonl": 1200},
@@ -116,19 +104,7 @@ def test_prompt_manifest_mixture_requires_a_seed() -> None:
         )
 
 
-@pytest.mark.parametrize("count", [0, "many"])
-def test_prompt_manifest_rejects_non_positive_mixture_count(count: object) -> None:
-    """A mixture count that cannot select prompts fails at config time."""
-    with pytest.raises(ValueError, match=r"positive prompt count"):
-        DataConfig(
-            loader="prompt_manifest",
-            manifest={"anatomy.jsonl": count},
-            preprocessing={"format": "jsonl"},
-            sampler={"type": "random_without_replacement"},
-        )
-
-
-def test_prompt_image_manifest_rejects_mixture() -> None:
+def test_prompt_image_manifest_rejects_mapping() -> None:
     """Image-conditioned runs pair one manifest with its reference tree."""
     with pytest.raises(ValueError, match=r"single data\.manifest path"):
         DataConfig(
@@ -184,6 +160,11 @@ def test_layered_scenes_takes_roots_with_optional_scene_counts() -> None:
 def test_layered_scenes_requires_its_fields(field: str) -> None:
     with pytest.raises(ValueError, match=rf"data\.{field}"):
         _layered_scenes(**{field: None})
+
+
+def test_layered_scenes_rejects_a_scene_count_that_selects_nothing() -> None:
+    with pytest.raises(ValueError, match=r"positive scene count"):
+        _layered_scenes(manifest={"/data/v3": 0})
 
 
 def test_layered_scenes_rejects_a_negative_spare_budget_and_unknown_weights() -> None:

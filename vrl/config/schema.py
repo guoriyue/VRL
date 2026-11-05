@@ -225,13 +225,10 @@ class DataSamplerSection(ConfigBase):
 
 class DataConfig(ConfigBase):
     loader: DataLoaderName | None = None
-    # A path, or a {manifest path: prompt count} mixture whose keys are file
-    # paths chosen by the recipe (an open mapping). reader: manifest_sources.
+    # The prompt loaders take one manifest path. The ``layered_scenes`` loader
+    # takes dataset roots, a path or a {root: scene count} mapping whose keys
+    # the recipe chooses (an open mapping). reader: manifest_sources.
     manifest: str | dict[str, Any] | None = None
-    # Draw seed for a manifest mixture, required whenever one is declared: every
-    # rank draws the mixture itself and then indexes into it.
-    # reader: load_prompt_examples_from_config
-    mix_seed: StrictInt | None = None
     eval_manifest: str | None = None
     preprocessing: DataPreprocessingSection | None = None
     sampler: DataSamplerSection | None = None
@@ -284,23 +281,20 @@ class DataConfig(ConfigBase):
                     "data.loader='prompt_image_manifest'",
                 )
             self.loader = cast("DataLoaderName", name)
-        if self.loader == "prompt_manifest":
+        if self.loader in ("prompt_manifest", "prompt_image_manifest"):
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
-            if len(manifest_sources(self.manifest)) > 1 and self.mix_seed is None:
-                raise ValueError("config missing required field: data.mix_seed")
+            if not isinstance(self.manifest, str):
+                raise ValueError(
+                    f"data.loader={self.loader!r} takes a single data.manifest path; "
+                    "the {root: count} mapping belongs to the layered_scenes loader",
+                )
+        if self.loader == "prompt_manifest":
             if preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
             self._validate_sampler_type()
 
         if self.loader == "prompt_image_manifest":
-            if not self.manifest:
-                raise ValueError("config missing required field: data.manifest")
-            if not isinstance(self.manifest, str):
-                raise ValueError(
-                    "data.loader='prompt_image_manifest' takes a single data.manifest path, "
-                    "not a mixture mapping",
-                )
             if not self.eval_manifest:
                 raise ValueError("config missing required field: data.eval_manifest")
             if preprocessing is None:
@@ -313,6 +307,7 @@ class DataConfig(ConfigBase):
         if self.loader == "layered_scenes":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
+            manifest_sources(self.manifest)
             for field in ("split", "token_weights", "spare_layers_max"):
                 if getattr(self, field) is None:
                     raise ValueError(f"config missing required field: data.{field}")

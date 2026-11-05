@@ -14,30 +14,33 @@ DataLoaderName = Literal[
 
 
 def manifest_sources(manifest: object) -> dict[str, int | None]:
-    """Normalize ``data.manifest`` into ``{path: count}``.
+    """Normalize the ``layered_scenes`` loader's ``data.manifest`` into ``{root: count}``.
 
-    Two spellings, one shape for every reader (loader, config validation, the
-    dataset bootstrap): a single path string, or a mapping of path to how many
-    prompts to draw from it — the recipe-level way to say "85% anatomy, 15%
-    safety-stress" without materializing a mixed manifest on disk. ``None``
-    count means every row in the file.
+    Two spellings, one shape for every reader (config validation, the scene
+    dataset, the cache encoder and the evaluation script): a single dataset
+    root, or a mapping of root to how many of its scenes to take (the first
+    ``count`` in sorted order, ``scene_cache_paths``). A ``None`` count, in
+    either spelling, means every scene under the root.
     """
 
     if isinstance(manifest, str):
         return {manifest: None}
     if isinstance(manifest, Mapping):
         if not manifest:
-            raise ValueError("data.manifest mapping must name at least one manifest")
+            raise ValueError("data.manifest mapping must name at least one dataset root")
         sources: dict[str, int | None] = {}
         for path, count in manifest.items():
-            if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            if count is not None and (
+                not isinstance(count, int) or isinstance(count, bool) or count < 1
+            ):
                 raise ValueError(
-                    f"data.manifest[{path!r}] must be a positive prompt count, got {count!r}",
+                    f"data.manifest[{path!r}] must be a positive scene count or null, "
+                    f"got {count!r}",
                 )
             sources[str(path)] = count
         return sources
     raise ValueError(
-        "data.manifest must be a manifest path or a {path: prompt count} mapping, "
+        "data.manifest must be a dataset root or a {root: scene count} mapping, "
         f"got {type(manifest).__name__}",
     )
 

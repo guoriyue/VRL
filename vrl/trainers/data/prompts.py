@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import random
-from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,7 +13,6 @@ if TYPE_CHECKING:
 
 from torch.utils.data import Dataset
 
-from vrl.config.data import manifest_sources
 from vrl.generation import GenerationInput
 from vrl.utils.paths import RootedPaths, user_path
 
@@ -207,45 +204,6 @@ def prompt_example_from_row(obj: dict[str, Any], *, context: str) -> PromptExamp
     return PromptExample(**prompt_fields)
 
 
-def load_prompt_mixture(
-    sources: Mapping[str, int | None],
-    *,
-    seed: int,
-) -> list[PromptExample]:
-    """Draw ``count`` prompts from each manifest and shuffle them into one set.
-
-    The ratio between prompt families is an experiment knob — an anatomy
-    majority that carries the quality gradient next to a safety-stress minority
-    that exercises a guardrail, say — so it belongs in the recipe rather than in
-    a mixed manifest built on the side. A source with no count contributes every
-    row in file order.
-
-    ``seed`` is required, and is a correctness requirement rather than a
-    convenience: every rank builds this list independently while
-    ``PromptBatchSampler`` hands out INDICES into it, so an unseeded draw would
-    give rank 0's index 5 and rank 1's index 5 different prompts. The same
-    applies across a resume, which restores the sampler generator and re-indexes
-    into a freshly loaded list. There is deliberately no default — a silent one
-    would hide which draw a run actually trained on.
-    """
-
-    rng = random.Random(seed)
-    picked: list[PromptExample] = []
-    for path, count in sources.items():
-        available = load_prompt_dataset_index(path)
-        if count is None:
-            picked.extend(available)
-            continue
-        if count > len(available):
-            raise ValueError(
-                f"data.manifest[{path!r}] asks for {count} prompts, "
-                f"only {len(available)} available",
-            )
-        picked.extend(rng.sample(available, count))
-    rng.shuffle(picked)
-    return picked
-
-
 def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
     """Load examples the way the parsed ``data`` section declares."""
 
@@ -253,12 +211,9 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
     if not manifest:
         raise ValueError("config missing required field: data.manifest")
     if data.loader == "prompt_manifest":
-        sources = manifest_sources(manifest)
-        if len(sources) == 1 and next(iter(sources.values())) is None:
-            return load_prompt_dataset_index(next(iter(sources)))
-        if data.mix_seed is None:
-            raise ValueError("config missing required field: data.mix_seed")
-        return load_prompt_mixture(sources, seed=data.mix_seed)
+        # The schema admits only a path here; the {root: count} mapping is the
+        # layered_scenes loader's.
+        return load_prompt_dataset_index(manifest)
 
     if data.loader == "prompt_image_manifest":
         return list(ImageCaptionPromptDataset.from_section(data).examples)
@@ -368,6 +323,5 @@ __all__ = [
     "PromptExample",
     "load_prompt_dataset_index",
     "load_prompt_examples_from_config",
-    "load_prompt_mixture",
     "prompt_example_from_row",
 ]
