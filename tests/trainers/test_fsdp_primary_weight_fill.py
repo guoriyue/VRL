@@ -8,8 +8,8 @@ per node. Two real gloo ranks on a tiny real ``SD3Transformer2DModel``: every
 gathered parameter and every buffer must equal rank 0's pre-shard values and no
 meta storage may survive, for the fully sharded and the adapter-only
 (replicated frozen base) layouts, and for a root the replay build compiled
-(``torch_compile_transformer`` with ``regional=False``), whose state-dict keys
-carry ``torch.compile``'s ``_orig_mod.`` prefix.
+(``torch_compile_transformer``), whose state-dict keys carry
+``torch.compile``'s ``_orig_mod.`` prefix.
 """
 
 from __future__ import annotations

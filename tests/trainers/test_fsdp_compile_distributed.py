@@ -3,10 +3,10 @@
 Two Gloo ranks shard a tiny diffusers SD3 transformer in the online build
 order (compile, then full or selective activation checkpointing, then
 ``FSDPStrategy.prepare_model`` with reshard-after-forward), each rank on its
-half of one batch, for several AdamW steps. Regional and root compile must
-match one process training the same compiled transformer on the whole batch:
-the reshard-after-forward all-gathers and the gradient reduce-scatter run
-outside the compiled graphs, so sharding adds only fp32 reduction-order noise.
+half of one batch, for several AdamW steps. Both must match one process
+training the same compiled transformer on the whole batch: the
+reshard-after-forward all-gathers and the gradient reduce-scatter run outside
+the compiled graphs, so sharding adds only fp32 reduction-order noise.
 """
 
 from __future__ import annotations
@@ -21,14 +21,13 @@ from torch import nn
 from tests.trainers._strategy_policies import run_ranks
 
 STEPS = 3
-# (compile, checkpointing): root compile traces the selective policy itself.
-VARIANTS = (("regional", "full"), ("root", "full"), ("root", "selective"))
+# Checkpointing modes; compile traces the selective policy itself.
+VARIANTS = ("full", "selective")
 
 
-def _transformer(variant: tuple[str, str]) -> nn.Module:
+def _transformer(checkpointing: str) -> nn.Module:
     from diffusers import SD3Transformer2DModel
 
-    from vrl.nn.optimization.regional_compile import compile_repeated_blocks
     from vrl.trainers.activation_checkpointing import selective_checkpoint_func
 
     torch.manual_seed(3)
@@ -45,12 +44,8 @@ def _transformer(variant: tuple[str, str]) -> nn.Module:
         out_channels=4,
         pos_embed_max_size=16,
     )
-    compile_scope, checkpointing = variant
-    if compile_scope == "regional":
-        compile_repeated_blocks(transformer, mode="default")
-    else:
-        transformer = torch.compile(transformer, mode="default", fullgraph=False)
-    getattr(transformer, "_orig_mod", transformer).enable_gradient_checkpointing(
+    transformer = torch.compile(transformer, mode="default", fullgraph=False)
+    transformer._orig_mod.enable_gradient_checkpointing(
         gradient_checkpointing_func=(
             selective_checkpoint_func if checkpointing == "selective" else None
         ),

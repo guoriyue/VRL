@@ -105,8 +105,8 @@ def main(argv: list[str] | None = None) -> None:
     result = TrainingRunResultWriter.from_root(root)
     try:
         # Inductor's default cache lives under /tmp, which a reboot empties. A
-        # warm cache cut SD3.5 Medium's regional replay compile from 16.6 s to
-        # 4.0 s and root compile from 62-72 s to 6.1 s (RTX 5090, torch 2.11).
+        # warm cache cut SD3.5 Medium's replay compile from 62-72 s to 6.1 s
+        # (RTX 5090, torch 2.11).
         # Set before Ray starts, so rollout and reward workers inherit it.
         os.environ.setdefault(
             "TORCHINDUCTOR_CACHE_DIR", str(Path.home() / ".cache" / "vrl" / "torchinductor")

@@ -31,7 +31,6 @@ from vrl.models.weight_utils import (
     load_weights_into,
     require_weights_for,
 )
-from vrl.nn.optimization.regional_compile import compile_repeated_blocks
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 from vrl.utils.validation import require_int
 
@@ -441,22 +440,16 @@ class DenoiseModelBase(nn.Module, ABC):
 
         self.transformer = transformer
 
-    def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
-        """Compile every rollout policy core in place.
+    def torch_compile_transformer(self, mode: str) -> None:
+        """Compile every rollout policy core.
 
         Walks ``policy_cores`` rather than ``self.transformer`` so a multi-expert
         family compiles each expert it samples through, with no per-family
-        override. ``regional`` compiles each repeated transformer block instead
-        of the root (one trace shared by every block, so cold compile and
-        recompiles cost one block rather than the whole graph); the root keeps
-        its type, so no handle needs writing back.
+        override.
         """
 
         for name, module in self.policy_cores.items():
-            if regional:
-                compile_repeated_blocks(module, mode=mode)
-            else:
-                self.set_module_root(name, torch.compile(module, mode=mode, fullgraph=False))
+            self.set_module_root(name, torch.compile(module, mode=mode, fullgraph=False))
 
     def set_module_root(self, name: str, module: Any) -> None:
         """Write a replaced module root back to EVERY handle that references it.

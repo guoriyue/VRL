@@ -162,7 +162,7 @@ def build_family_replay_runtime_bundle(
         _apply_fused_kernels(model, build)
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
-        model.torch_compile_transformer(compile_cfg["mode"], regional=compile_cfg["regional"])
+        model.torch_compile_transformer(compile_cfg["mode"])
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,

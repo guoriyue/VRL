@@ -118,11 +118,11 @@ class _StreamedBlock(nn.Module):
     """Mixin swapped in front of a block's class: its call runs over device copies.
 
     The wrapper sits on ``__call__``, not ``forward``, so a block compiled in
-    place (regional compile) keeps the streaming outside the compiled frame
-    whichever of the two was applied first; swapping the class is what puts a
-    method there. One streamed subclass per block class, not per block: dynamo
-    guards a compiled frame on ``type(self)``, and distinct classes would cost
-    one trace per block instead of the one trace regional compile exists for.
+    place (``nn.Module.compile``) keeps the streaming outside the compiled
+    frame whichever of the two was applied first; swapping the class is what
+    puts a method there. One streamed subclass per block class, not per block:
+    dynamo guards a compiled frame on ``type(self)``, and distinct classes
+    would cost one trace per block instead of one shared trace.
     """
 
     _streaming: HostStreaming

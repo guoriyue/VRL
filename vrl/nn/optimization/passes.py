@@ -235,9 +235,7 @@ class CompilePass:
     """
 
     name: str = "compile"
-    # Wraps each root in an OptimizedModule, hiding the real module. Regional
-    # compile mutates the tree in place instead, but the seam placement is the
-    # same either way, so the flag stays conservative.
+    # Wraps each root in an OptimizedModule, hiding the real module.
     replaces_modules: bool = True
 
     def enabled(self, build: Any) -> bool:
@@ -245,20 +243,15 @@ class CompilePass:
 
     def apply(self, model: Any, build: Any) -> PassResult:
         mode = build.torch_compile["mode"]
-        regional = bool(build.torch_compile.get("regional"))
-        model.torch_compile_transformer(mode, regional=regional)
+        model.torch_compile_transformer(mode)
         # Verify the EFFECT on the real modules. A family that overrides
         # torch_compile_transformer and walks the wrong collection would
         # otherwise leave one expert of a multi-expert policy uncompiled --
         # the half-covering failure this layer exists to prevent. Asking the
-        # model what changed would be self-certification; a compiled root (or
-        # a compiled block under it) is observable, so observe it.
-        from vrl.nn.optimization.regional_compile import compiled_block_count
-
+        # model what changed would be self-certification; a compiled root is
+        # observable, so observe it.
         missed = [
-            name
-            for name, core in model.policy_cores.items()
-            if not (compiled_block_count(core) if regional else hasattr(core, "_orig_mod"))
+            name for name, core in model.policy_cores.items() if not hasattr(core, "_orig_mod")
         ]
         if missed:
             raise RuntimeError(
@@ -269,7 +262,7 @@ class CompilePass:
         return PassResult(
             name=self.name,
             applied=True,
-            detail=f"mode={mode}, regional={regional}",
+            detail=f"mode={mode}",
         )
 
 

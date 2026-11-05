@@ -123,11 +123,7 @@ def torch_compile_for_role(
     scope = TorchCompileScope(block.scope or "all")
     if scope not in ("all", role):
         return None
-    return {
-        "enable": True,
-        "mode": block.mode or "default",
-        "regional": bool(block.regional),
-    }
+    return {"enable": True, "mode": block.mode or "default"}
 
 
 @dataclass

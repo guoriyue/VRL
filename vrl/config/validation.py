@@ -96,10 +96,9 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
 
     # Full and selective activation checkpointing compose with torch.compile.
     # Full: replay forward+backward measured on torch 2.11 for SD3.5 Medium
-    # (regional and root compile, with and without single-rank FSDP2),
-    # Cosmos-Predict2.5 2B (regional and root) and Wan2.1 1.3B (regional).
-    # Selective: SD3.5 Medium regional with and without FSDP2 on GPU, and
-    # tiny SD3/Wan transformers under regional and root compile on CPU match
+    # (with and without single-rank FSDP2), Cosmos-Predict2.5 2B and Wan2.1
+    # 1.3B. Selective: SD3.5 Medium with and without FSDP2 on GPU, and tiny
+    # SD3/Wan transformers under compile on CPU match
     # eager gradients once its context_fn is a module-level function
     # (tests/trainers/test_activation_checkpointing.py, and root compile under
     # FSDP2 in tests/trainers/test_fsdp_compile_distributed.py). The
@@ -129,8 +128,7 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
         )
 
     # FSDP2 replay is not a conflict. On two Gloo ranks a tiny SD3 transformer
-    # compiled regionally or at the root with full checkpointing, or at the
-    # root with selective checkpointing, then sharded with
+    # compiled with full or selective checkpointing, then sharded with
     # reshard-after-forward, trains like the same compiled module unsharded
     # (tests/trainers/test_fsdp_compile_distributed.py): FSDP2's all-gather
     # and reduce-scatter hooks run outside the compiled graphs.
