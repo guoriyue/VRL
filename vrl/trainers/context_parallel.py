@@ -28,7 +28,6 @@ def enable_context_parallel(
     *,
     mesh: Any,
     ulysses_degree: int,
-    ring_degree: int,
 ) -> None:
     """Install the diffusers CP hooks on one unwrapped trainable transformer.
 
@@ -49,25 +48,18 @@ def enable_context_parallel(
         raise ValueError(
             f"{type(module).__name__} declares no _cp_plan; training-side context "
             "parallelism is only available for diffusers transformers with a plan "
-            "(Wan, Flux, Qwen-Image, LTX, ...). Set context_parallel degrees to 1.",
+            "(Wan, Flux, Qwen-Image, LTX, ...). Set context_parallel.ulysses_degree to 1.",
         )
-    if int(ring_degree) > 1:
-        # Ring attention needs the log-sum-exp from the attention kernel; the
-        # default SDPA path cannot return it, cuDNN's can.
-        module.set_attention_backend("_native_cudnn")
     install_autocast_safe_attention_ops()
+    # Ulysses only (diffusers defaults ring_degree to 1): ring attention would
+    # also need the log-sum-exp from the kernel, which plain SDPA cannot return.
     module.enable_parallelism(
-        config=ContextParallelConfig(
-            ulysses_degree=int(ulysses_degree),
-            ring_degree=int(ring_degree),
-            mesh=mesh,
-        ),
+        config=ContextParallelConfig(ulysses_degree=int(ulysses_degree), mesh=mesh),
     )
     logger.info(
-        "context parallel enabled on %s: ulysses=%d ring=%d",
+        "context parallel enabled on %s: ulysses=%d",
         type(module).__name__,
         int(ulysses_degree),
-        int(ring_degree),
     )
 
 

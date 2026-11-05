@@ -83,7 +83,7 @@ def test_fsdp_config_ties_the_cp_mesh_axis_to_the_degrees() -> None:
     cfg = FSDPConfig(mesh=["dp_shard", "cp"], context_parallel={"ulysses_degree": 2})
     assert cfg.context_parallel.size == 2
     with pytest.raises(ValueError, match="includes 'cp' exactly when"):
-        FSDPConfig(context_parallel={"ring_degree": 2})
+        FSDPConfig(context_parallel={"ulysses_degree": 2})
     with pytest.raises(ValueError, match="includes 'cp' exactly when"):
         FSDPConfig(mesh=["dp_shard", "cp"])
     with pytest.raises(ValueError, match="must be"):
@@ -123,7 +123,7 @@ def test_context_parallel_mesh_rejects_degrees_that_disagree_with_the_context() 
         strategy="fsdp", rank=0, world_size=1, device=torch.device("cpu"), cp_size=1
     )
     with pytest.raises(ValueError, match="disagree"):
-        build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
+        build_context_parallel_mesh(ctx, ulysses_degree=2)
 
 
 def test_backward_scales_the_loss_by_the_cp_size() -> None:
@@ -159,9 +159,9 @@ def test_enable_context_parallel_refuses_models_without_a_plan() -> None:
             self.linear = nn.Linear(2, 2)
 
     with pytest.raises(TypeError, match="ModelMixin"):
-        enable_context_parallel(nn.Linear(2, 2), mesh=None, ulysses_degree=2, ring_degree=1)
+        enable_context_parallel(nn.Linear(2, 2), mesh=None, ulysses_degree=2)
     with pytest.raises(ValueError, match="declares no _cp_plan"):
-        enable_context_parallel(_NoPlan(), mesh=None, ulysses_degree=2, ring_degree=1)
+        enable_context_parallel(_NoPlan(), mesh=None, ulysses_degree=2)
 
 
 def test_batch_fingerprint_separates_reordered_and_rescored_batches() -> None:
@@ -253,7 +253,7 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
             cp_size=2,
         )
         groups = ContextParallelPeerGroup.create(ctx)
-        cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
+        cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2)
         fsdp_mesh = build_fsdp_mesh(ctx)
         # FSDP shards over the whole world; the CP mesh is its own 3D object.
         mesh_ok = (
@@ -298,7 +298,7 @@ def _nccl_cp_dp_rank(rank: int, world_size: int, port: int, q: mp.Queue, output_
     with TrainerProcessGroup.open(ctx, output_dir=output_dir):
         fsdp_mesh = build_fsdp_mesh(ctx)
         groups = ContextParallelPeerGroup.create(ctx)
-        cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
+        cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2)
         shard_sum = torch.tensor([float(rank)], device=ctx.device)
         dist.all_reduce(shard_sum, group=fsdp_mesh.get_group("dp_shard"))
         ulysses_sum = torch.tensor([float(rank)], device=ctx.device)

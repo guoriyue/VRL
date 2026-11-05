@@ -535,20 +535,20 @@ class ContextParallelConfig(ConfigBase):
     "ulysses")`` device mesh and enables diffusers' context parallelism on each
     trainable transformer (its ``_cp_plan`` says where the token axis is split
     and gathered). Ranks of one CP group replay the same rollout samples; FSDP
-    shards parameters over ``dp_shard`` only.
+    shards parameters over ``dp_shard`` only. Only Ulysses (head-sharded)
+    attention is offered: the ``ring`` mesh axis diffusers indexes stays size 1.
     """
 
     ulysses_degree: int = 1
-    ring_degree: int = 1
 
     @property
     def size(self) -> int:
-        return int(self.ulysses_degree) * int(self.ring_degree)
+        return int(self.ulysses_degree)
 
     @model_validator(mode="after")
-    def _positive_degrees(self) -> ContextParallelConfig:
-        if self.ulysses_degree < 1 or self.ring_degree < 1:
-            raise ValueError("context_parallel degrees must be >= 1")
+    def _positive_degree(self) -> ContextParallelConfig:
+        if self.ulysses_degree < 1:
+            raise ValueError("context_parallel.ulysses_degree must be >= 1")
         return self
 
 
@@ -599,9 +599,8 @@ class FSDPConfig(ConfigBase):
         if ("cp" in self.mesh) != (self.context_parallel.size > 1):
             raise ValueError(
                 "distributed.training.fsdp.mesh includes 'cp' exactly when "
-                "context_parallel.ulysses_degree * ring_degree > 1; got "
-                f"mesh={self.mesh!r}, ulysses_degree={self.context_parallel.ulysses_degree}, "
-                f"ring_degree={self.context_parallel.ring_degree}",
+                "context_parallel.ulysses_degree > 1; got "
+                f"mesh={self.mesh!r}, ulysses_degree={self.context_parallel.ulysses_degree}",
             )
         return self
 

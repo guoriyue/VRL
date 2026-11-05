@@ -470,7 +470,6 @@ class FSDPStrategy(TrainerParking):
         cpu_offload: bool,
         shard_trainable_only: bool = False,
         ulysses_degree: int = 1,
-        ring_degree: int = 1,
         parking_directory: str | None = None,
     ) -> None:
         self.context = context
@@ -483,13 +482,12 @@ class FSDPStrategy(TrainerParking):
         if shard_trainable_only and precision_policy != "none":
             raise ValueError("shard_trainable_only requires precision_policy='none'")
         self._ulysses_degree = int(ulysses_degree)
-        self._ring_degree = int(ring_degree)
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
         self._context_parallel_groups: ContextParallelPeerGroup | None = None
 
     @property
     def context_parallel(self) -> bool:
-        return self._ulysses_degree * self._ring_degree > 1
+        return self._ulysses_degree > 1
 
     @property
     def context_parallel_groups(self) -> ContextParallelPeerGroup | None:
@@ -587,14 +585,12 @@ class FSDPStrategy(TrainerParking):
             cp_mesh = build_context_parallel_mesh(
                 self.context,
                 ulysses_degree=self._ulysses_degree,
-                ring_degree=self._ring_degree,
             )
             for _name, handle, _writer in handles:
                 enable_context_parallel(
                     unwrap_module(handle),
                     mesh=cp_mesh,
                     ulysses_degree=self._ulysses_degree,
-                    ring_degree=self._ring_degree,
                 )
         for name, handle, writer in handles:
             if self._shard_trainable_only and not any(p.is_meta for p in handle.parameters()):
@@ -1002,7 +998,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
         return FSDPStrategy(
             context,
             ulysses_degree=fsdp.context_parallel.ulysses_degree,
-            ring_degree=fsdp.context_parallel.ring_degree,
             precision_policy=fsdp.precision_policy,
             reshard_after_forward=fsdp.reshard_after_forward,
             cpu_offload=fsdp.cpu_offload,

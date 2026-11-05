@@ -57,27 +57,27 @@ def build_context_parallel_mesh(
     context: DistributedTrainingContext,
     *,
     ulysses_degree: int,
-    ring_degree: int,
 ) -> Any:
     """The 3D ``("dp_shard", "ring", "ulysses")`` mesh diffusers' CP hooks slice.
 
     diffusers' ``ContextParallelConfig.setup`` indexes exactly the names
-    ``"ring"`` and ``"ulysses"``; the leading axis only keeps the row-major rank
-    layout contiguous per CP group (ranks ``k*cp .. k*cp+cp-1``), matching
-    ``DistributedTrainingContext.cp_rank``.
+    ``"ring"`` and ``"ulysses"`` (``mesh["ring"]`` and a flatten of both), so
+    the ``ring`` axis exists at size 1 even though only Ulysses is offered. The
+    leading axis only keeps the row-major rank layout contiguous per CP group
+    (ranks ``k*cp .. k*cp+cp-1``), matching ``DistributedTrainingContext.cp_rank``.
     """
 
     from torch.distributed.device_mesh import init_device_mesh
 
-    cp_size = int(ulysses_degree) * int(ring_degree)
+    cp_size = int(ulysses_degree)
     if cp_size != context.cp_size or cp_size < 2:
         raise ValueError(
-            f"context-parallel degrees {ulysses_degree}x{ring_degree} disagree with "
+            f"context-parallel ulysses_degree={ulysses_degree} disagrees with "
             f"the training context cp_size={context.cp_size}",
         )
     return init_device_mesh(
         context.device.type,
-        (context.dp_size, int(ring_degree), int(ulysses_degree)),
+        (context.dp_size, 1, cp_size),
         mesh_dim_names=("dp_shard", "ring", "ulysses"),
     )
 
