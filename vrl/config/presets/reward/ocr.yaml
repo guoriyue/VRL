@@ -7,6 +7,5 @@ reward:
       # Select ocr_match for a 0/1 full-text match with no partial credit.
       # For videos it is the success fraction across all sampled frames.
       score_key: ocr
-      # Experiments may opt into auditable OCR frames without inventing a
-      # reward-only leaf outside this reusable config boundary.
-      debug_dir: null
+      # dump: true writes each sample's best frame and recognized lines under
+      # <trainer.output_dir>/reward_dumps/ocr.

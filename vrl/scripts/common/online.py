@@ -640,6 +640,7 @@ async def run_online_recipe(
                 device=reward_device,
                 parking=reward_parking,
                 ray_placement=reward_placement,
+                run_output_dir=trainer_config.output_dir,
             ),
         )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_built(

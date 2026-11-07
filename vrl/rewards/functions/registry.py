@@ -172,11 +172,13 @@ class MultiReward(RewardFunction):
         parking: ParkingMechanism | None = None,
         inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
         ray_placement: RayRewardPlacement | None = None,
+        run_output_dir: str | None = None,
     ) -> MultiReward:
         """Build from ``{"name": weight}`` dict, like flow_grpo config.reward_fn.
 
         ``reward_kwargs`` allows passing per-reward init kwargs, keyed by name,
-        e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
+        e.g. ``{"ocr": {"dump": True}}``. ``run_output_dir`` is the training
+        run's directory, where every component records its requests and dumps.
 
         Config-driven callers pass their already-resolved ``inference_configs``
         (YAML defaults to a Ray actor). Direct callers may omit it; every
@@ -208,7 +210,9 @@ class MultiReward(RewardFunction):
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
-            reserved_runtime_keys = sorted(set(extra) & {"scorer", "runtime", "ray_placement"})
+            reserved_runtime_keys = sorted(
+                set(extra) & {"scorer", "runtime", "ray_placement", "run_output_dir"}
+            )
             if reserved_runtime_keys:
                 raise ValueError(
                     f"reward.kwargs.{name} cannot set runtime injection keys "
@@ -237,6 +241,7 @@ class MultiReward(RewardFunction):
                     set(extra)
                     & {
                         "device",
+                        "dump",
                         "worker_config",
                     },
                 )
@@ -271,7 +276,7 @@ class MultiReward(RewardFunction):
                     "sleep_offload": True,
                     "parking_mechanism": parking,
                 }
-            component = reward_cls(device=component_device, **extra)
+            component = reward_cls(device=component_device, run_output_dir=run_output_dir, **extra)
             triples.append((name, weight, component))
         return cls(triples)
 

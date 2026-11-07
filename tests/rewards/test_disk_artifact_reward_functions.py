@@ -71,7 +71,7 @@ def _build_reward(tmp_path: Path, *, score_key: str, scorer: _FakeRuntime | None
     return KlingVideoReward(
         reward_name="kling_video_reward",
         score_key=score_key,
-        debug_dir=str(tmp_path / "debug"),
+        run_output_dir=str(tmp_path),
         scorer=scorer if scorer is not None else _FakeRuntime(_FAKE_SCORES),
     )
 
@@ -91,10 +91,10 @@ async def test_forwards_media_and_selects_the_score_key(tmp_path: Path) -> None:
     assert request.artifacts[0].media is sample.output
     assert not list(tmp_path.rglob("*.mp4"))
     assert not list(tmp_path.rglob("*.pt"))
-    requests_path = tmp_path / "debug" / "kling_video_reward_requests.jsonl"
+    requests_path = tmp_path / "reward_debug" / "kling_video_reward_requests.jsonl"
     request_row = json.loads(requests_path.read_text(encoding="utf-8").splitlines()[0])
     assert request_row["score_key"] == "overall_reward"
-    results_path = tmp_path / "debug" / "kling_video_reward_results.jsonl"
+    results_path = tmp_path / "reward_debug" / "kling_video_reward_results.jsonl"
     body = results_path.read_text(encoding="utf-8")
     assert all(key in body for key in _FAKE_SCORES)
     first_row = json.loads(body.splitlines()[0])
@@ -123,6 +123,23 @@ async def test_unmatched_runtime_results_fail(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
         await reward.score_batch([_sample()])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "match"),
+    [
+        ({"debug_dir": "/x"}, TypeError, "were removed"),
+        ({"worker_config": {"dump_dir": "/x"}}, TypeError, "were removed"),
+        ({"dump": True}, TypeError, "writes no per-sample dumps"),
+    ],
+)
+def test_run_outputs_have_one_spelling(
+    tmp_path: Path, kwargs: dict[str, Any], error: type[Exception], match: str
+) -> None:
+    """Reward outputs land under the run directory only: the old path keys and a
+    dump on a reward with nothing to dump raise instead of being ignored."""
+    with pytest.raises(error, match=match):
+        KlingVideoReward(run_output_dir=str(tmp_path), scorer=_FakeRuntime(_FAKE_SCORES), **kwargs)
 
 
 def test_config_passes_the_shipped_component_shape_through_unvalidated() -> None:

@@ -19,7 +19,7 @@ class OCRReward(ModelRewardFunction):
 
     Transports: in-process (model built eagerly, media in memory, image or
     video tensors alike); ``kind=ray`` (a placement-owned PaddleOCR actor);
-    ``kind=http`` (an operator-run service). ``debug_dir`` dumps the
+    ``kind=http`` (an operator-run service). ``dump`` writes the
     best-scoring frame and the recognized lines.
     """
 
@@ -28,16 +28,12 @@ class OCRReward(ModelRewardFunction):
     default_score_key = "ocr"
     eager_model = True
     score_keys = ("ocr", "ocr_match")
+    dumps_samples = True
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
         """PaddleOCR runs CPU-only; never claim the resource-resolved GPU."""
         return "cpu"
-
-    def __init__(self, *, debug_dir: str | None = None, **kwargs: Any) -> None:
-        # ``debug_dir`` here is the model's frame dump directory, not the
-        # reward-level debug sidecar the base owns.
-        super().__init__(worker_config={"debug_dir": debug_dir}, **kwargs)
 
 
 __all__ = ["OCRReward"]

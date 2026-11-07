@@ -241,8 +241,10 @@ async def test_image_ocr_debug_dump_includes_zero_score_sample(tmp_path: Path) -
     """A zero reward must retain the image and OCR output for audit."""
     import torch
 
-    debug_dir = tmp_path / "ocr_debug"
-    reward = OCRReward(device="cpu", debug_dir=str(debug_dir), engine=_PaddleOCR2x(["JUNK"]))
+    debug_dir = tmp_path / "reward_dumps" / "ocr"
+    reward = OCRReward(
+        device="cpu", run_output_dir=str(tmp_path), dump=True, engine=_PaddleOCR2x(["JUNK"])
+    )
     sample = _make_ocr_sample(
         "ABC",
         video_tensor=torch.zeros(3, 64, 64),
@@ -271,11 +273,13 @@ async def test_image_ocr_debug_dump_continues_existing_index(tmp_path: Path) -> 
     """A restarted worker must not overwrite rollout evidence from a prior run."""
     import torch
 
-    debug_dir = tmp_path / "ocr_debug"
-    debug_dir.mkdir()
+    debug_dir = tmp_path / "reward_dumps" / "ocr"
+    debug_dir.mkdir(parents=True)
     (debug_dir / "000000_ABC_score0.000.png").touch()
     (debug_dir / "000000_ABC_score0.000.txt").touch()
-    reward = OCRReward(device="cpu", debug_dir=str(debug_dir), engine=_PaddleOCR2x(["JUNK"]))
+    reward = OCRReward(
+        device="cpu", run_output_dir=str(tmp_path), dump=True, engine=_PaddleOCR2x(["JUNK"])
+    )
 
     (
         await reward.score_batch([_make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64))])
@@ -303,7 +307,7 @@ async def test_image_ocr_debug_dump_warns_on_write_failure(
 
     monkeypatch.setattr(Image.Image, "save", fail_save)
     reward = OCRReward(
-        device="cpu", debug_dir=str(tmp_path / "ocr_debug"), engine=_PaddleOCR2x(["ABC"])
+        device="cpu", run_output_dir=str(tmp_path), dump=True, engine=_PaddleOCR2x(["ABC"])
     )
 
     with caplog.at_level(logging.WARNING, logger="vrl.rewards.models.ocr"):

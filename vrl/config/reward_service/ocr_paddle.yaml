@@ -27,4 +27,3 @@ worker_config:
   model_factory: vrl.rewards.models.ocr:OCRRewardModel
   reward_model_version: paddleocr@flow_grpo_compat
   device: cpu
-  debug_dir: null

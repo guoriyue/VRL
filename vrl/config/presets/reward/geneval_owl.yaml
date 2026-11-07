@@ -10,8 +10,6 @@ reward:
     geneval_owl: 1.0
   kwargs:
     geneval_owl:
-      # Structured detector verdicts are evidence, not scalar loss components.
-      debug_dir: ${trainer.output_dir}/reward_debug
       detector_model: google/owlv2-base-patch16-ensemble
       clip_model: openai/clip-vit-large-patch14
       # OWLv2 score floor. 0.2 dropped clearly drawn objects (traffic light

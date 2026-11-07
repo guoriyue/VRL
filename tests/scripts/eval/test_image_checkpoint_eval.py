@@ -221,6 +221,7 @@ def test_overrides_compose_the_evaluation_on_the_run_config(tmp_path, evaluation
         "sampling.num_steps=40",
         "reward.components.fake=1.0",
         "reward.kwargs.fake.rubric=lighting",
+        "reward.kwargs.fake.ocr.dump=true",
         "reward.kwargs.fake.ocr.debug_dir=/training/debug",
         "reward.kwargs.fake.guard.scored_rollout_dir=/training/scored",
     )

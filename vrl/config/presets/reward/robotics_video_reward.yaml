@@ -13,7 +13,6 @@ reward:
     robotics_video_reward:
       reward_name: robotics_video_reward
       score_key: robotics_blend
-      debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
         reward_model_version: KlingTeam/VideoReward@main+DINOv2-vits14+RAFT-small+droid-blend-v1
         data_root: ${data.artifact_data_root}

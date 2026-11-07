@@ -532,7 +532,10 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 )
         reward_fn = (
             built.reward.build_function(
-                device=reward_device, parking=reward_parking, ray_placement=ray_placement
+                device=reward_device,
+                parking=reward_parking,
+                ray_placement=ray_placement,
+                run_output_dir=built.trainer.output_dir,
             )
             if case.use_config_reward
             else _IndexReward()
@@ -650,9 +653,7 @@ def build_tensor_mean_model(worker_config):
 
 
 def _local_reward_overrides(tmp_path: Path, model_factory: str | None) -> tuple[str, ...]:
-    debug_dir = tmp_path / "reward_debug"
     overrides = [
-        f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
         "reward.kwargs.kling_video_reward.worker_config.local_files_only=true",
     ]
     if model_factory is not None:

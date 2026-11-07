@@ -58,7 +58,7 @@ class OCRRewardModel:
 
     Uses ``paddleocr`` (matches flow_grpo's engine choice) to detect text in
     sampled frames and computes reward = mean over frames with reward > 0, per
-    flow_grpo ``OcrScorer_video_or_image``. When ``debug_dir`` is set, dumps the
+    flow_grpo ``OcrScorer_video_or_image``. When ``dump_dir`` is set, dumps the
     best-scoring frame plus the exact line-level scoring decision for audit.
     """
 
@@ -67,7 +67,7 @@ class OCRRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
         self._engine: Any = cfg.get("engine")
-        debug_dir = cfg.get("debug_dir")
+        debug_dir = cfg.get("dump_dir")
         self._debug_dir = Path(debug_dir) if debug_dir else None
         self._debug_counter = 0
         if self._debug_dir is not None:

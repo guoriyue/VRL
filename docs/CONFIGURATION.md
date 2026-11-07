@@ -167,9 +167,8 @@ isolation. See the [reward configuration guide](../vrl/config/presets/reward/REA
 OCR scoring options belong under `reward.kwargs.ocr`, independently of the
 generator. The shared `reward/ocr` preset declares the defaults; select an
 engine and text-matching policy explicitly when an experiment needs different
-semantics. Optional debug artifacts use
-`'reward.kwargs.ocr.debug_dir=${trainer.output_dir}/reward_debug'` (quote shell
-interpolation). Retired OCR datasets and qualification rules are historical experiment
+semantics. `reward.kwargs.ocr.dump=true` also writes each sample's best frame
+and recognized lines under `<trainer.output_dir>/reward_dumps/ocr`. Retired OCR datasets and qualification rules are historical experiment
 evidence, not additional requirements for the shared OCR reward.
 
 ## Compose an independent evaluation policy

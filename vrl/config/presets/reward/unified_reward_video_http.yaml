@@ -21,9 +21,6 @@ reward:
     unified_reward_video:
       reward_name: unified_reward_video   # logical tag (request label)
       score_key: overall
-      # Persist raw axes for reward-hacking audits; the selected scalar alone
-      # cannot reveal alignment, physics, and style moving in opposite directions.
-      debug_dir: ${trainer.output_dir}/reward_debug
   inference:
     unified_reward_video:
       kind: http

@@ -83,8 +83,10 @@ class RewardRuntimeConfig:
         device: str,
         parking: ParkingMechanism | None,
         ray_placement: Any = None,
+        run_output_dir: str | None = None,
     ) -> Any:
-        """Build the reward function on ``device`` under ``parking``.
+        """Build the reward function on ``device`` under ``parking``, recording
+        under ``run_output_dir`` when it scores for a training run.
 
         ``MultiReward.from_mapping`` validates the components and constructs. A
         GPU-sharing reward parks its model memory completely; a dedicated
@@ -101,6 +103,7 @@ class RewardRuntimeConfig:
             parking=parking,
             inference_configs=self.inference_configs,
             ray_placement=ray_placement,
+            run_output_dir=run_output_dir,
         )
 
     def require_online_training(self) -> None:

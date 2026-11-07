@@ -443,13 +443,15 @@ class CheckpointEvaluation:
         if "total" in reward["components"]:
             raise ValueError("reward component name 'total' is reserved for the weighted score")
         # Keep destinations out of the semantic policy. Evaluation owns every debug
-        # and transport file it creates, never the training reward directories.
+        # and transport file it creates, never the training reward directories:
+        # ``dump`` writes under the training run, and the path keys are how
+        # earlier runs recorded their destinations.
         for name, settings in reward["kwargs"].items():
             reward["kwargs"][name] = dict(settings or {})
         pending = [("reward.kwargs", reward["kwargs"])]
         while pending:
             path, settings = pending.pop()
-            for key in ("debug_dir", "scored_rollout_dir", "artifact_dir"):
+            for key in ("dump", "debug_dir", "dump_dir", "scored_rollout_dir", "artifact_dir"):
                 settings.pop(key, None)
             # Composite rewards pass nested configs to their children. Check the
             # declared grouping contract without changing a judge's comparison mode

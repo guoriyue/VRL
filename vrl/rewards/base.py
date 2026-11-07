@@ -202,13 +202,17 @@ class ModelRewardFunction(RewardFunction):
     # vocabulary is nested under ``worker_config:`` in YAML sets this so a stray
     # top-level keyword is a typo, not a silent model knob.
     worker_config_only: ClassVar[bool] = False
+    # The model can write per-sample files for inspection (``dump: true``,
+    # under ``<run>/reward_dumps/<name>``); it reads ``worker_config["dump_dir"]``.
+    dumps_samples: ClassVar[bool] = False
 
     def __init__(
         self,
         *,
         reward_name: str | None = None,
         score_key: str | None = None,
-        debug_dir: str = "",
+        run_output_dir: str | None = None,
+        dump: bool = False,
         device: str | None = None,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
@@ -219,7 +223,13 @@ class ModelRewardFunction(RewardFunction):
         """Transport keywords are the explicit parameters; every other keyword
         is a model knob and joins ``worker_config``. Subclasses therefore
         declare only what they score (class attributes) and keep an
-        ``__init__`` only for a check the base cannot express."""
+        ``__init__`` only for a check the base cannot express.
+
+        ``run_output_dir`` is the training run's directory: every scored request
+        and its results are appended under ``<run>/reward_debug``, and a
+        ``dump`` lands under ``<run>/reward_dumps``. Scoring outside a run
+        passes none and writes nothing.
+        """
 
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
@@ -242,6 +252,19 @@ class ModelRewardFunction(RewardFunction):
                 f"unexpected keyword(s) {sorted(model_kwargs)}",
             )
         worker_config = {**dict(worker_config or {}), **model_kwargs}
+        moved = {"debug_dir", "dump_dir"} & worker_config.keys()
+        if moved:
+            raise TypeError(
+                f"reward options {sorted(moved)} were removed; a training run records "
+                "requests under <run>/reward_debug, and dump: true writes per-sample "
+                "files under <run>/reward_dumps",
+            )
+        if dump:
+            if not self.dumps_samples:
+                raise TypeError(f"{type(self).__name__} writes no per-sample dumps; drop dump")
+            if not run_output_dir:
+                raise ValueError(f"{self.name} dump needs the run's output directory")
+            worker_config["dump_dir"] = str(Path(run_output_dir) / "reward_dumps" / self.name)
         model_factory = self.model_factory
         if reward_name is None:
             reward_name = self.default_reward_name or self.name
@@ -324,7 +347,7 @@ class ModelRewardFunction(RewardFunction):
             )
         self._selected_score_keys = selected_score_keys
         self.scorer = scorer
-        self.debug_dir = str(debug_dir)
+        self._debug_dir = None if not run_output_dir else Path(run_output_dir) / "reward_debug"
         # Prefixes request ids and names the debug sidecar files.
         self._name = self.name
         # Parked whenever the scorer holds no device memory: before activate
@@ -468,9 +491,9 @@ class ModelRewardFunction(RewardFunction):
         results: list[RewardInferenceResult],
         phase_seconds: Mapping[str, float],
     ) -> None:
-        if not self.debug_dir:
+        if self._debug_dir is None:
             return
-        debug_path = Path(self.debug_dir)
+        debug_path = self._debug_dir
         debug_path.mkdir(parents=True, exist_ok=True)
         request_row = {
             "request_id": request.request_id,

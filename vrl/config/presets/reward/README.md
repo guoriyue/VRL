@@ -47,8 +47,10 @@ different checkpoint, revision, or threshold.
 
 Scoring takes no `media_type`, `artifact_format`, `artifact_dir`,
 `retain_artifacts` or `archive_dir` settings: the model owns its decoder format
-and rewards write no media archive. `debug_dir` remains available for
-reward-specific diagnostic records. GenEval's evaluator
+and rewards write no media archive. A training run records every component's
+requests and results under `<trainer.output_dir>/reward_debug`; a reward that
+can write per-sample files (`ocr`, `layered_grouping`) does so with `dump: true`,
+under `<trainer.output_dir>/reward_dumps/<name>`. GenEval's evaluator
 `artifact_dir` is a separate model argument, not a transport directory.
 
 Generation/reward streaming is topology-derived: it is enabled only when the

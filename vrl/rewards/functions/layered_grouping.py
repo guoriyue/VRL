@@ -15,6 +15,7 @@ class LayeredGroupingReward(ModelRewardFunction):
     name = "layered_grouping"
     default_score_key = "layered_grouping"
     eager_model = True
+    dumps_samples = True
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
