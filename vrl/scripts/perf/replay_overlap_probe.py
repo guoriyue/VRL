@@ -277,7 +277,7 @@ def main(argv: list[str] | None = None) -> None:
                 repeats=args.repeats,
                 atol=args.atol,
                 rtol=args.rtol,
-                trace_dir=output if args.trace else None,
+                trace=args.trace,
                 measure=not args.correctness_only,
             )
         )

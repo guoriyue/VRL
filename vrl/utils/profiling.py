@@ -243,7 +243,7 @@ def capture_torch_trace(
     step: int,
     device: Any,
     worker_name: str,
-    trace_subdir: str = "trainer",
+    trace_subdir: str,
 ) -> Iterator[None]:
     """Capture one step into a TensorBoard trace + summary + manifest under
     ``<run_output_dir>/torch_profiler/<trace_subdir>``.
@@ -278,8 +278,7 @@ def capture_torch_trace(
 
     if not run_output_dir:
         raise ValueError("capture_torch_trace needs the run's output directory")
-    root = Path(run_output_dir) / "torch_profiler"
-    trace_dir = root / trace_subdir if trace_subdir else root
+    trace_dir = Path(run_output_dir) / "torch_profiler" / trace_subdir
     trace_dir.mkdir(parents=True, exist_ok=True)
     safe_worker_name = f"{_safe_label(socket.gethostname())}_{_safe_label(worker_name)}_step{step}"
     logger.info(

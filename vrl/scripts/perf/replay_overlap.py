@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -356,7 +357,7 @@ def compare_updates(
     repeats: int,
     atol: float,
     rtol: float,
-    trace_dir: Any = None,
+    trace: bool = False,
     measure: bool = True,
 ) -> dict[str, Any]:
     """Compare complete updates from identical initial state after kernel warmup.
@@ -566,7 +567,9 @@ def compare_updates(
 
         # Capture after every timing arm, so profiler allocation/destruction
         # cannot contaminate the next arm's latency or allocator history.
-        if trace_dir is not None:
+        if trace:
+            trace_dir = Path(trainer.config.output_dir) / "torch_profiler" / "replay_overlap"
+            trace_dir.mkdir(parents=True, exist_ok=True)
             for mode in modes:
                 try:
                     reset()

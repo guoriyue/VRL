@@ -153,6 +153,7 @@ def test_capture_fails_fast_on_missing_activity(
             step=0,
             device="cpu",
             worker_name="t",
+            trace_subdir="trainer",
         ),
     ):
         pass
@@ -161,7 +162,12 @@ def test_capture_fails_fast_on_missing_activity(
 def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
     cfg = TorchProfilerConfig(enabled=False)
     with capture_torch_trace(
-        cfg, run_output_dir=str(tmp_path), step=0, device="cpu", worker_name="t"
+        cfg,
+        run_output_dir=str(tmp_path),
+        step=0,
+        device="cpu",
+        worker_name="t",
+        trace_subdir="trainer",
     ):
         pass
     assert not (tmp_path / "torch_profiler").exists()
@@ -242,6 +248,7 @@ def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) ->
             step=step,
             device="cpu",
             worker_name="trainer",
+            trace_subdir="trainer",
         ):
             torch.ones(2).sum()
     manifest_path = tmp_path / "torch_profiler" / "trainer" / "profile_manifest.json"
@@ -260,6 +267,7 @@ def test_capture_manifest_excludes_temporary_and_backup_files(tmp_path: Path) ->
         step=1,
         device="cpu",
         worker_name="worker",
+        trace_subdir="trainer",
     ):
         torch.ones(2).sum()
     trace_dir = tmp_path / "torch_profiler" / "trainer"
@@ -287,6 +295,7 @@ def test_capture_manifest_excludes_temporary_and_backup_files(tmp_path: Path) ->
         step=1,
         device="cpu",
         worker_name="worker",
+        trace_subdir="trainer",
     ):
         torch.ones(2).sum()
     manifest = json.loads((trace_dir / "profile_manifest.json").read_text())
