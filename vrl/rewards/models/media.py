@@ -79,7 +79,7 @@ def artifact_middle_frame_image(artifact: RewardInferenceArtifact) -> Image.Imag
         media = artifact.as_media()
         if isinstance(media, Image.Image):
             return to_pil_image(media)
-    frames = decode_artifact_frames(artifact, 1)
+    frames = decode_artifact_frames(artifact)
     return to_pil_image(frames[frames.shape[0] // 2])
 
 

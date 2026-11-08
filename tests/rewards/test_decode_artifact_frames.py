@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.media import decode_artifact_frames
+from vrl.rewards.models.media import artifact_middle_frame_image, decode_artifact_frames
 
 
 def test_inline_uint8_video_reaches_reward_as_original_normalized_pixels() -> None:
@@ -45,3 +45,19 @@ def test_inline_image_is_one_frame() -> None:
 
     assert decoded.shape == (1, 4, 5, 3)
     assert decoded[0, 0, 0].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_middle_frame_image_of_a_video_is_its_middle_frame() -> None:
+    """Image-domain rewards score frame T // 2, not the conditioning first frame."""
+
+    video = torch.arange(5, dtype=torch.uint8).mul(40).view(1, 5, 1, 1).expand(3, 5, 2, 2)
+    artifact = RewardInferenceArtifact(
+        artifact_id="inline-five-frame-video",
+        sample_id="sample-inline-five-frame-video",
+        path="",
+        media=video.contiguous(),
+    )
+
+    image = artifact_middle_frame_image(artifact)
+
+    assert image.getpixel((0, 0)) == (80, 80, 80)
