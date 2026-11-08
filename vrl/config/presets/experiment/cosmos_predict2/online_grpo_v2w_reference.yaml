@@ -1,27 +1,10 @@
 # Cosmos Predict2 2B Video2World + GRPO with per-sample reference images.
+# The Kling-reward recipe with its fixed caller-supplied reference swapped for
+# source-backed robot first frames; nothing else differs.
 # Production readiness is proven by source-backed data plus run artifacts, not by filename.
 defaults:
-- /recipe/online/cosmos_predict2_grpo
-- /model/cosmos/predict2_2b
-- /sampling/video/704p_93f
-- /sampling/denoise/35_step_cfg_7
-- /reward/kling_video_reward
+- /experiment/cosmos_predict2/online_grpo_kling_video_reward
 - /dataset/video_world_v2w
-
-actor:
-  optim:
-    lr: 1.0e-4
-  ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region, flat curve)
-
-rollout:
-  samples_per_generation_batch: 1   # 512p93f peaks ~31.8GB at sbs=1; CFG doubles the transformer batch — no sample-batch headroom on 32GB (scale gate OOM 2026-06-10)
 
 trainer:
   output_dir: outputs/cosmos_predict2_v2w_kling_video_reward
-  save_freq: 20
-  # Generation batch 1 replayed as the trainer's microbatch of 1 on the stock
-  # blocks is one computation: any drift is a different one.
-  replay_parity:
-    max_abs_logprob_diff: 1.0e-6
-  debug:
-    first_step: true

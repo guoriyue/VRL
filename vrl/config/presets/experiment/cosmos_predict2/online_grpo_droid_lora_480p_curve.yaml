@@ -85,8 +85,7 @@ actor:
   # Measured: ppo4 x 16 samples x 10 timesteps at 93f = ~4h/epoch (validation
   # run9's first completed epoch). ppo 2 + half timestep_fraction = ~1h/epoch;
   # trust region stays engaged (>1) and fractional timestep training is the
-  # flow_grpo norm. Keep in lockstep with the overfit-validation recipe — the
-  # gate must certify the same trainer semantics this run uses.
+  # flow_grpo norm. The overfit-validation gate inherits these knobs.
   ppo_epochs: 2
   timestep_fraction: 0.5
   # Explicit training floor from the 2026-07-10 93f backward probe. Replay does

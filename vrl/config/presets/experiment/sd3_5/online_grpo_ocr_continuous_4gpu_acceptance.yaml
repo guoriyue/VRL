@@ -2,14 +2,10 @@
 #
 # This is a reusable hardware gate, not a production-quality training recipe. It
 # keeps the workload small enough to profile quickly while preserving the real
-# replay/backward and rollout weight-sync paths. The GPU pools are intentionally
-# disjoint because continuous scheduling requires rollout generation to remain
-# resident while the trainer computes.
-#
-# Physical topology (CUDA_VISIBLE_DEVICES=0,1,2,3):
-#   GPU 0: single-process trainer
-#   GPU 1/2/3: one dedicated rollout worker each
-#   CPU: OCR reward
+# replay/backward and rollout weight-sync paths. It reuses the dedicated 3x1
+# topology (trainer on GPU 0, one rollout worker on each of GPUs 1-3, OCR reward
+# on CPU): continuous scheduling requires rollout generation to remain resident
+# while the trainer computes.
 #
 # Profile with:
 #   CUDA_VISIBLE_DEVICES=0,1,2,3 \
@@ -20,19 +16,8 @@
 #     .venv/bin/python -m vrl.scripts.train \
 #       --config experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance
 defaults:
-  - /experiment/sd3_5/online_grpo_ocr
+  - /experiment/sd3_5/online_grpo_ocr_dedicated_3x1
   - /base/rollout/orchestration/continuous
-
-distributed:
-  training:
-    strategy: single_process
-    gpus_per_node: 1
-  resources:
-    visible_devices: [0, 1, 2, 3]
-    trainer:
-      devices: [0]
-    rollout:
-      devices: [1, 2, 3]
 
 sampling:
   height: 128
@@ -63,7 +48,6 @@ trainer:
   output_dir: outputs/sd3_5_ocr_continuous_4gpu_acceptance
   total_epochs: 3
   save_freq: 3
-  profile: true
   debug:
     first_step: false
   rollout_orchestration:

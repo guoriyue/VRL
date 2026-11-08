@@ -7,24 +7,13 @@
 # seed + fixed eval seed -> epoch-to-epoch deltas are paired, so ~2x-paired-std
 # movement within ~30 updates is detectable without a block test).
 #
-# Why these knobs differ from online_grpo_droid_lora_480p_curve:
+# The gate must certify the trainer semantics the real curve uses, so this
+# extends online_grpo_droid_lora_480p_curve (LoRA, 480P weights, 93 frames,
+# 15 steps, PPO 2 x timestep_fraction 0.5, CPU trajectories and rewards) and
+# changes only:
 # - data: 4-row manifest (droid_overfit_validation.jsonl) = the eval rows with
 #   the LARGEST dino exact-vs-static headroom (0.37-0.39), i.e. where the reward
-#   is most climbable (selection recorded in the dataset preset's header; the
-#   probe script that picked them has been removed in favor of human review).
-# - num_steps 10 (not 35): ~3.5x faster generation, and the SDE window [0, 10)
-#   now covers EVERY denoise step -> full gradient coverage. 10-step output
-#   EYEBALLED 2026-07-02 (outputs/_overfit_preflight/10step_93f.mp4): scene +
-#   first-frame condition coherent, moving arm smeared/ghosted — usable for a
-#   can-it-climb validation. Fallback if rewards turn out all-mush: raise
-#   num_steps to 15 and KEEP the window at [0, 10] (flow_grpo's low-step-train /
-#   clean-tail trick) at ~1.5x gen cost.
-# - seedless rollouts + per-index eval seed: one seed shared by the group with
-#   samples_per_generation_batch=1 would make its members share the initial latent (the
-#   seed IS the same-latent mechanism), collapsing intra-group diversity to SDE
-#   exploration noise alone. Running seedless instead gives genuine init-latent
-#   (content) diversity at group_size 8; fixed eval stays paired via its own
-#   per-index derived seeds, so the verdict protocol is unchanged.
+#   is most climbable (selection recorded in the dataset preset's header).
 # - EMA off: its lag would mask the first ~10-20 updates of movement, which is
 #   exactly the signal this run exists to detect.
 # - motion_dynamics at weight 1.0 (not 0.2): battery measurements showed a
@@ -32,113 +21,35 @@
 #   guard weight 0.2 static collapse is a NET-POSITIVE hack (+0.5 dino - 0.2
 #   motion). At 1.0 it is net-negative; for honest (moving) samples motion
 #   saturates at 1.0 = a zero-variance constant that adds no gradient noise.
-# - eval every epoch on the same 4 prompts (n=16) — the flat-480p lesson: a
-#   run whose eval never fires cannot be judged "moved" or "not moved".
+# - guidance 7: the same-seed visual gate rejected guidance 0 as
+#   post-first-frame noise.
+# - generation batch 1: the validation runs OOMed generation at 4 (25.3 GiB
+#   worker + 4.2 GiB driver-resident).
 #
 # Verdict rule: PASS = eval r_target_dino_similarity rises > 2x its paired std
 # within ~30 updates AND reward_std stays alive (collapse to 0 = group diversity
-# died). Watch the kling-free artifact gap: this recipe saves no mp4s, so eyeball
-# via the pre-flight sample probe, not from this run's outputs.
+# died). This recipe saves no mp4s, so eyeball via a separate sample probe.
 #
 # Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 defaults:
-  - /recipe/online/cosmos_predict2_grpo
-  - /model/cosmos/predict2_2b
-  - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93 below
-  - /sampling/denoise/35_step_cfg_7   # keeps cfg 7.0; num_steps overridden to 10 below
-  - /reward/target_dino_similarity
-  - /reward/motion_dynamics
+  - /experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve
   - /dataset/droid_overfit_validation
 
-model:
-  # LoRA, not full-param: full-param 480p_93f training MEASURED not to fit 32GB
-  # in this validation's own runs (backward ckpt-recompute OOM at 29.95GiB with
-  # samples_per_generation_batch=1, after rollout release + cpu trajectories + reward
-  # placement were all in place; spc=4 and spc=2 OOM earlier in the loop).
-  # Matches the ~30.2GB trainer-alone peak measured at 33f. Full-param stays
-  # multi-GPU-gated; LoRA at lr 1e-4 is the single-card path this validation
-  # certifies.
-  use_lora: true
-  lora:
-    rank: 32
-    alpha: 32
-    target_modules: [to_q, to_k, to_v, to_out.0]
-  # Converted native-480P transformer (see online_grpo_droid_lora_480p_curve header).
-  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
-  revision: null
-  # Compile OFF: incompatible with gradient_checkpointing (predict2_2b defaults it on).
-  torch_compile:
-    enable: false
-
 sampling:
-  num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
-  # 15, not 10 (2026-07-07 rank-probe finding): at 10 steps generation is so
-  # fragile that a group's dino variance measures WHICH SDE DRAW BROKE LESS
-  # (worst draw = blob monster, 0.33 vs 0.43) — GRPO then climbs noise-path
-  # luck, which does not transfer and DEGRADES paired eval (run10: -4.5 sigma).
-  # 5 deterministic tail steps past the [0,10) SDE window restore the quality
-  # floor: the same blob-draw scores 0.44 and renders a clean arm at 15 steps,
-  # and the luck-variance collapses (group spread 0.10 -> 0.03).
-  num_steps: 15
+  guidance_scale: 7.0
 
 actor:
-  optim:
-    lr: 1.0e-4                        # LoRA lr scale (project lesson: 1e-4, not full-param's 2e-5)
-  gradient_checkpointing: true
-  # Wall-clock reality check from the first completed epoch (run9): ppo4 x 16
-  # samples x 10 timesteps at 93f = 640 micro-backwards = ~4h/epoch — a 15-epoch
-  # verdict would take 60h. ppo 2 + timestep_fraction 0.5 cuts training ~4x
-  # (~1h/epoch); ppo>1 keeps the trust region engaged (clip_fraction was 0.16
-  # at epoch 0) and fractional timestep training is the flow_grpo/DanceGRPO norm.
-  ppo_epochs: 2
-  timestep_fraction: 0.5
-  # Replay capacity is independent from rollout generation chunking. Full-param
-  # 480p_93f backward reached 29.9 GiB at 2, so keep the safe floor explicit.
-  training_microbatch_size: 1
   ema:
-    enable: false                     # validation: no averaging lag on top of the raw policy
-
+    enable: false
 
 rollout:
-  n_samples_per_prompt: 16
-  prompts_per_batch: 1                # per_sample reference mode hard-requires 1 (cosmos/train.py);
-                                      # 16 rollouts/update via the bigger group instead — same budget,
-                                      # lower advantage noise, prompts rotate across epochs
-  samples_per_generation_batch: 1                # generation only: full-param 480p_93f OOMs at 4
-                                      # (25.3GiB worker + 4.2GiB driver-resident); P1's 1.4x
-                                      # larger-batch evidence measured this phase only
-  # Seedless rollouts (2026-07-07): every request seed comes from the driver RNG. A fixed seed would
-  # make every batch share the initial latent (the seed IS the same-latent
-  # mechanism), so the group's only diversity was SDE noise paths — run10 showed
-  # GRPO then optimizes path luck. Seedless gives genuine init-latent (content)
-  # diversity; fixed eval stays paired via its own per-index derived seeds.
-  trajectory_storage:
-    device: cpu                       # 93f trajectories on the GPU wire OOM the driver at collect
-                                      # handoff (worker still holds ~23.5GiB gen memory while the
-                                      # driver deserializes) — park them on host RAM (~1.7GB)
-
-distributed:
-  rollout:
-    pipelined: true
+  samples_per_generation_batch: 1
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_overfit_validation
   total_epochs: 40
   save_freq: 20
-  debug: { first_step: true }
-  # spp 2 (eval n=8/point): each eval video costs ~35s gen + reward; n=16 added
-  # ~20min/epoch. The paired design keeps n=8 judgeable across a dense freq=1 series.
 
 reward:
   components:
-    target_dino_similarity: 1.0
-    motion_dynamics: 1.0              # anti-static guard must dominate (see header)
-  kwargs:
-    # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
-    # parking; CPU scoring keeps the single-GPU handoff sound.
-    target_dino_similarity:
-      worker_config:
-        device: cpu
-    motion_dynamics:
-      worker_config:
-        device: cpu
+    motion_dynamics: 1.0
