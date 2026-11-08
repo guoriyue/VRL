@@ -7,7 +7,7 @@
 # seed + fixed eval seed -> epoch-to-epoch deltas are paired, so ~2x-paired-std
 # movement within ~30 updates is detectable without a block test).
 #
-# Why these knobs differ from online_grpo_droid_full_target_480p:
+# Why these knobs differ from online_grpo_droid_lora_480p_curve:
 # - data: 4-row manifest (droid_overfit_validation.jsonl) = the eval rows with
 #   the LARGEST dino exact-vs-static headroom (0.37-0.39), i.e. where the reward
 #   is most climbable (selection recorded in the dataset preset's header; the
@@ -55,8 +55,7 @@ model:
   # in this validation's own runs (backward ckpt-recompute OOM at 29.95GiB with
   # samples_per_generation_batch=1, after rollout release + cpu trajectories + reward
   # placement were all in place; spc=4 and spc=2 OOM earlier in the loop).
-  # Matches the ~30.2GB trainer-alone peak documented by the LoRA sibling
-  # (online_grpo_droid_full_target_480p_lora.yaml) at 33f. Full-param stays
+  # Matches the ~30.2GB trainer-alone peak measured at 33f. Full-param stays
   # multi-GPU-gated; LoRA at lr 1e-4 is the single-card path this validation
   # certifies.
   use_lora: true
@@ -64,7 +63,7 @@ model:
     rank: 32
     alpha: 32
     target_modules: [to_q, to_k, to_v, to_out.0]
-  # Converted native-480P transformer (see online_grpo_droid_full_target_480p header).
+  # Converted native-480P transformer (see online_grpo_droid_lora_480p_curve header).
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   revision: null
   # Compile OFF: incompatible with gradient_checkpointing (predict2_2b defaults it on).
