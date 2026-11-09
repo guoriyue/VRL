@@ -12,7 +12,8 @@ two questions after a run:
   (``eps_damping``, that RMS over the same RMS without eps), and the fraction
   of elements whose ``sqrt(v_hat)`` sits below eps (``eps_dominated``).
 * Between consecutive checkpoints of one series: how far the trained
-  parameters moved (``relative_change`` = ||delta|| / ||before||) and the net
+  parameters moved (``relative_change`` = ||delta|| / ||before||), which
+  trained tensors did not move at all (``unmoved_tensors``), and the net
   displacement RMS per optimizer step in units of the later checkpoint's
   learning rate (``net_update_to_lr``). Net displacement is not the per-step
   update size: steps whose signs alternate cancel, so a healthy run with noisy
@@ -167,6 +168,7 @@ def parameter_change(
     shared = sorted(before.keys() & after.keys())
     elements = 0
     changed = 0
+    unmoved: list[str] = []
     delta_squared = 0.0
     before_squared = 0.0
     for name in shared:
@@ -175,7 +177,10 @@ def parameter_change(
         if old.shape != new.shape:
             raise ValueError(f"{name}: shape {tuple(old.shape)} -> {tuple(new.shape)}")
         elements += old.numel()
-        changed += int((new != old).sum())
+        tensor_changed = int((new != old).sum())
+        changed += tensor_changed
+        if not tensor_changed:
+            unmoved.append(name)
         delta_squared += float((new - old).square().sum())
         before_squared += float(old.square().sum())
     net_rms = math.sqrt(delta_squared / elements) / steps if elements and steps > 0 else None
@@ -184,6 +189,9 @@ def parameter_change(
         "tensors": len(shared),
         "unmatched_tensors": len(before.keys() ^ after.keys()),
         "changed_fraction": changed / elements if elements else None,
+        # A trained tensor no update touched: no gradient reached it, or the
+        # optimizer does not hold it. The element fraction above averages it away.
+        "unmoved_tensors": unmoved,
         "relative_change": math.sqrt(delta_squared / before_squared) if before_squared else None,
         "net_update_rms_per_step": net_rms,
         "net_update_to_lr": net_rms / lr if net_rms is not None and lr else None,
@@ -271,8 +279,11 @@ def _print_report(report: Mapping[str, Any]) -> None:
                 f"relative_change={_number(interval['relative_change'])} "
                 f"net_update_to_lr={_number(interval['net_update_to_lr'])} "
                 f"changed_fraction={_number(interval['changed_fraction'])} "
-                f"unmatched_tensors={interval['unmatched_tensors']}",
+                f"unmatched_tensors={interval['unmatched_tensors']} "
+                f"unmoved_tensors={len(interval['unmoved_tensors'])}",
             )
+            for name in interval["unmoved_tensors"]:
+                print(f"    unmoved: {name}")
 
 
 def main(argv: list[str] | None = None) -> None:

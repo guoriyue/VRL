@@ -101,3 +101,25 @@ def test_sub_ulp_updates_of_a_bf16_model_show_through_its_fp32_masters(tmp_path:
     assert interval["unmatched_tensors"] == 0
     assert interval["changed_fraction"] > 0.9
     assert interval["relative_change"] > 0
+
+
+def test_a_tensor_no_gradient_reaches_is_named_as_unmoved(tmp_path: Path) -> None:
+    torch.manual_seed(0)
+    layer = torch.nn.Linear(16, 16)
+    optimizer = torch.optim.AdamW(layer.parameters(), lr=1e-3, weight_decay=0.0)
+    for step in (1, 2):
+        optimizer.zero_grad()
+        # The bias never enters the loss, so it never receives a gradient.
+        (torch.randn(8, 16) @ layer.weight.t()).sum().backward()
+        optimizer.step()
+        _save(
+            tmp_path / f"checkpoint-{step}",
+            step=step,
+            layer=layer,
+            trainer={"optimizer": optimizer.state_dict()},
+        )
+
+    ((interval,),) = (series["intervals"] for series in build_report([tmp_path])["series"])
+
+    assert interval["unmoved_tensors"] == ["policy.bias"]
+    assert interval["relative_change"] > 0
