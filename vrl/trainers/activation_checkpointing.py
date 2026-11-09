@@ -13,11 +13,16 @@ the cheap norm/pointwise/dropout -- the native-PyTorch equivalent of Megatron's
 selective recompute. Measured win on SD3.5-medium 1024² / 5090: selective recovers
 ~2/3 of full's recompute tax and reaches batches that no-checkpointing OOMs on. See
 archive/main-20261016:docs/sprints/parked/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
-``selective_attention`` saves only the attention outputs, the op whose
-recompute costs the most time per byte kept, and recomputes every other op. Measured on one
-Qwen-Image-Layered block (17.6k tokens, batch 2, 5090): the GEMM + attention
-set keeps 2.6 GB per block, 157 GB over 60 blocks, to cut its backward from
-246 to 175 ms; the attention output is 0.2 GB per block and cuts it to 212 ms.
+``selective_attention`` saves the outputs whose recompute costs the most time
+per byte kept -- attention, then the token GEMMs that reduce width (an MLP down
+projection: 2K flops per output element for a K wider than the output) -- and
+recomputes every other op. Measured on fused Qwen-Image-Layered blocks (17.6k
+tokens, batch 1, LoRA r32, 5090), fwd+bwd per block and bytes kept per block:
+no checkpointing 110.6 ms / 1846 MB, full 151.4 / 70, attention only
+134.0 / 175, attention + down projection 128.1 / 279, every GEMM 115.6 / 1105.
+Per MB kept, attention saves 166 us, the down projection 57 us, the remaining
+projections 15 us. Over a two-update layered GRPO run the down projection cut
+the backward 7% for about 3 GB more peak memory, replay parity still bitwise.
 """
 
 from __future__ import annotations
@@ -49,11 +54,8 @@ _ATTENTION_SAVE_OPS = {
     torch.ops.aten._scaled_dot_product_efficient_attention.default,
     torch.ops.aten._scaled_dot_product_cudnn_attention.default,
 }
-_GRADIENT_CHECKPOINT_SAVE_OPS = {
-    torch.ops.aten.mm.default,
-    torch.ops.aten.addmm.default,
-    torch.ops.aten.bmm.default,
-} | _ATTENTION_SAVE_OPS
+_GEMM_OPS = {torch.ops.aten.mm.default, torch.ops.aten.addmm.default}
+_GRADIENT_CHECKPOINT_SAVE_OPS = _GEMM_OPS | {torch.ops.aten.bmm.default} | _ATTENTION_SAVE_OPS
 
 
 def _selective_checkpoint_policy(ctx, op, *args, **kwargs):
@@ -81,14 +83,24 @@ def selective_checkpoint_func(module, *args):
     )
 
 
+# Fewer rows than this are per-sample conditioning vectors or a short text
+# stream: their GEMMs are microseconds, not worth a saved tensor.
+_MIN_SAVED_GEMM_ROWS = 64
+
+
 def _attention_saving_policy(ctx, op, *args, **kwargs):
     if op in _ATTENTION_SAVE_OPS:
         return CheckpointPolicy.MUST_SAVE
+    if op in _GEMM_OPS:
+        mat1, mat2 = (args[1], args[2]) if op is torch.ops.aten.addmm.default else args[:2]
+        width_in, width_out = mat1.shape[-1], mat2.shape[-1]
+        if width_in > width_out and mat1.numel() // width_in >= _MIN_SAVED_GEMM_ROWS:
+            return CheckpointPolicy.MUST_SAVE
     return CheckpointPolicy.PREFER_RECOMPUTE
 
 
 def attention_saving_checkpoint_func(module, *args):
-    """``selective_checkpoint_func`` saving only the attention outputs."""
+    """``selective_checkpoint_func`` saving attention and width-reducing GEMM outputs."""
     return checkpoint(
         module.__call__,
         *args,
@@ -110,8 +122,8 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
 
     Mode is off | full | full_cpu | selective | selective_attention
     (``ActorSection.gradient_checkpointing_mode``). ``selective`` uses SAC to
-    recompute only the cheap ops; ``selective_attention`` saves only the
-    attention outputs; ``full`` recomputes
+    recompute only the cheap ops; ``selective_attention`` saves attention and
+    width-reducing GEMM outputs; ``full`` recomputes
     every block. If a module's ``enable_gradient_checkpointing`` cannot accept a
     custom func, either SAC mode falls back to full for that module with a
     warning — never silently, so the run log states what it actually got.

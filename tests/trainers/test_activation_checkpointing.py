@@ -175,12 +175,15 @@ class _AttentionBlock(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.qkv = torch.nn.Linear(8, 24)
+        self.up = torch.nn.Linear(8, 32)
+        self.down = torch.nn.Linear(32, 8)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         q, k, v = self.qkv(x).unflatten(-1, (3, 2, 4)).permute(2, 0, 3, 1, 4)
-        return x + torch.nn.functional.scaled_dot_product_attention(q, k, v).transpose(
-            1, 2
-        ).flatten(2)
+        x = x + torch.nn.functional.scaled_dot_product_attention(q, k, v).transpose(1, 2).flatten(
+            2
+        )
+        return x + self.down(torch.nn.functional.gelu(self.up(x)))
 
 
 class _CountAttention(torch.utils._python_dispatch.TorchDispatchMode):
@@ -194,12 +197,12 @@ class _CountAttention(torch.utils._python_dispatch.TorchDispatchMode):
         return func(*args, **(kwargs or {}))
 
 
-def test_attention_saving_checkpoint_recomputes_everything_but_attention() -> None:
+def test_attention_saving_checkpoint_never_recomputes_attention() -> None:
     from vrl.trainers.activation_checkpointing import attention_saving_checkpoint_func
 
     torch.manual_seed(0)
     blocks = torch.nn.ModuleList([_AttentionBlock() for _ in range(3)])
-    x = torch.randn(2, 6, 8, requires_grad=True)
+    x = torch.randn(2, 40, 8, requires_grad=True)
 
     def run(func):
         out = x
@@ -218,3 +221,25 @@ def test_attention_saving_checkpoint_recomputes_everything_but_attention() -> No
     actual = [x.grad, *(p.grad for p in blocks.parameters())]
     for got, want in zip(actual, expected, strict=True):
         torch.testing.assert_close(got, want)
+
+
+def test_attention_saving_policy_keeps_token_gemms_that_reduce_width() -> None:
+    """A GEMM whose output is narrower than its input costs the most recompute per byte kept."""
+
+    from torch.utils.checkpoint import CheckpointPolicy
+
+    from vrl.trainers.activation_checkpointing import _attention_saving_policy
+
+    mm, addmm = torch.ops.aten.mm.default, torch.ops.aten.addmm.default
+    tokens, vectors = 80, 2
+    expand = (torch.empty(tokens, 8), torch.empty(8, 32))
+    reduce = (torch.empty(tokens, 32), torch.empty(32, 8))
+    reduce_vectors = (torch.empty(vectors, 32), torch.empty(32, 8))
+
+    def policy(op, *args):
+        return _attention_saving_policy(None, op, *args)
+
+    assert policy(mm, *reduce) is CheckpointPolicy.MUST_SAVE
+    assert policy(addmm, torch.empty(8), *reduce) is CheckpointPolicy.MUST_SAVE
+    assert policy(mm, *expand) is CheckpointPolicy.PREFER_RECOMPUTE
+    assert policy(mm, *reduce_vectors) is CheckpointPolicy.PREFER_RECOMPUTE

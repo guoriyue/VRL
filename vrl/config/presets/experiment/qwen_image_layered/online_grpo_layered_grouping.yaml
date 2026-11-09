@@ -52,9 +52,10 @@ actor:
     # default eps of 1e-8 and the update shrinks to ~0.3% of lr.
     eps: 1.0e-12
   prompts_per_collection: 1
-  # Keep every block's attention output (0.1 GB per block per 10-layer
-  # sample) and recompute the rest: the trainer's peak stays near 23 GB, and
-  # the backward drops 648 -> 475 s a step with the fused kernels.
+  # Keep every block's attention and MLP down-projection outputs (0.28 GB
+  # per block per 10-layer sample) and recompute the rest: with the fused
+  # kernels the backward drops 648 -> 475 s a step for attention alone, and a
+  # further 7% for the down projection at ~23.5 GB nvidia-smi peak.
   gradient_checkpointing: selective_attention
   offload: true
   # Per sample, batch 1 costs what batch 2 does (60 streamed blocks: 7.8 s
