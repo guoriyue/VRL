@@ -34,3 +34,8 @@ trainer:
   save_freq: 60
   debug:
     first_step: true
+  replay_parity:
+    # The vendored transformer runs every block and modulation one sample at a
+    # time, so the replay is bitwise at any generation batch: 2.4e-7 over 150
+    # updates of the nsfw_act sibling (LoRA active). Held at every update.
+    max_abs_logprob_diff: 1.0e-6

@@ -108,4 +108,3 @@ trainer:
   # 2026-10/11 layered runs).
   replay_parity:
     max_abs_logprob_diff: 0.0
-    every_update: true

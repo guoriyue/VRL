@@ -25,9 +25,18 @@ trainer:
   save_freq: 60
   debug:
     first_step: true
+  replay_parity:
+    # Bitwise under model.fused_kernels (two-model probe on the pickscore
+    # sibling, LoRA B ~ N(0, 0.01), generation batch 16 replayed as batch 1:
+    # max |delta logprob| 0, 5090, 2026-11-11); the gate holds that at every update.
+    max_abs_logprob_diff: 1.0e-6
 
 model:
-  # Flow-GRPO SD3 doesn't compile during GRPO; also avoids recompiles when
-  # zero-advantage filtering changes the replay microbatch size.
+  # Batch-invariant linears and LoRA adapters on both roles: the 16-sample
+  # rollout replayed one sample at a time otherwise drifts by 7e-3 to 9e-3 per
+  # step once the LoRA has left zero. The fused kernels and torch.compile are
+  # alternatives (vrl/config/validation.py); Flow-GRPO SD3 does not compile
+  # during GRPO either.
+  fused_kernels: true
   torch_compile:
-    enable: true   # launch-bound profile (P0 trace): elementwise 47%, 1M kernels/step
+    enable: false

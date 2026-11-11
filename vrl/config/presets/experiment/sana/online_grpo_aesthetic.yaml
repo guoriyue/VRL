@@ -48,6 +48,11 @@ trainer:
   save_freq: 25
   debug:
     first_step: true
+  replay_parity:
+    # Equal batch shape, one dtype, eager on both roles replays bitwise (SANA
+    # two-model probe and a 60-update LoRA run, 5090, 2026-11-11). Held at
+    # every update.
+    max_abs_logprob_diff: 1.0e-6
 
 reward:
   components:

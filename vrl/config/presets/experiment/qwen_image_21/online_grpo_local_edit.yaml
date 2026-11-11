@@ -46,3 +46,13 @@ trainer:
   save_freq: 10
   debug:
     first_step: true
+  replay_parity:
+    # Bitwise under model.fused_kernels at any pair of generation and replay
+    # batch sizes (probed on the layered recipe, same blocks); held at every update.
+    max_abs_logprob_diff: 1.0e-6
+
+model:
+  # Rollout and replay run the same fused block kernels and batch-invariant
+  # linears, so the 4-sample rollout replayed one sample at a time stays
+  # bitwise once the LoRA has left zero.
+  fused_kernels: true

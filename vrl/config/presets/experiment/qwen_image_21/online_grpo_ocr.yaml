@@ -48,3 +48,14 @@ trainer:
   save_freq: 60
   debug:
     first_step: true
+  replay_parity:
+    # The fused blocks and batch-invariant linears replay bitwise at any pair of
+    # generation and replay batch sizes (probed on the layered recipe, same
+    # transformer blocks); held at every update.
+    max_abs_logprob_diff: 1.0e-6
+
+model:
+  # Rollout and replay run the same fused block kernels and batch-invariant
+  # linears, so the 8-sample rollout replayed one sample at a time stays
+  # bitwise once the LoRA has left zero (qwen_image_layered/online_grpo_layered_grouping).
+  fused_kernels: true

@@ -37,6 +37,9 @@ algorithm:
 
 model:
   use_lora: false               # FULL-PARAM: shard + train the whole transformer
+  # The parent's batch-invariant kernels are unmeasured under FSDP2; parity
+  # comes from the batch shape instead (rollout batch 1 == replay microbatch 1).
+  fused_kernels: false
   torch_compile:
     enable: false               # eager: compiled FSDP2 replay is allowed but unmeasured here
 
@@ -68,4 +71,8 @@ actor:
 rollout:
   prompts_per_batch: 1
   n_samples_per_prompt: 8
-  samples_per_generation_batch: 4
+  # One sample per generation batch, matching the replay microbatch of 1 (the
+  # OnlineBatchConfig default): without the fused kernels, batch 4 replayed as
+  # batch 1 drifts by 3.7e-3 per step on SD3.5 Medium (bf16, eager), inside the
+  # parent's 1e-6 gate only at equal batch shapes.
+  samples_per_generation_batch: 1

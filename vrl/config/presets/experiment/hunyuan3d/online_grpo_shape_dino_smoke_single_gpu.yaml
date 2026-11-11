@@ -45,7 +45,10 @@ actor:
 rollout:
   n_samples_per_prompt: 4
   prompts_per_batch: 2
-  samples_per_generation_batch: 2
+  # Equal to the replay microbatch (1): the family has no batch-invariant
+  # kernels, and a LoRA's rank-sized GEMMs pick a different cuBLAS kernel per
+  # batch shape once the adapter has left zero.
+  samples_per_generation_batch: 1
 
 trainer:
   output_dir: outputs/hunyuan3d_shape_dino_grpo_smoke_single_gpu

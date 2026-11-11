@@ -60,6 +60,11 @@ trainer:
   save_freq: 10               # 20 periodic checkpoints plus checkpoint-final
   debug:
     first_step: true          # fail before the first optimizer step on bad parity
+  replay_parity:
+    # Equal batch shape, one dtype, eager on both roles replays bitwise: 0 in
+    # the two-model probe and over 60 LoRA updates (5090, 2026-11-11). Held at
+    # every update.
+    max_abs_logprob_diff: 1.0e-6
 
 reward:
   components:

@@ -38,7 +38,16 @@ trainer:
   save_freq: 50
   debug:
     first_step: true              # the lr=0 advantage-antisymmetry invariant
+  replay_parity:
+    # Bitwise under model.fused_kernels (two-model probe on the GRPO sibling,
+    # generation batch 16 replayed as batch 1, LoRA active); held at every update.
+    max_abs_logprob_diff: 1.0e-6
 
 model:
+  # Batch-invariant linears and LoRA adapters: the 16-sample rollout replayed
+  # one sample at a time otherwise drifts by 7e-3 to 9e-3 per step once the
+  # LoRA has left zero. The fused LoRA path defers to PEFT for disabled
+  # adapters, so the reference pass (adapter off) is unaffected.
+  fused_kernels: true
   torch_compile:
     enable: false                 # adapter switching per forward; keep eager
