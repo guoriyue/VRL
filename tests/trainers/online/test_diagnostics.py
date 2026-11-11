@@ -169,10 +169,11 @@ class TestDiagnostics:
         assert record["event"] == "replay_parity_gate"
         assert record["passed"] is True
 
-        # The proof belongs to this process/backend, so later updates do not
-        # repeat it until load_state_dict resets the lifecycle.
+        # Under strict scheduling the gate holds on every later update too: a
+        # LoRA's batch dependence only appears once the adapter has left zero.
         later_mismatch = InitialReplayStats(logprob_abs_diff_max=1.0, finite=True)
-        trainer._validate_first_update_parity(later_mismatch, local_weight=1.0)
+        with pytest.raises(RuntimeError, match="replay parity failed"):
+            trainer._validate_first_update_parity(later_mismatch, local_weight=1.0)
 
     def test_fully_filtered_update_still_serializes_metrics_row(
         self, monkeypatch, tmp_path
@@ -240,35 +241,26 @@ class TestDiagnostics:
         assert tb.trainer.state.global_step == 0
         assert _unchanged(tb, before)
 
-    def test_intentional_precision_correction_uses_its_bounded_drift_contract(
-        self, monkeypatch, tmp_path, caplog
-    ) -> None:
-        trainer = _trainer(
-            monkeypatch, tmp_path, "trainer.precision_correction.tis_mode=truncate"
-        ).trainer
+    def test_first_update_only_parity_skips_later_updates(self, monkeypatch, tmp_path) -> None:
+        """``every_update=false`` keeps the first proof and never re-checks."""
 
-        drift = InitialReplayStats(logprob_abs_diff_max=1.0, finite=True)
-        with caplog.at_level("WARNING", logger="vrl.trainers.online.trainer"):
-            resolved = trainer._validate_first_update_parity(drift, local_weight=1.0)
-
-        # Correction modes bound or bypass the drift inside the loss, so the
-        # gate must not stop the run, but it still measures and reports it.
-        assert resolved.logprob_abs_diff_max == pytest.approx(1.0)
-        assert trainer._replay_parity_passed is False
-        record = json.loads(
-            (Path(trainer.config.output_dir) / "training_debug.jsonl").read_text().strip()
+        tb = _trainer(monkeypatch, tmp_path, "trainer.replay_parity.every_update=false")
+        trainer = tb.trainer
+        trainer._validate_first_update_parity(
+            InitialReplayStats(logprob_abs_diff_max=0.0, finite=True), local_weight=1.0
         )
-        assert record["event"] == "replay_parity_gate"
-        assert record["passed"] is False
-        assert record["enforced"] is False
-        assert "driver_trainable_before_step" in record
-        assert any("precision_correction is enabled" in m for m in caplog.messages)
+        trainer._validate_first_update_parity(
+            InitialReplayStats(logprob_abs_diff_max=1.0, finite=True), local_weight=1.0
+        )
+
+        assert [r["passed"] for r in _debug_records(tb)] == [True]
 
     def test_every_update_parity_records_the_digest_only_on_first_proof_and_failure(
         self, monkeypatch, tmp_path
     ) -> None:
-        tb = _trainer(monkeypatch, tmp_path, "trainer.replay_parity.every_update=true")
+        tb = _trainer(monkeypatch, tmp_path)
         trainer = tb.trainer
+        assert trainer.config.replay_parity.every_update is True
         for _ in range(2):
             trainer._validate_first_update_parity(
                 InitialReplayStats(logprob_abs_diff_max=0.0, finite=True), local_weight=1.0

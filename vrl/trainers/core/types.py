@@ -56,30 +56,34 @@ class DebugConfig:
     first_step: bool = field(default=False)
 
 
-# With precision correction (TIS / RS / recompute) on, the replay-parity gate
-# tolerates drift beyond the recipe threshold but still fails past this bound:
-# an importance weight off by more than 10x, or a non-finite replay.
-CORRECTED_REPLAY_MAX_ABS_LOG_RATIO = math.log(10.0)
-
-
 @dataclass(slots=True)
 class ReplayParityConfig:
     """Unchanged-policy rollout/replay parity threshold.
 
     ``max_abs_logprob_diff`` bounds |replay - rollout| of the per-step log-prob
-    before the first optimizer update (and on every update with
-    ``every_update``). The default 0.01 catches gross mismatches -- a broken
-    weight sync, a timestep or CFG disagreement, a precision split -- on bf16
-    recipes whose kernels are not bit-identical across the two backends. It
-    does NOT certify that the residual drift is harmless: GRPO recipes clip at
-    ``clip_ratio`` 1e-4, so any drift the threshold admits still moves the PPO
-    ratio. Set the threshold per recipe from a measured drift: bit-exact
-    configurations (fp32, or the same compiled graph on both sides, e.g. the
-    SANA full-parameter preset) pin it at 1e-6.
+    before the optimizer update. The default 0.01 catches gross mismatches -- a
+    broken weight sync, a timestep or CFG disagreement, a precision split -- on
+    bf16 recipes whose kernels are not bit-identical across the two backends.
+    It does NOT certify that the residual drift is harmless: GRPO recipes clip
+    at ``clip_ratio`` 1e-4, so any drift the threshold admits still moves the
+    PPO ratio. Set the threshold per recipe from a measured drift: bit-exact
+    configurations (the same batch shape, dtype and kernels on both sides, or
+    ``model.fused_kernels``) pin it at 1e-6.
+
+    ``every_update`` decides whether the bound is checked before every
+    optimizer update or only before the first one. The first update cannot
+    stand for the run: a LoRA adapter starts at zero, so its rank-sized GEMMs
+    contribute nothing to the first replay and a batch-shape dependence on
+    that path (SD3.5 Medium, generation batch 16 replayed one sample at a
+    time: 0 before the first update, 7e-3 to 9e-3 from the second) only shows
+    once the adapter has moved. ``None`` resolves to every update under strict
+    scheduling and to the first update only under continuous scheduling,
+    whose later batches carry samples of older policy versions, so their
+    log-ratio measures a real policy change rather than the two backends.
     """
 
     max_abs_logprob_diff: float = field(default=0.01)
-    every_update: bool = field(default=False)
+    every_update: bool | None = field(default=None)
 
     def __post_init__(self) -> None:
         limit = float(self.max_abs_logprob_diff)

@@ -210,60 +210,30 @@ def test_streaming_all_filtered_update_does_not_advance_policy(monkeypatch, tmp_
     assert _unchanged(tb, before)
 
 
-@pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("scale", [0.05, 0.3], ids=["inside_bound", "beyond_bound"])
-def test_corrected_replay_fails_parity_only_at_the_catastrophic_bound(
-    monkeypatch,
-    tmp_path,
-    streaming: bool,
-    scale: float,
-) -> None:
-    """Correction relaxes the recipe parity threshold, not the ln(10) bound."""
-
-    from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
+def test_off_policy_correction_does_not_relax_the_parity_gate(monkeypatch, tmp_path) -> None:
+    """TIS bounds an off-policy weight; a drifted replay still fails the recipe threshold."""
 
     tb = real_trainer(
         monkeypatch,
         tmp_path,
-        overrides=(
-            "trainer.precision_correction.tis_mode=truncate",
-            # One optimizer step per update in both arms.
-            "actor.ppo_epochs=1",
-            *(_STREAMING if streaming else ()),
-        ),
+        # TIS needs an off-policy replay: the second epoch trains weights newer
+        # than the rollout's.
+        overrides=("trainer.precision_correction.tis_mode=truncate", "actor.ppo_epochs=2"),
     )
-    _corrupt_weight_sync(monkeypatch, tb, scale)
+    _corrupt_weight_sync(monkeypatch, tb, 0.05)
     before = _snapshot(tb)
     _seed()
 
-    async def run_update():
-        return await tb.trainer.step(["a cat"])
-
-    try:
-        asyncio.run(run_update())
-        failure = None
-    except RuntimeError as error:
-        failure = error
+    with pytest.raises(RuntimeError, match="replay parity failed"):
+        asyncio.run(tb.trainer.step(["a cat"]))
 
     records = _debug_records(tb)
     assert [record["event"] for record in records] == ["replay_parity_gate"]
     gate = records[0]
-    drift = gate["max_abs_diff"]
-    beyond_bound = drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
-    # Each scale lands on its intended side of the bound, and both are
-    # beyond the recipe threshold that correction relaxes.
-    assert drift > tb.trainer.config.replay_parity.max_abs_logprob_diff
-    assert beyond_bound is (scale == 0.3)
+    assert gate["max_abs_diff"] > tb.trainer.config.replay_parity.max_abs_logprob_diff
     assert gate["passed"] is False
-    assert gate["enforced"] is beyond_bound
-    if beyond_bound:
-        assert failure is not None and "replay parity failed" in str(failure)
-        assert tb.trainer.state.global_step == 0
-        assert _unchanged(tb, before)
-    else:
-        assert failure is None
-        assert tb.trainer.state.global_step == 1
-        assert not _unchanged(tb, before)
+    assert tb.trainer.state.global_step == 0
+    assert _unchanged(tb, before)
 
 
 def test_streaming_scaler_skipped_update_does_not_publish_weights(monkeypatch, tmp_path) -> None:

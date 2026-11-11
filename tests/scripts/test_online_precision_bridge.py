@@ -15,11 +15,17 @@ from vrl.config.loading import load_config
     ("format_name", "expected_label"),
     [("fp8", "bf16+fp8"), ("nvfp4", "bf16+nvfp4")],
 )
-def test_rollout_precision_split_auto_derives_correction_policy(
+def test_rollout_precision_split_enables_no_loss_side_correction(
     format_name: str,
     expected_label: str,
 ):
-    """A low-precision rollout split is a user intent; correction is derived."""
+    """A quantized rollout keeps the default (off) correction and the full parity gate.
+
+    TIS/RS bound an off-policy importance weight by a factor of two; a
+    quantization gap (fp8 4e-2, nvfp4 1.8e-1 per step on SD3.5 Medium) never
+    reaches that band, so deriving them from the split would only relax the
+    gate that measures the gap.
+    """
     cfg = _with_precision(
         "sd3_5/online_grpo_ocr",
         _rollout_quantization_policy(format_name),
@@ -30,36 +36,8 @@ def test_rollout_precision_split_auto_derives_correction_policy(
 
     assert built.precision.training.label == "bf16"
     assert built.precision.rollout.label == expected_label
-    # The auto split-precision policy is whatever the builder helper installs;
-    # assert the whole struct equals that single source, not a per-field copy of
-    # its constants (which would falsely fail on any retune of the policy).
-    assert trainer_config.precision_correction == PrecisionCorrectionConfig(
-        tis_mode="truncate",
-        rs_mode="seq_mean_k1",
-    )
-
-
-def test_explicit_precision_correction_is_respected_on_rollout_split():
-    """Expert correction blocks override the auto split-precision defaults."""
-    cfg = _with_precision(
-        "sd3_5/online_grpo_ocr",
-        _rollout_fp8_policy(),
-    )
-    cfg = OmegaConf.merge(
-        cfg,
-        OmegaConf.create(
-            {
-                "trainer": {
-                    "precision_correction": {"tis_mode": "off", "rs_mode": "off"},
-                },
-            },
-        ),
-    )
-
-    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
-
-    assert trainer_config.precision_correction.tis_mode == "off"
-    assert trainer_config.precision_correction.rs_mode == "off"
+    assert trainer_config.precision_correction == PrecisionCorrectionConfig()
+    assert trainer_config.replay_parity.every_update is True
 
 
 def _with_precision(experiment, block):
@@ -73,10 +51,6 @@ def _plain_policy(dtype: str) -> dict:
         "training": {"dtype": dtype},
         "rollout": {"dtype": dtype},
     }
-
-
-def _rollout_fp8_policy() -> dict:
-    return _rollout_quantization_policy("fp8")
 
 
 def _rollout_quantization_policy(format_name: str) -> dict:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
@@ -216,7 +216,6 @@ class TrainerConfig:
         collected and reported together with full YAML paths.
         """
 
-        from vrl.config.precision import PrecisionPolicy
         from vrl.config.schema import ActorSection, TrainerSection
 
         sections = {"actor": root.actor, "trainer": root.trainer}
@@ -266,27 +265,24 @@ class TrainerConfig:
         if missing:
             raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
 
-        # The precision policy is a pure projection of root.precision; the
-        # trainer fields that depend on it are derived from it here.
-        precision = PrecisionPolicy.from_section(root.precision)
         payload.update(batch_config=OnlineBatchConfig.from_root(root))
         orchestration = payload.get("rollout_orchestration") or RolloutOrchestrationConfig()
-        payload["versioned_weight_sync"] = orchestration.schedule_mode == "continuous" and bool(
+        continuous = orchestration.schedule_mode == "continuous"
+        payload["versioned_weight_sync"] = continuous and bool(
             root.model is not None and root.model.use_lora
         )
-        # On a rollout/train precision split, the correction mechanism is an
-        # implementation detail the user should not have to spell out: default to
-        # truncated IS plus sequence-mean rejection (the replay-parity gate still
-        # fails on catastrophic drift, CORRECTED_REPLAY_MAX_ABS_LOG_RATIO). An
-        # explicit expert trainer.precision_correction is respected.
-        if not precision.stages_match:
-            from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-
-            explicit = set() if root.trainer is None else root.trainer.model_fields_set
-            if "precision_correction" not in explicit:
-                payload["precision_correction"] = PrecisionCorrectionConfig(
-                    tis_mode="truncate", rs_mode="seq_mean_k1"
-                )
+        # The parity gate runs before every update unless the schedule replays
+        # stale samples, whose log-ratio is a policy change, not a backend gap.
+        parity = payload.get("replay_parity") or ReplayParityConfig()
+        if parity.every_update is None:
+            payload["replay_parity"] = replace(parity, every_update=not continuous)
+        elif parity.every_update and continuous:
+            raise ValueError(
+                "trainer.replay_parity.every_update=true cannot combine with "
+                "schedule_mode='continuous': from the second update on, the batch "
+                "holds samples of older policy versions, whose replay log-ratio "
+                "measures the policy change rather than rollout/replay parity.",
+            )
 
         config = cls(**payload)
         algorithm = root.algorithm
@@ -336,7 +332,8 @@ class TrainerConfig:
                 "released microbatch cannot be replayed across epochs "
                 f"(got ppo_epochs={self.ppo_epochs})",
             )
-        if self.precision_correction.recompute_old_logprob == "on" and self.replays_off_policy:
+        correction = self.precision_correction
+        if correction.recompute_old_logprob == "on" and self.replays_off_policy:
             raise ValueError(
                 "precision_correction.recompute_old_logprob='on' replaces the rollout "
                 "log-prob with the trainer's pre-update replay log-prob, which is only "
@@ -344,6 +341,21 @@ class TrainerConfig:
                 f"staleness; got ppo_epochs={self.ppo_epochs}, "
                 f"schedule_mode={self.rollout_orchestration.schedule_mode!r}. Use 'off' "
                 "(bypass) with the TIS/RS for off-policy replay.",
+            )
+        if (
+            correction.tis_mode != "off" or correction.rs_mode != "off"
+        ) and not self.replays_off_policy:
+            raise ValueError(
+                "precision_correction.tis_mode / rs_mode bound an off-policy importance "
+                "weight (cap 2, band [0.5, 2]); with actor.ppo_epochs=1 and strict "
+                "scheduling the ratio carries only the rollout/replay numerics gap, "
+                "which stays two orders of magnitude inside that band (per-step "
+                "|delta logprob| at most 1e-1 under fp8) and is consumed by the 1e-4 "
+                "clip instead, so neither mode ever fires. Remove the gap "
+                "(model.fused_kernels, or actor.training_microbatch_size == "
+                "rollout.samples_per_generation_batch, one dtype for both roles) "
+                "and keep the replay-parity gate; TIS/RS need actor.ppo_epochs>1 "
+                "or schedule_mode='continuous'.",
             )
 
     @property

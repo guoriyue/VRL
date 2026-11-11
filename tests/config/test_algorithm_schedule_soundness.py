@@ -3,9 +3,11 @@
 Each objective's config class declares, as class attributes, whether it
 scores against the current weights (no off-policy staleness) and whether its
 loss is an active trust region.
-Resolution rejects a schedule that breaks either declaration, and a
-``recompute_old_logprob`` correction under off-policy replay, before any model
-or Ray worker exists. Every case swaps presets on a real SD3.5 experiment.
+Resolution rejects a schedule that breaks either declaration, a
+``recompute_old_logprob`` correction under off-policy replay and a TIS/RS bound
+under on-policy replay, and resolves the replay-parity cadence from the
+schedule, before any model or Ray worker exists. Every case swaps presets on a
+real SD3.5 experiment.
 """
 
 from __future__ import annotations
@@ -79,3 +81,34 @@ def test_recomputed_old_logprob_requires_on_policy_replay(schedule) -> None:
 
     on_policy = _build(_RECOMPUTE, "actor.ppo_epochs=1").trainer
     assert on_policy.precision_correction.recompute_old_logprob == "on"
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "trainer.precision_correction.tis_mode=truncate",
+        "trainer.precision_correction.rs_mode=seq_mean_k1",
+    ],
+)
+def test_tis_rs_require_off_policy_replay(bound: str) -> None:
+    """TIS/RS cap an off-policy weight; the on-policy ratio carries only kernel noise."""
+
+    with pytest.raises(ValueError, match="neither mode ever fires"):
+        _build(bound, "actor.ppo_epochs=1")
+
+    assert _build(bound, "actor.ppo_epochs=2", _FULL_BATCH).trainer.ppo_epochs == 2
+    continuous = _build(bound, "actor.ppo_epochs=1", _CONTINUOUS).trainer
+    assert continuous.rollout_orchestration.schedule_mode == "continuous"
+
+
+def test_replay_parity_cadence_follows_the_schedule() -> None:
+    """Strict scheduling gates every update; continuous batches replay stale samples."""
+
+    assert _build("actor.ppo_epochs=1").trainer.replay_parity.every_update is True
+    assert _build(_CONTINUOUS).trainer.replay_parity.every_update is False
+    assert (
+        _build("trainer.replay_parity.every_update=false").trainer.replay_parity.every_update
+        is False
+    )
+    with pytest.raises(ValueError, match="every_update=true cannot combine"):
+        _build(_CONTINUOUS, "trainer.replay_parity.every_update=true")

@@ -102,7 +102,17 @@ zero-initialized state adds rank-sized GEMMs whose cuBLAS kernel still depends
 on the batch: with the probe's `--lora-b-std 0.01`, SD3.5 rollout batch 8
 replayed as batch 1 reaches max |Δlogprob| 5.1e-2 (first divergence `to_q.lora_A`), batch 8 replayed
 as batch 8 is bitwise, and `batch_invariant_ops` brings batch 8→1 to 4.8e-7.
-LoRA runs therefore keep the generation batch equal to the replay batch.
+LoRA runs therefore either keep the generation batch equal to the replay batch
+(`actor.training_microbatch_size == rollout.samples_per_generation_batch`, the
+SANA recipes) or set `model.fused_kernels: true`, whose batch-invariant linears
+and LoRA adapters replay bitwise at any pair of batch sizes (SD3.5 Medium,
+generation batch 16 replayed as batch 1 with an active LoRA: max |Δlogprob| 0;
+the fused kernels and `torch.compile` are alternatives). The replay-parity gate
+(`trainer.replay_parity`) checks the recipe threshold before every update by
+default: the first update alone cannot certify a LoRA run, because the adapter
+is still zero there and its batch dependence only appears from the second
+update (SD3.5 Medium, generation batch 8 replayed as batch 1: 0, then 7e-3 to
+9e-3 per step). Recipes measured bitwise pin the threshold at 1e-6.
 
 Attention backends are a separate source. Each SDPA backend is batch-invariant
 on its own, but flash, efficient and cuDNN attention reduce in different orders:
@@ -160,10 +170,19 @@ real rollout-to-BF16-replay drift and reward gate. NVFP4 is the complete scaling
 scheme. The old generic `format: fp4` spelling is rejected; use `format: nvfp4`.
 
 A quantized rollout differs from an unquantized replay even when both base dtypes
-are BF16. VRL therefore treats the full role policy as different and enables its
-rollout/replay precision correction; the replay-parity gate then warns on drift
-beyond `trainer.replay_parity.max_abs_logprob_diff` and fails on a non-finite
-replay or an absolute log-ratio above ln(10).
+are BF16: on SD3.5 Medium an fp8 rollout moves the per-step log-prob by 4e-2
+and NVFP4 by 1.8e-1 against a bf16 replay, so with the diffusion GRPO clip of
+1e-4 nearly every step leaves the trust region before the first update and half
+of them land on the zero-gradient branch. No loss-side correction recovers
+this: the truncated importance weight (`trainer.precision_correction.tis_mode`,
+cap 2) and sequence rejection (`rs_mode`, band [0.5, 2]) are off-policy bounds
+that a numerics gap never reaches, so the trainer accepts them only under
+`actor.ppo_epochs > 1` or continuous scheduling, and the replay-parity gate
+enforces `trainer.replay_parity.max_abs_logprob_diff` on a quantized rollout
+exactly as on any other. A quantized rollout therefore needs a threshold
+measured for that recipe, and the measured runs (SANA, fp8 rollout, 60
+updates) show the gradient spent on pulling the replay density onto the
+rollout's rather than on the reward.
 
 ## Prompt encoders
 

@@ -144,13 +144,11 @@ class LogprobMismatchStats:
 
 @dataclass(slots=True)
 class PrecisionCorrectionConfig:
-    """Rollout->replay drift correction knobs (TIS + RS), all at the trainer level.
+    """Off-policy importance-weight bounds (TIS + RS), all at the trainer level.
 
-    The correction counterpart to the replay-parity gate: the gate
-    measures/fails on drift; this bounds it in the loss. ``old_log_prob`` IS the
-    rollout (behavior) logprob in this codebase, so the surrogate ratio
-    ``exp(replay - rollout)`` is exactly the importance weight TIS truncates and
-    its log is what RS rejects on. Two orthogonal axes:
+    ``old_log_prob`` IS the rollout (behavior) logprob in this codebase, so the
+    surrogate ratio ``exp(replay - rollout)`` is exactly the importance weight
+    TIS truncates and its log is what RS rejects on. Two orthogonal axes:
 
     **TIS** (per-element weight magnitude). ``off`` keeps legacy behavior;
     ``truncate`` = one-sided upper cap; ``clip`` = two-sided; ``mask`` = drop
@@ -190,15 +188,20 @@ class PrecisionCorrectionConfig:
     log-prob then carries a real off-policy correction), and the replay parity
     gate keeps measuring the rollout-recorded value so the drift stays visible.
 
-    **Combination contract.** Under fp8/bf16 rollout + bypass, drift must be
-    bounded: the replay-parity gate (which checks parity before the first step)
-    fail-stops on a catastrophic precision split
-    (``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO``) while RS (``seq_mean_k1``) keeps
-    out-of-band trajectories out of the per-step gradient. The gate evaluates
-    reduced ``LogprobMismatchStats``; RS evaluates the per-sample or per-sequence
-    log-ratio inside the loss. Their thresholds and reductions serve different
-    decisions. TIS and RS may be
-    enabled together.
+    **Scope.** TIS and RS are off-policy tools, not a precision correction:
+    the trainer accepts them only when a replay trains weights newer than its
+    behavior policy (``ppo_epochs > 1`` or continuous scheduling). A
+    rollout/replay numerics gap never reaches their bands: measured on SANA
+    and SD3.5 Medium, a batch-shape, compile or SDPA-backend split moves the
+    per-step log-prob by 1e-3 to 1e-2 and an fp8 rollout by up to 1e-1, so the
+    importance weight stays within a few percent of 1 while the cap sits at 2
+    and the RS band at [0.5, 2]. What acts on that gap is the 1e-4 PPO clip,
+    which zeroes the gradient of half the steps and lets the other half pull
+    the replay density onto the rollout's; a correction that fires would only
+    add a second clip. The gap is removed at its source (the same batch shape,
+    dtype and kernels on both sides, or ``model.fused_kernels``), and the
+    replay-parity gate enforces the recipe threshold regardless of these
+    modes. TIS and RS may be enabled together.
     """
 
     tis_mode: str = "off"  # "off" | "truncate" | "clip" | "mask"

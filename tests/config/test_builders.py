@@ -123,17 +123,18 @@ def test_online_build_rejects_missing_or_all_zero_reward() -> None:
 
 
 @pytest.mark.parametrize(
-    ("rollout_dtype", "stages_match", "correction_mode"),
+    ("rollout_dtype", "stages_match"),
     [
-        ("bf16", True, "off"),
-        ("fp16", False, "truncate"),
+        ("bf16", True),
+        ("fp16", False),
     ],
 )
 def test_precision_role_split_is_resolved_once_into_trainer(
     rollout_dtype: str,
     stages_match: bool,
-    correction_mode: str,
 ) -> None:
+    """A precision split is a measured recipe decision; it enables no loss-side correction."""
+
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[f"precision.rollout.dtype={rollout_dtype}"],
@@ -143,7 +144,8 @@ def test_precision_role_split_is_resolved_once_into_trainer(
 
     assert built.trainer is not None
     assert built.precision.stages_match is stages_match
-    assert built.trainer.precision_correction.tis_mode == correction_mode
+    assert built.trainer.precision_correction.tis_mode == "off"
+    assert built.trainer.precision_correction.rs_mode == "off"
 
 
 def test_typed_root_is_a_strategy_builder_input() -> None:
