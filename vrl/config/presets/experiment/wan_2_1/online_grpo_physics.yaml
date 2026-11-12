@@ -20,11 +20,11 @@ algorithm:
   kl_coef: 0.004
 
 model:
-  # Compile is a policy-transformer build choice. Keep rollout and train replay on
-  # the same compiled kernels instead of one-sided compile.
-  torch_compile:
-    enable: true
-    mode: default
+  # One block kernel and batch-invariant linears on both sides: the generation
+  # batch below replays bitwise as the trainer's microbatch of 1 (1.3B, 240p x
+  # 33f, LoRA off zero: max |dlogprob| 0; stock blocks 1.4e-1). Compile (off in
+  # model/wan_2_1/1_3b) and the fused kernels are alternatives.
+  fused_kernels: true
 
 rollout:
   prompts_per_batch: 1
@@ -37,6 +37,9 @@ rollout:
 trainer:
   output_dir: outputs/wan_1_3b_physics
   save_freq: 20
+  # Measured bitwise under the fused kernels: any drift is a different computation.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
 
 # Final weighted combination — overrides the per-reward defaults each
 # `/reward/...` import declared. Kling MQ at 0.7, VideoCon-Physics at 0.3.

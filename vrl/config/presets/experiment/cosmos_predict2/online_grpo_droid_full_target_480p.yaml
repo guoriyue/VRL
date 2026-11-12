@@ -28,10 +28,8 @@ model:
   # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   revision: null
-  # Compile OFF: at 480p_93f full-param we NEED grad-ckpt for memory. Compile with full
-  # checkpointing is allowed since 2026-10-20 (validation.compile_conflicts) but is
-  # unmeasured for this recipe, so it keeps the measured eager+checkpointing branch.
-  # predict2_2b defaults torch_compile.enable=true.
+  # Compile OFF (the predict2_2b default, repeated here): at 480p_93f full-param
+  # we NEED grad-ckpt for memory, and compile is not parity-safe.
   torch_compile:
     enable: false
 
@@ -62,6 +60,10 @@ trainer:
   output_dir: outputs/cosmos_pred2_droid_full_target_480p
   total_epochs: 300
   save_freq: 50
+  # Generation batch 1 replayed as the trainer's microbatch of 1 on the stock
+  # blocks is one computation: any drift is a different one.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   debug: {first_step: true}
 
 reward:

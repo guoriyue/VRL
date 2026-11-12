@@ -13,11 +13,14 @@ actor:
   ppo_epochs: 1
 
 model:
-  # Compile is a policy-transformer build choice. This recipe opts into
-  # compile-both locally while the shared I2V model default remains conservative.
-  torch_compile:
-    enable: true
-    mode: default
+  # One block kernel and batch-invariant linears on both sides, so the
+  # generation batch below replays as the trainer's microbatch of 1 without
+  # drift. Measured bitwise on the 1.3B T2V at 240p x 33f (generation batch 8,
+  # LoRA off zero); the 14B I2V shares the block path but is unmeasured at this
+  # geometry, and the gate below stops the run on the first nonzero step.
+  # Compile (off in model/wan_2_1/i2v_14b) and the fused kernels are
+  # alternatives.
+  fused_kernels: true
 
 rollout:
   samples_per_generation_batch: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
@@ -26,6 +29,8 @@ trainer:
   total_epochs: 5
   output_dir: outputs/wan_i2v_14b_physics_smoke
   save_freq: 5
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
 
 reward:
   components:

@@ -114,6 +114,19 @@ is still zero there and its batch dependence only appears from the second
 update (SD3.5 Medium, generation batch 8 replayed as batch 1: 0, then 7e-3 to
 9e-3 per step). Recipes measured bitwise pin the threshold at 1e-6.
 
+The video families follow the same rule. With the LoRA off zero
+(`--lora-b-std 0.01`) on the RTX 5090 at 240p x 33f, eager: Wan 2.1 1.3B
+generation batch 8 replayed as batch 1 under `model.fused_kernels` is bitwise
+(stock blocks 1.4e-1), as is generation batch 1 replayed as batch 1 on the
+stock blocks; Cosmos Predict2.5 2B generation batch 4 replayed as batch 1 under
+the fused kernels is bitwise, and Cosmos Predict2 2B video-to-world (full
+parameter, per-frame timesteps) reaches 1.9e-9. `torch.compile` is not a
+parity mechanism even when it covers both roles: it builds separate inference
+and training graphs, and a LoRA recipe at generation batch 1 replayed as batch 1
+measured 9.1e-2 compiled against 0 eager (2026-08-28), so every online recipe
+that reads a rollout log-prob runs eager (the DiffusionNFT recipes keep compile:
+likelihood-free, they read none).
+
 Attention backends are a separate source. Each SDPA backend is batch-invariant
 on its own, but flash, efficient and cuDNN attention reduce in different orders:
 on SD3.5 a flash rollout replayed with cuDNN or efficient attention reaches

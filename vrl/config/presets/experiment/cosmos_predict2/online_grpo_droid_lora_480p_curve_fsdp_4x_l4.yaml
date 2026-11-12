@@ -28,6 +28,10 @@ distributed:
       precision_policy: none
 
 model:
+  # Generation batch 1 (below) replayed as the trainer's microbatch of 1 on
+  # the stock blocks is one computation; the parent's fused kernels are
+  # unmeasured under FSDP2, so this recipe stays on the stock blocks.
+  fused_kernels: false
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.
   torch_compile:
     enable: false

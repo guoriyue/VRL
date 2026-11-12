@@ -25,13 +25,11 @@ defaults:
   - /dataset/videophy
 
 
-# Compile-both: same rationale as the NFT sibling — rollout and train replay run
-# the SAME compiled kernel, so compile adds zero rollout/train logprob drift
-# (mode=default is the only LoRA+grad-ckpt-safe mode).
-model:
-  torch_compile:
-    enable: true
-    mode: default
+# Eager on both sides (the model/cosmos/predict2_5_2b default). Compile builds
+# separate inference and training graphs, so a compiled rollout and its
+# compiled replay are two computations (LoRA recipe, generation batch 1
+# replayed as 1: max |dlogprob| 9.1e-2 compiled, 0 eager; 2026-08-28). The NFT
+# sibling keeps compile: likelihood-free, it reads no rollout log-prob.
 
 actor:
   optim:
@@ -68,6 +66,11 @@ trainer:
   # one optimizer update over the prompts_per_batch=32 target batch.
   total_epochs: 256
   save_freq: 32
+  # Generation batch 1 replayed as the trainer's microbatch of 1 on the stock
+  # blocks is one computation (the fused blocks at generation batch 4 replayed
+  # as 1 measured 0 on the 5090 at 240p x 33f): any drift is a different one.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   # First-step replay parity: rollout logprob must equal fresh replay logprob
   # before the first update — separates "weak signal" from "broken replay".
   debug:

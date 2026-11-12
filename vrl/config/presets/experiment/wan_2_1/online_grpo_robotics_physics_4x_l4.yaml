@@ -47,13 +47,6 @@ actor:
 algorithm:
   kl_coef: 0.004
 
-model:
-  # Rollout and replay use the same compiled transformer kernels so numerical
-  # drift is checked against the actual production execution path.
-  torch_compile:
-    enable: true
-    mode: default
-
 distributed:
   training:
     strategy: single_process
@@ -99,5 +92,11 @@ trainer:
   output_dir: outputs/wan_robotics_physics_4x_l4/run
   total_epochs: 200
   save_freq: 10
+  # Eager on both sides (model/wan_2_1/1_3b), generation batch 1 replayed as
+  # the trainer's microbatch of 1 on the stock blocks: bitwise (1.3B, 240p x
+  # 33f, LoRA off zero: max |dlogprob| 0), so any drift is a different
+  # computation.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   debug:
     first_step: true

@@ -46,8 +46,15 @@ model:
     target_modules: [to_q, to_k, to_v, to_out.0]
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   revision: null
+  # One block kernel and batch-invariant linears on both sides, so the
+  # generation batch below replays bitwise as the trainer's microbatch of 1
+  # once the LoRA has left zero (2B video-to-world, 240p x 33f, generation
+  # batch 4: max |dlogprob| 2e-9 on the 5090; the Predict2.5 LoRA path 0).
+  # Compile (off in model/cosmos/predict2_2b) and the fused kernels are
+  # alternatives.
+  fused_kernels: true
   torch_compile:
-    enable: false                     # incompatible with gradient_checkpointing
+    enable: false
 
 sampling:
   num_frames: 93
@@ -85,10 +92,12 @@ rollout:
   n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)
   prompts_per_batch: 1
   # Generation-side chunking: 1->4 measured 1.40x on this exact model/shape
-  # (2026-06-29 A/B: 139.6->99.5 s/batch, gen peak 25.3GB fits, old==fresh
-  # logprob bit-exact). The old memory-floor=1 applied when this knob also
-  # drove the replay backward; that side is now resolved independently via
-  # actor.training_microbatch_size above.
+  # (2026-06-29 A/B: 139.6->99.5 s/batch, gen peak 25.3GB fits). The
+  # "old==fresh logprob bit-exact" of that A/B was measured on the first
+  # update, where the LoRA is still zero; the fused kernels above keep it
+  # bitwise once the adapter moves. The old memory-floor=1 applied when this
+  # knob also drove the replay backward; that side is now resolved
+  # independently via actor.training_microbatch_size above.
   samples_per_generation_batch: 4
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
@@ -101,6 +110,9 @@ trainer:
   output_dir: outputs/cosmos_pred2_droid_lora_480p_curve
   total_epochs: 200
   save_freq: 10                       # resumable via trainer.resume_from after a crash/preemption
+  # Measured bitwise under the fused kernels: any drift is a different computation.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   debug: { first_step: true }
 
 reward:

@@ -31,6 +31,11 @@ model:
       - to_q
       - to_v
 
+  # Off: compile builds separate inference and training graphs, so a compiled
+  # rollout and its compiled replay are two computations (LoRA recipe, generation
+  # batch 1 replayed as 1: max |dlogprob| 9.1e-2 compiled, 0 eager; 2026-08-28).
+  # The online recipes take model.fused_kernels instead (one block kernel on
+  # both sides, batch-invariant linears).
   torch_compile:
-    enable: true
+    enable: false
     mode: default              # 'default' | 'reduce-overhead' | 'max-autotune'

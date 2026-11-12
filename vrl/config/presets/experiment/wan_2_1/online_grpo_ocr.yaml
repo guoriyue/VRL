@@ -18,11 +18,20 @@ actor:
   # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
   host_memory_budget_fraction: 0.9
 
+model:
+  # One block kernel and batch-invariant linears on both sides: the generation
+  # batch below replays bitwise as the trainer's microbatch of 1 (this recipe,
+  # LoRA off zero: max |dlogprob| 0; stock blocks 1.4e-1).
+  fused_kernels: true
+
 rollout:
   prompts_per_batch: 4
   samples_per_generation_batch: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
 
 trainer:
   output_dir: outputs/wan_1_3b_ocr_grpo
+  # Measured bitwise under the fused kernels: any drift is a different computation.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   debug:
     first_step: true

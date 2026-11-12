@@ -13,12 +13,12 @@ model:
     vae_decode:
       tiling: true
 
-  # Enabled 2026-06-15 (SPRINT_gemm_utilization.md P2): measured 1.37x rollout /
-  # 1.25x train speedup on RTX 5090, from inductor fusing ~2.6-2.9x fewer kernel
-  # launches (this load is launch-bound). Peak memory ~unchanged. Compile hits the
-  # same self.transformer on both rollout and train (backbone.py:152), so the
-  # logprob parity path stays equivalent -- confirm the replay-parity gate
-  # stays green on the next real run. Benefit narrows at full video-length grids.
+  # Off. Compile measured 1.37x rollout / 1.25x train on the RTX 5090
+  # (2026-06-15, launch-bound load), but it builds separate inference and
+  # training graphs, so a compiled rollout and its compiled replay are two
+  # computations (LoRA recipe, generation batch 1 replayed as 1: max |dlogprob|
+  # 9.1e-2 compiled, 0 eager; 2026-08-28). The online recipes that batch the
+  # rollout take model.fused_kernels instead.
   torch_compile:
-    enable: true
+    enable: false
     mode: default

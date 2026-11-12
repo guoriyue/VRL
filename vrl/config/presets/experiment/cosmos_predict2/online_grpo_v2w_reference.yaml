@@ -19,5 +19,9 @@ rollout:
 trainer:
   output_dir: outputs/cosmos_predict2_v2w_kling_video_reward
   save_freq: 20
+  # Generation batch 1 replayed as the trainer's microbatch of 1 on the stock
+  # blocks is one computation: any drift is a different one.
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
   debug:
     first_step: true

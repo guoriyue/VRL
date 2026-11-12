@@ -439,10 +439,13 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics() ->
         parent.actor,
         resolve=True,
     )
-    assert OmegaConf.to_container(cfg.model, resolve=True) == OmegaConf.to_container(
-        parent.model,
-        resolve=True,
-    )
+    model = OmegaConf.to_container(cfg.model, resolve=True)
+    parent_model = OmegaConf.to_container(parent.model, resolve=True)
+    assert isinstance(model, dict) and isinstance(parent_model, dict)
+    # The block kernels are a hardware leaf: the parent's fused blocks are
+    # unmeasured under FSDP2, and the child's equal batch shapes need none.
+    assert model.pop("fused_kernels") is False and parent_model.pop("fused_kernels") is True
+    assert model == parent_model
     assert OmegaConf.to_container(cfg.data, resolve=True) == OmegaConf.to_container(
         parent.data,
         resolve=True,

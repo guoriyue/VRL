@@ -52,8 +52,7 @@ actor:
   timestep_selection: sde_window
   timestep_fraction: 1.0
   # Mandatory at this geometry: the 32,760-token replay backward OOM'd a
-  # 44.4GiB L40S under compile-alone (measured 2026-08-16). Compile is scoped
-  # to the rollout instead (see model.torch_compile).
+  # 44.4GiB L40S under compile-alone (measured 2026-08-16).
   gradient_checkpointing: full
   ema:
     enable: true          # reference: EMAModuleWrapper(trainable_parameters,
@@ -66,18 +65,16 @@ algorithm:
   # deviates from 1 ONLY through rollout-vs-replay numeric drift: this knob is
   # a drift rail, not a trust region (FlashGRPOConfig says so in as many
   # words), and every clipped sample is signal thrown away for no trust-region
-  # benefit. It must therefore sit ABOVE the measured drift, which on this
-  # stack is larger than the paper's: bf16 replay against a COMPILED rollout
+  # benefit. Before the fused kernels, bf16 replay against a COMPILED rollout
   # measured ratio_abs_dev_max 1.95e-3 / logprob_abs_diff_max 2.15e-3 on the
-  # first update. The paper's 1e-3 left pre_update_clip_fraction at 0.51 —
+  # first update: the paper's 1e-3 left pre_update_clip_fraction at 0.51 —
   # half the batch gated on noise — and the inherited 1e-4 (from
   # recipe/online/denoise_grpo.yaml, which shadows the FlashGRPOConfig
-  # dataclass default) left it at 0.78. 1e-2 is 5x the observed max drift and
-  # retained here as the historical PPO clipping setting, not a parity
-  # tolerance. Exact replay acceptance below rejects any pre-update drift.
-  # BF16 trajectory storage was subsequently shown to contribute ~1.95e-3
-  # even with identical predictions; compilation is not the sole cause.
-  # Watch pre_update_clip_fraction on update 1: it must be near zero.
+  # dataclass default) left it at 0.78. 1e-2 is retained as the historical
+  # PPO clipping setting, not a parity tolerance: the exact replay acceptance
+  # below rejects any pre-update drift, so pre_update_clip_fraction must be 0.
+  # BF16 trajectory storage alone contributed ~1.95e-3 with identical
+  # predictions, hence the fp32 trajectory storage in the rollout block.
   clip_ratio: 1.0e-2
   kl_coef: 0.0            # reference: no KL term; clip_ratio is the rail
   # Flash-GRPO normalizes with the std of the whole 96-sample update; under
@@ -86,13 +83,18 @@ algorithm:
 
 model:
   local_files_only: true
-  torch_compile:
-    enable: true
-    # Rollout only, measured 446s -> 324s per 4-video group. Compiling the
-    # FSDP2 replay with full checkpointing is allowed but unmeasured at this
-    # geometry, so the trainer keeps its measured eager branch.
-    scope: rollout
-    mode: default
+  # The generation batch below must cover a whole prompt group (the SDE window
+  # is drawn per request), so the rollout cannot match the per-sample replay by
+  # batch shape; the fused blocks and batch-invariant linears make the two
+  # batch shapes one computation instead (Wan 1.3B, generation batch 8
+  # replayed as 1 with the LoRA off zero: max |dlogprob| 0 on the 5090, stock
+  # blocks 1.4e-1). Unmeasured under FSDP2 at this geometry: the exact gate in
+  # the trainer block stops the first update on any nonzero step.
+  # The earlier rollout-only compile measured 446s -> 324s per 4-video group,
+  # but a compiled rollout against an eager replay drifted 2.15e-3 on the
+  # first update, and compile excludes the fused kernels; it stays off
+  # (model/wan_2_1/1_3b).
+  fused_kernels: true
 
 distributed:
   training:

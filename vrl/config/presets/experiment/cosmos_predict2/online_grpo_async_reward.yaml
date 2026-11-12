@@ -45,6 +45,11 @@ model:
   use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune); 480p full-param needs FSDP/multi-GPU
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers   # 480p-native weights (720p weights = garbage at 480p)
   revision: null
+  # One block kernel and batch-invariant linears on both sides, so the
+  # generation batch below replays bitwise as the trainer's microbatch of 1
+  # (2B video-to-world, 240p x 33f, generation batch 4: max |dlogprob| 2e-9 on
+  # the 5090).
+  fused_kernels: true
   torch_compile:
     enable: false
 
@@ -71,6 +76,10 @@ trainer:
   total_epochs: 300
   save_freq: 50
   debug: {first_step: true}
+  # Measured bitwise under the fused kernels: any drift is a different
+  # computation (continuous scheduling gates the first update only).
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-6
 
   rollout_orchestration:
     continuous:
