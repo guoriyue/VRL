@@ -67,7 +67,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     assert pair.evaluator.noise_level == 0.37
     assert pair.evaluator.sde_type == "cps"
     assert collector_config.denoise is not None
-    assert collector_config.denoise.denoise_mode == "native"
+    assert collector_config.denoise.denoise_mode == "sde"
     assert pair.algorithm.config.component_weights == built.reward.weights
 
 

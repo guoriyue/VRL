@@ -21,7 +21,9 @@ algorithm:
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 1
-  denoise_mode: native
+  # Draw each step from the density the log-prob describes; see
+  # wan_2_1_grpo for the 'native' path's deterministic action.
+  denoise_mode: sde
   noise_level: 0.7
   sde:
     type: cps

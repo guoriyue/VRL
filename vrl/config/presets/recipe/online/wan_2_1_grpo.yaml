@@ -8,5 +8,10 @@ defaults:
 
 rollout:
   n_samples_per_prompt: 8
-  # Wan rolls out through its native denoise path; set by every wan experiment.
-  denoise_mode: native
+  # The SDE path draws each step from the density its log-prob describes.
+  # The earlier 'native' path stored the scheduler's deterministic step as the
+  # action and scored it under the SDE proposal: the standardized residual of
+  # that action had E[z^2] = 0.01 instead of 1 (full_sequence_probe, 1.3B at
+  # 240p x 33f), so the "log-prob" was a quadratic in the model output rather
+  # than the density of a draw and E[grad log pi] != 0.
+  denoise_mode: sde
