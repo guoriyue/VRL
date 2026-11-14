@@ -13,10 +13,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from vrl.nn.quantization.targeting import (
-    DEFAULT_EXCLUDE,
-    LinearTargetProfile,
-)
+from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 
 
 class _FrozenGemm(torch.autograd.Function):
@@ -53,17 +50,12 @@ class QuantizedLinear(nn.Module):
     master; master-free rollout caches move as raw bytes and preserve their exact
     format.
 
-    They also own their module-tree swap policy: ``default_target_profile`` is the
-    validated production scope for the scheme, and ``can_replace`` rejects shapes
-    its kernels cannot take. ``swap_linears`` is the one traversal both feed.
+    They also own their module-tree swap policy: ``can_replace`` rejects shapes
+    the scheme's kernels cannot take, and ``swap_linears`` is the one traversal.
     """
 
     quantization_scheme: str
     cache_buffer_names: tuple[str, ...] = ()
-    # The scheme's validated production scope. Annotation-only so a new scheme
-    # that forgets it fails loudly on the first default-profile swap instead of
-    # silently inheriting another scheme's accuracy/perf trade-off.
-    default_target_profile: LinearTargetProfile
 
     def _requantize_weight(self) -> None:
         """Rebuild derived low-precision buffers from ``self.weight``."""
@@ -110,8 +102,8 @@ class QuantizedLinear(nn.Module):
         """Replace eligible ``nn.Linear`` modules under ``root`` with ``cls`` in place.
 
         A Linear is quantized when its dotted path matches no ``exclude``
-        substring, belongs to ``cls.default_target_profile``, meets
-        ``min_features`` on both dimensions, and passes ``cls.can_replace``. ``init_kwargs`` reach the
+        substring, meets ``min_features`` on both dimensions, and passes
+        ``cls.can_replace``. ``init_kwargs`` reach the
         scheme constructor (fp8's ``recipe``). Returns the dotted paths swapped.
         """
 
@@ -125,8 +117,6 @@ class QuantizedLinear(nn.Module):
                     continue
                 path = f"{parent_path}.{child_name}" if parent_path else child_name
                 if any(token in path for token in exclude):
-                    continue
-                if not cls.default_target_profile.matches(path):
                     continue
                 if child.in_features < min_features or child.out_features < min_features:
                     continue

@@ -3,9 +3,8 @@
 ``dtype`` is the ordinary parameter precision for a role; ``outer_autocast``
 selects whether the shared diffusion boundary also applies that dtype through
 AMP. Selective quantization is a separate kernel policy layered on the dtype:
-FP8 replaces eligible attention/MLP Linears, while experimental NVFP4
-conservatively replaces eligible MLP Linears only. Unswapped operations keep
-the role dtype.
+FP8 and NVFP4 replace the eligible attention/MLP Linears. Unswapped operations
+keep the role dtype.
 
 Rollout dtype and outer-autocast behavior default to the training role.
 Prompt-encoder dtype defaults to the resolved rollout dtype unless explicitly

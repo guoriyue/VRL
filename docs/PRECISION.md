@@ -193,9 +193,8 @@ precision:
       format: nvfp4
 ```
 
-NVFP4 is an experimental Blackwell-only rollout path. It conservatively replaces
-eligible MLP Linears; attention projections remain at `rollout.dtype` pending the
-real rollout-to-BF16-replay drift and reward gate. NVFP4 is the complete scaling
+NVFP4 is a Blackwell-only path. It replaces the same eligible attention
+projections and MLP Linears as FP8. NVFP4 is the complete scaling
 scheme. The old generic `format: fp4` spelling is rejected; use `format: nvfp4`.
 
 A quantized rollout differs from an unquantized replay even when both base dtypes

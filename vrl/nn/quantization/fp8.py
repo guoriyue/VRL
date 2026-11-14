@@ -31,7 +31,6 @@ from torch import nn
 
 from vrl.nn.quantization.base import QuantizedLinear
 from vrl.nn.quantization.formats import FP8_E4M3_MAX
-from vrl.nn.quantization.targeting import LinearTargetProfile
 
 
 class Fp8Linear(QuantizedLinear):
@@ -45,9 +44,6 @@ class Fp8Linear(QuantizedLinear):
 
     quantization_scheme = "fp8"
     cache_buffer_names = ("weight_fp8", "weight_scale")
-    # ``attention_mlp`` is the production FP8 scope; ``mlp_only`` exists to give
-    # the conservative NVFP4 targeting a matched-scope comparison.
-    default_target_profile = LinearTargetProfile.ATTENTION_MLP
 
     def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
         super().__init__()

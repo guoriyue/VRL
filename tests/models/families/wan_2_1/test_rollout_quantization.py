@@ -45,13 +45,10 @@ def _rollout_build(scheme: str) -> SimpleNamespace:
 
 
 class _TinyExpert(nn.Module):
-    """One MLP-shaped linear, wide enough to clear the min_features gate.
+    """One linear wide enough to clear the min_features gate.
 
-    Two targeting rules have to be satisfied for this fixture to exercise
-    anything: ``swap_linears`` skips linears under 1024 in/out features, and
-    the NVFP4 profile is ``mlp_only``, so the path must carry an MLP segment
-    (``vrl/nn/quantization/targeting.py``). A 2x2 ``to_q`` clears neither and
-    would make the test pass vacuously.
+    ``swap_linears`` skips linears under 1024 in/out features, so a 2x2
+    ``to_q`` would make the test pass vacuously.
     """
 
     def __init__(self) -> None:

@@ -10,9 +10,8 @@ from torch import nn
 class QuantizablePolicy:
     """A rollout policy whose declared cores the real quantization swap can match.
 
-    Each root in ``roots`` holds ``ff.<name>`` for every name in ``linears``: an
-    MLP-path ``Linear(1024, 1024)``, so it sits inside the NVFP4 ``mlp_only``
-    profile and clears ``min_features``. No ``linears`` is a policy with nothing
+    Each root in ``roots`` holds ``ff.<name>`` for every name in ``linears``: a
+    ``Linear(1024, 1024)``, which clears ``min_features``. No ``linears`` is a policy with nothing
     quantizable, the no-op case the pass must reject.
     """
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from vrl.nn.quantization.base import QuantizedLinear, drop_quantized_masters
 from vrl.nn.quantization.fp4 import Fp4Linear, nvfp4_available
 from vrl.nn.quantization.fp8 import Fp8Linear
-from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE, LinearTargetProfile
+from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 
 # Config ``precision.rollout.quantization.format`` -> the scheme that implements
 # it. Derived from each class's own ``quantization_scheme`` so the mapping cannot
@@ -30,7 +30,6 @@ __all__ = [
     "QUANTIZATION_SCHEMES",
     "Fp4Linear",
     "Fp8Linear",
-    "LinearTargetProfile",
     "QuantizedLinear",
     "drop_quantized_masters",
     "nvfp4_available",

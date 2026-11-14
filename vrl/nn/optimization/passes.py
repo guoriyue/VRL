@@ -141,9 +141,8 @@ class QuantizationPass:
         """Swap the rollout policy's big GEMMs to the configured scheme; return the count.
 
         Reads ``build.precision.quantization`` (the caller has checked
-        :meth:`enabled`) and dispatches to its module swap. FP8 targets eligible
-        attention projections and MLPs; NVFP4 keeps the validated MLP-only
-        target profile. Quantization is rollout-only and layered on the
+        :meth:`enabled`) and dispatches to its module swap, which targets the
+        eligible attention projections and MLPs. Quantization is rollout-only and layered on the
         ordinary rollout dtype, which remains responsible for unswapped
         operations and parameter masters.
 
@@ -176,9 +175,6 @@ class QuantizationPass:
         swap_kwargs: dict[str, Any] = {"exclude": model.quantization_exclude}
         if recipe is not None:
             swap_kwargs["recipe"] = recipe
-            policy_detail = f"recipe={recipe}, profile={scheme.default_target_profile}"
-        else:
-            policy_detail = f"profile={scheme.default_target_profile}"
         from peft import PeftModel
 
         # Paths are prefixed by root so the log names WHICH expert changed on a
@@ -194,9 +190,8 @@ class QuantizationPass:
         if not swapped:
             raise RuntimeError(
                 f"precision.rollout.quantization.format={format_name!r} but the swap "
-                "matched 0 linears — the policy has no quantizable "
-                f"{scheme.default_target_profile} linears (check the exclude "
-                "list / min_features). It would be a no-op.",
+                "matched 0 linears — the policy has no quantizable linears "
+                "(check the exclude list / min_features). It would be a no-op.",
             )
         if not getattr(rollout, "base_weight_sync", True):
             # Base weights will never be synced into this rollout (LoRA syncs
@@ -212,9 +207,9 @@ class QuantizationPass:
                 freed / 2**30,
             )
         logger.info(
-            "%s rollout (%s): quantized %d policy linears",
+            "%s rollout (recipe=%s): quantized %d policy linears",
             format_name,
-            policy_detail,
+            recipe,
             len(swapped),
         )
         return len(swapped)

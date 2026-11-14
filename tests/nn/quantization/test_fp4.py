@@ -221,12 +221,10 @@ class _Blockish(nn.Module):
         self.proj_out = nn.Linear(dim, dim)
 
 
-def test_swap_targets_aligned_big_mlp_linears_only() -> None:
+def test_swap_targets_aligned_big_linears_only() -> None:
     model = _Blockish(1024)
     swapped = Fp4Linear.swap_linears(model)
-    assert swapped == ["ff_up"]
-    assert isinstance(model.ff_up, Fp4Linear)
-    assert isinstance(model.to_q, nn.Linear)
+    assert swapped == ["to_q", "ff_up"]
     assert isinstance(model.odd_k, nn.Linear)
     assert isinstance(model.odd_n, nn.Linear)
     assert isinstance(model.x_embedder, nn.Linear)

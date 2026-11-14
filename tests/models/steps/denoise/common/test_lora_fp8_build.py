@@ -237,8 +237,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
     if quantization_format == "nvfp4":
         monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
 
-    # MLP-pathed and >= min_features so BOTH schemes' real targeting rules
-    # select it (NVFP4's profile is mlp_only).
+    # >= min_features so both schemes' real targeting selects it.
     transformer = nn.Module()
     transformer.ff = nn.Module()
     transformer.ff.net = nn.Linear(1024, 1024, bias=False).to(torch.bfloat16)

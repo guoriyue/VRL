@@ -1,8 +1,6 @@
-"""Shared module-path policy for rollout linear quantization."""
+"""Shared module-path policy for linear quantization."""
 
 from __future__ import annotations
-
-from enum import StrEnum
 
 # Small, numerically sensitive layers stay in the model's base dtype. These
 # names describe model structure rather than one quantization scheme.
@@ -15,36 +13,4 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
     "txt_in",
 )
 
-
-# The conservative NVFP4 production profile keeps attention in the base dtype
-# until full-attention NVFP4 passes a real rollout -> replay SDE/reward gate.
-# This is a deliberately isolated model-path taxonomy.
-MLP_PATH_SEGMENTS = frozenset(
-    {"ff", "ffn", "feed_forward", "mlp", "img_mlp", "txt_mlp"},
-)
-
-
-class LinearTargetProfile(StrEnum):
-    """Named sets of large policy Linears eligible for quantization."""
-
-    MLP_ONLY = "mlp_only"
-    ATTENTION_MLP = "attention_mlp"
-
-    def matches(self, path: str) -> bool:
-        """Whether ``path`` belongs to a validated quantization target profile."""
-
-        if self is LinearTargetProfile.ATTENTION_MLP:
-            return True
-        return any(
-            segment in MLP_PATH_SEGMENTS
-            or segment.startswith(("ff_", "mlp_"))
-            or segment.endswith("_mlp")
-            for segment in path.split(".")
-        )
-
-
-__all__ = [
-    "DEFAULT_EXCLUDE",
-    "MLP_PATH_SEGMENTS",
-    "LinearTargetProfile",
-]
+__all__ = ["DEFAULT_EXCLUDE"]

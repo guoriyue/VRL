@@ -1,6 +1,6 @@
 """NVFP4 dynamic-quantization linear for rollout generation forwards.
 
-Selected MLP GEMMs run through ``torch._scaled_mm`` on packed
+Selected attention and MLP GEMMs run through ``torch._scaled_mm`` on packed
 ``float4_e2m1fn_x2`` operands. A source-dtype master weight remains available
 when full-parameter rollout weight sync needs it; the non-persistent NVFP4 cache
 is rebuilt after each load. Training/replay remains unquantized.
@@ -39,7 +39,6 @@ from vrl.nn.quantization.formats import (
     NVFP4_SCALE_INNER_ROWS,
     NVFP4_SCALE_ROW_TILE,
 )
-from vrl.nn.quantization.targeting import LinearTargetProfile
 
 _E2M1_BOUNDS = torch.tensor(E2M1_MIDPOINTS)
 
@@ -197,9 +196,6 @@ class Fp4Linear(QuantizedLinear):
 
     quantization_scheme = "nvfp4"
     cache_buffer_names = ("weight_fp4", "weight_scale", "weight_tensor_scale")
-    # Attention stays in the base dtype until full-attention NVFP4 passes a real
-    # rollout -> replay SDE/reward gate.
-    default_target_profile = LinearTargetProfile.MLP_ONLY
 
     @staticmethod
     def _alignment_error(linear: nn.Linear) -> str | None:
