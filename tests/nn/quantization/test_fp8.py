@@ -262,6 +262,26 @@ def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
 
 @pytest.mark.gpu
 @requires_fp8
+def test_fp8_replay_under_autograd_is_the_rollout_forward_with_the_cache_jacobian():
+    torch.manual_seed(0)
+    quantized = Fp8Linear(nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16))
+    quantized.requires_grad_(False)
+    quantized.drop_master()
+    x = torch.randn(3, 64, 256, device="cuda", dtype=torch.bfloat16)
+    with torch.no_grad():
+        rollout = quantized(x)
+
+    replay_input = x.clone().requires_grad_(True)
+    replay = quantized(replay_input)
+    upstream = torch.randn_like(replay)
+    (grad,) = torch.autograd.grad(replay, replay_input, upstream)
+
+    assert torch.equal(replay, rollout)
+    assert torch.equal(grad, upstream @ quantized.dequantized_weight())
+
+
+@pytest.mark.gpu
+@requires_fp8
 def test_fp8_linear_handles_fp32_activations():
     """DiT adaLN / pooled-projection paths feed fp32 activations, and rowwise
     _scaled_mm rejects an fp32 output. Fp8Linear must accumulate in bf16 and

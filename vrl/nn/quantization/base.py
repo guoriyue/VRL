@@ -19,6 +19,31 @@ from vrl.nn.quantization.targeting import (
 )
 
 
+class _FrozenGemm(torch.autograd.Function):
+    """Differentiate a frozen quantized linear with respect to its input.
+
+    The forward is the scheme's own low-precision GEMM, so a replay under
+    autograd computes exactly what the no-grad rollout computed. The backward is
+    the Jacobian of that GEMM in the quantized activation, ``grad @ Q(W)``, with
+    the activation's own rounding passed straight through. It runs in the
+    activation dtype on the dequantized cache: the low-precision kernels take
+    their block scales along the forward contraction, which is the wrong axis
+    for the transposed product.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, module: QuantizedLinear) -> torch.Tensor:
+        ctx.module = module
+        ctx.input_dtype = x.dtype
+        return module.quantized_forward(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        weight = ctx.module.dequantized_weight()
+        grad = grad_output.reshape(-1, weight.shape[0]).to(weight.dtype) @ weight
+        return grad.reshape(*grad_output.shape[:-1], weight.shape[1]).to(ctx.input_dtype), None
+
+
 class QuantizedLinear(nn.Module):
     """Base for a low-precision drop-in ``nn.Linear`` replacement.
 
@@ -44,6 +69,24 @@ class QuantizedLinear(nn.Module):
         """Rebuild derived low-precision buffers from ``self.weight``."""
 
         raise NotImplementedError
+
+    def quantized_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """The scheme's low-precision GEMM on ``x``, bias included."""
+
+        raise NotImplementedError
+
+    def dequantized_weight(self) -> torch.Tensor:
+        """The cached weight the GEMM multiplies by, ``[out, in]`` in bf16."""
+
+        raise NotImplementedError
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Only a frozen base is differentiated here (LoRA training): the cache
+        # is derived from the master at load time and no optimizer step
+        # refreshes it, so the weight takes no gradient.
+        if torch.is_grad_enabled() and x.requires_grad:
+            return _FrozenGemm.apply(x, self)
+        return self.quantized_forward(x)
 
     @classmethod
     def can_replace(cls, linear: nn.Linear) -> bool:

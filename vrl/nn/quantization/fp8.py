@@ -87,7 +87,10 @@ class Fp8Linear(QuantizedLinear):
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def dequantized_weight(self) -> torch.Tensor:
+        return (self.weight_fp8.float() * self.weight_scale).to(torch.bfloat16)
+
+    def quantized_forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1])
         if self.recipe == "rowwise":

@@ -160,6 +160,38 @@ def quantize_nvfp4(
     )
 
 
+def dequantize_nvfp4(
+    packed: torch.Tensor,
+    scales: torch.Tensor,
+    tensor_scale: torch.Tensor,
+) -> torch.Tensor:
+    """Decode :func:`quantize_nvfp4`'s output back to fp32 ``[rows, K]`` values."""
+
+    rows, packed_k = packed.shape
+    n_blocks = packed_k * 2 // NVFP4_BLOCK_SIZE
+    raw = packed.view(torch.uint8)
+    codes = torch.stack((raw & 0xF, raw >> 4), dim=-1).view(rows, n_blocks, NVFP4_BLOCK_SIZE)
+    magnitudes = torch.tensor(E2M1_VALUES, device=packed.device)[(codes & 0x7).long()]
+    values = torch.where((codes & 0x8).bool(), -magnitudes, magnitudes)
+    # Undo ``to_blocked_scale_layout``: 128x4 tiles of 32 interleaved rows.
+    row_tiles = _ceil_div(rows, NVFP4_SCALE_ROW_TILE)
+    col_tiles = _ceil_div(n_blocks, NVFP4_SCALE_COL_TILE)
+    block_scales = (
+        scales.view(
+            row_tiles,
+            col_tiles,
+            NVFP4_SCALE_INNER_ROWS,
+            NVFP4_SCALE_ROW_TILE // NVFP4_SCALE_INNER_ROWS,
+            NVFP4_SCALE_COL_TILE,
+        )
+        .permute(0, 3, 2, 1, 4)
+        .reshape(row_tiles * NVFP4_SCALE_ROW_TILE, col_tiles * NVFP4_SCALE_COL_TILE)[
+            :rows, :n_blocks
+        ]
+    )
+    return (values * (block_scales.float() * tensor_scale)[..., None]).view(rows, packed_k * 2)
+
+
 class Fp4Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement whose selected GEMM runs in NVFP4."""
 
@@ -230,7 +262,14 @@ class Fp4Linear(QuantizedLinear):
         self.weight_scale = scales
         self.weight_tensor_scale = tensor_scale
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def dequantized_weight(self) -> torch.Tensor:
+        return dequantize_nvfp4(
+            self.weight_fp4,
+            self.weight_scale,
+            self.weight_tensor_scale,
+        ).to(torch.bfloat16)
+
+    def quantized_forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1]).to(torch.bfloat16).contiguous()
         x_fp4, x_scale, x_tensor_scale = quantize_nvfp4(x_2d)
@@ -257,6 +296,7 @@ class Fp4Linear(QuantizedLinear):
 
 __all__ = [
     "Fp4Linear",
+    "dequantize_nvfp4",
     "nvfp4_available",
     "quantize_nvfp4",
     "to_blocked_scale_layout",

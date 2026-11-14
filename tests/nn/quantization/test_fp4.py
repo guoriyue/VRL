@@ -20,6 +20,7 @@ from vrl.nn.quantization.formats import (
     NVFP4_N_ALIGNMENT,
 )
 from vrl.nn.quantization.fp4 import (
+    dequantize_nvfp4,
     nvfp4_available,
     quantize_nvfp4,
     to_blocked_scale_layout,
@@ -120,6 +121,17 @@ def test_quantize_dequant_error_is_bounded() -> None:
     dequantized = _dequantize_nvfp4_reference(packed, scales, tensor_scale)
     relative_error = float((dequantized - tensor).abs().mean() / tensor.abs().mean())
     assert relative_error < 0.2
+
+
+def test_production_decoder_matches_the_independent_reference() -> None:
+    # 200 rows x 144 columns leaves a partial 128-row tile and a partial 4-block
+    # tile, so the scale un-swizzle is exercised on padded layouts.
+    tensor = torch.randn(200, 144)
+    packed, scales, tensor_scale = quantize_nvfp4(tensor)
+    assert torch.equal(
+        dequantize_nvfp4(packed, scales, tensor_scale),
+        _dequantize_nvfp4_reference(packed, scales, tensor_scale),
+    )
 
 
 def test_exact_grid_values_roundtrip_exactly() -> None:
@@ -344,6 +356,26 @@ def test_linear_matches_dequantized_reference() -> None:
             (output.float() - reference.float()).abs().mean() / reference.float().abs().mean(),
         )
     assert relative_error < 5e-3
+
+
+@pytest.mark.gpu
+@requires_nvfp4
+def test_replay_under_autograd_is_the_rollout_forward_with_the_cache_jacobian() -> None:
+    torch.manual_seed(0)
+    quantized = Fp4Linear(nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16))
+    quantized.requires_grad_(False)
+    quantized.drop_master()
+    x = torch.randn(3, 64, 256, device="cuda", dtype=torch.bfloat16)
+    with torch.no_grad():
+        rollout = quantized(x)
+
+    replay_input = x.clone().requires_grad_(True)
+    replay = quantized(replay_input)
+    upstream = torch.randn_like(replay)
+    (grad,) = torch.autograd.grad(replay, replay_input, upstream)
+
+    assert torch.equal(replay, rollout)
+    assert torch.equal(grad, upstream @ quantized.dequantized_weight())
 
 
 @pytest.mark.gpu
