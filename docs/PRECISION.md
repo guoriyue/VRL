@@ -127,6 +127,22 @@ measured 9.1e-2 compiled against 0 eager (2026-08-28), so every online recipe
 that reads a rollout log-prob runs eager (the DiffusionNFT recipes keep compile:
 likelihood-free, they read none).
 
+`algorithm.kind: centered_grpo` removes the gap from the gradient instead of
+from the kernels. The rollout draws `a = mu_q + s * eps` and the replay scores
+it under its own proposal `mu_theta`; the plain GRPO gradient is
+`-A [(mu_q - mu_theta) + s eps] . grad mu_theta / (s^2 d)`, where the first
+term is the rollout/replay gap divided by `s^2` (the late-step amplification)
+and only the second is the policy gradient. Centering the score on the
+rollout mean (`log p_theta(a) - log p_theta(mu_q)`, the stored
+`rollout.return_prev_sample_mean`) leaves `-A (a - mu_q) . grad mu_theta`,
+which no longer depends at first order on what the replay kernels do to
+`mu_theta`; under parity it is GRPO at ratio 1. What remains is second order
+(the Jacobian of `mu_theta` against the rollout's, and a reward evaluated on
+the rollout's samples), so the gate keeps measuring the gap; the objective
+reports the mean-space gap `|mu_theta - mu_q|^2 / (2 s^2)` as `approx_kl`.
+The objective has no ratio or trust region and needs an SDE action, so it
+runs one epoch under strict scheduling with `rollout.denoise_mode: sde`.
+
 Attention backends are a separate source. Each SDPA backend is batch-invariant
 on its own, but flash, efficient and cuDNN attention reduce in different orders:
 on SD3.5 a flash rollout replayed with cuDNN or efficient attention reaches

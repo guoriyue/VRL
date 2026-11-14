@@ -125,8 +125,6 @@ class GRPO(ImportanceRatioAlgorithm):
         """
         import torch
 
-        from vrl.math.denoise.flow_matching import compute_kl_divergence
-
         cfg = self.config
         signals = inputs.signals.primary
         advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
@@ -173,11 +171,7 @@ class GRPO(ImportanceRatioAlgorithm):
             # term is on). A flow-matching SDE replay carries both proposal
             # means, so the KL is the closed form in latent space.
             if isinstance(signals, FlowSDESignal):
-                kl = compute_kl_divergence(
-                    signals.prev_sample_mean,
-                    signals.ref_prev_sample_mean,
-                    signals.std_dev_t,
-                )
+                kl = signals.mean_kl(signals.ref_prev_sample_mean, per_step_variance=False)
                 kl_loss = torch.mean(kl)
             else:
                 kl_loss = torch.mean(signals.log_prob - signals.ref_log_prob)
@@ -387,8 +381,6 @@ class FlowDPPO(ImportanceRatioAlgorithm):
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
 
-        from vrl.math.denoise.flow_matching import compute_kl_divergence
-
         cfg = self.config
         signals = inputs.signals.primary
         old_prev_sample_mean = signals.old_prev_sample_mean
@@ -405,16 +397,11 @@ class FlowDPPO(ImportanceRatioAlgorithm):
         # Gaussian KL between the current and rollout proposal means (the
         # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
         # per-step diffusion coefficient (sigma_t = std_dev_t * sqrt_dt, the closed
-        # form compute_kl_divergence uses); without it the trust region is
+        # form of ``mean_kl``); without it the trust region is
         # unit-variance — mean_diff_sq / 2, with NO std_dev_t in the denominator
         # (matches verl-omni's add_kl_coefficient=False branch).
         if cfg.add_kl_coefficient:
-            kl_per_sample = compute_kl_divergence(
-                signals.prev_sample_mean,
-                old_prev_sample_mean,
-                signals.std_dev_t,
-                sqrt_neg_dt=signals.dt,
-            )
+            kl_per_sample = signals.mean_kl(old_prev_sample_mean, per_step_variance=True)
         else:
             non_batch = tuple(range(1, signals.prev_sample_mean.ndim))
             kl_per_sample = (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(
@@ -544,3 +531,95 @@ class GRPOGuard(ImportanceRatioAlgorithm):
             ),
         )
         return policy_loss, metrics
+
+
+@dataclass(slots=True)
+class CenteredGRPOConfig(GroupAdvantageConfig):
+    """Hyper-parameters for GRPO with the score centered on the rollout proposal.
+
+    No ratio and no clip: the objective is the on-policy policy gradient of
+    the sampled action, so the only knob beside the group advantage is the
+    reference-KL weight GRPO also has.
+    """
+
+    kl_coef: float = 0.0
+    # Bridged by ``BuiltConfigs.from_cfg`` from the rollout denoise options: the
+    # transition density the centering term is evaluated under, the same one
+    # the replay evaluator scores the action with. Never a YAML key here.
+    sde_type: str = field(default="flow_grpo", init=False)
+
+
+class CenteredGRPO(OnlineAlgorithm):
+    """GRPO whose gradient is the Gaussian score of the action around the rollout mean.
+
+    The rollout draws ``a = mu_q + s * eps`` and the replay scores it as
+    ``log p_theta(a) = -|a - mu_theta|^2 / (2 s^2 d)`` (per-element mean). The
+    plain policy-gradient objective ``-A log p_theta(a)`` therefore has gradient
+    ``-A [(mu_q - mu_theta) + s eps] . grad mu_theta / (s^2 d)``: the ``eps`` term
+    is the policy gradient and the ``mu_q - mu_theta`` term is the
+    rollout/replay numerics gap divided by ``s^2`` (what the clipped surrogate
+    consumes as learning, and what the SDE schedule amplifies at the late
+    steps). ``E_q[log p_theta]`` is ``log p_theta(mu_q)`` up to a
+    theta-independent constant for a Gaussian whose scale does not depend on
+    theta, so subtracting it leaves ``-A (a - mu_q) . grad mu_theta / (s^2 d)``:
+    the score of the draw the sampler took, with no first-order dependence on
+    what the replay kernels do to ``mu_theta``. Under parity
+    (``mu_theta == mu_q``) the gradient is plain GRPO's at ratio 1.
+
+    The loss reads no rollout log-prob; it reads the rollout proposal mean
+    (``rollout.return_prev_sample_mean``) and the replay's. It carries no
+    importance ratio or trust region, so the replay must be on-policy: one
+    epoch under strict scheduling.
+    """
+
+    needs_sde_rollout = True
+    sft_source = "unsupported"
+    replay_policy = "on_policy"
+    signal = RolloutProposalSignal
+    config: CenteredGRPOConfig
+
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
+        import torch
+
+        cfg = self.config
+        signals = inputs.signals.primary
+        if not isinstance(signals, RolloutProposalSignal):
+            raise ValueError(
+                "centered_grpo scores the action around the rollout proposal mean, "
+                "which the flow-SDE replay carries only when generation stored it "
+                "(rollout.return_prev_sample_mean=true)",
+            )
+        advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
+        old_prev_sample_mean = signals.old_prev_sample_mean.to(signals.prev_sample_mean.dtype)
+        # E_q[log p_theta] up to a constant: the replay density at the rollout mean.
+        expected_log_prob = signals.log_prob_at(old_prev_sample_mean, sde_type=cfg.sde_type)
+        score = signals.log_prob - expected_log_prob
+        keep = signals.mask.to(score.dtype)
+        policy_loss = (-advantages * score * keep).sum() / keep.sum().clamp_min(1.0)
+
+        if cfg.kl_coef > 0:
+            kl_loss = torch.mean(
+                signals.mean_kl(signals.ref_prev_sample_mean, per_step_variance=False),
+            )
+            kl_term = cfg.kl_coef * kl_loss
+            loss = policy_loss + kl_term
+        else:
+            kl_loss = torch.tensor(0.0, device=signals.log_prob.device)
+            kl_term = torch.tensor(0.0, device=signals.log_prob.device)
+            loss = policy_loss
+
+        # The replay-vs-rollout proposal gap under the same density, free of the
+        # draw's noise: the density at its own mean minus the density at the
+        # rollout mean (the per-element Gaussian KL on the flow_grpo branch).
+        proposal_gap = (
+            signals.log_prob_at(signals.prev_sample_mean, sde_type=cfg.sde_type)
+            - expected_log_prob
+        )
+        metrics = TrainStepMetrics(
+            loss=loss.item(),
+            policy_loss=policy_loss.item(),
+            kl_penalty=kl_loss.item(),
+            weighted_kl_loss=kl_term.item(),
+            update=PolicyUpdateStats(approx_kl=proposal_gap.mean().item()),
+        )
+        return loss, metrics

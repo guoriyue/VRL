@@ -333,21 +333,6 @@ def sde_step_with_logprob(
     )
 
 
-def compute_kl_divergence(
-    prev_sample_mean: Any,
-    prev_sample_mean_ref: Any,
-    std_dev_t: Any,
-    sqrt_neg_dt: Any | None = None,
-) -> Any:
-    """KL divergence between current and reference model in latent space."""
-    denom = 2 * std_dev_t**2
-    if sqrt_neg_dt is not None:
-        denom = 2 * (std_dev_t * sqrt_neg_dt) ** 2
-    return ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(
-        dim=tuple(range(1, prev_sample_mean.ndim))
-    ) / denom.squeeze()
-
-
 def diffusion_pretraining_pair(
     scheduler: Any,
     latents: Any,
@@ -400,7 +385,6 @@ def diffusion_pretraining_pair(
 
 __all__ = [
     "SDEStepResult",
-    "compute_kl_divergence",
     "diffusion_pretraining_pair",
     "flow_sde_scale_terms",
     "gaussian_step_log_prob",

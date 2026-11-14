@@ -112,3 +112,31 @@ def test_replay_parity_cadence_follows_the_schedule() -> None:
     )
     with pytest.raises(ValueError, match="every_update=true cannot combine"):
         _build(_CONTINUOUS, "trainer.replay_parity.every_update=true")
+
+
+_CENTERED = "/recipe/online=flow_matching_centered_grpo"
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        ("actor.ppo_epochs=2", _FULL_BATCH),
+        ("actor.ppo_epochs=1", _CONTINUOUS),
+    ],
+)
+def test_centered_score_requires_on_policy_replay(schedule) -> None:
+    """The score of the sampled action has no ratio to absorb a moved or stale policy."""
+
+    with pytest.raises(ValueError, match="no importance ratio or trust region"):
+        _build(_CENTERED, *schedule)
+
+    assert _build(_CENTERED, "actor.ppo_epochs=1").trainer.ppo_epochs == 1
+
+
+def test_centered_score_needs_a_drawn_action_and_the_rollout_mean() -> None:
+    """The native path stores the deterministic step as the action: there is no draw to score."""
+
+    with pytest.raises(ValueError, match="denoise_mode='native'"):
+        _build(_CENTERED, "rollout.denoise_mode=native")
+    with pytest.raises(ValueError, match=r"rollout\.return_prev_sample_mean=true"):
+        _build(_CENTERED, "rollout.return_prev_sample_mean=false")

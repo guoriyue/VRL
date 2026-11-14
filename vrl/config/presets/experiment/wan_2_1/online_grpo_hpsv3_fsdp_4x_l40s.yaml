@@ -137,7 +137,7 @@ rollout:
   denoise_mode: sde
   # flow_grpo SDE at noise_level 1.0 is the reference parameterization
   # (std_dev_t = sigmas[1] * sigma) and its log-prob carries the 1/(2*sigma^2)
-  # normalizer. cps omits that normalizer while compute_kl_divergence keeps it,
+  # normalizer. cps omits that normalizer while the reference KL keeps it,
   # and cps derives std_dev_t from sigma_prev, which collapses to 2.7e-3 at the
   # near-terminal step — inflating the effective KL weight there by ~7e4.
   noise_level: 1.0

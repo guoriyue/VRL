@@ -315,6 +315,14 @@ class TrainerConfig:
                     "collection and cannot replay it across epochs) or use "
                     "schedule_mode='continuous' for an off-policy ratio.",
                 )
+            if algorithm_cls.replay_policy == "on_policy" and config.replays_off_policy:
+                raise ValueError(
+                    f"algorithm.kind={algorithm.kind!r} is the score of the sampled action "
+                    "with no importance ratio or trust region, so the replay must train "
+                    "the policy that drew the sample: actor.ppo_epochs=1 under "
+                    f"schedule_mode='strict_on_policy' (got ppo_epochs={config.ppo_epochs}, "
+                    f"schedule_mode={config.rollout_orchestration.schedule_mode!r})",
+                )
         return config
 
     def __post_init__(self) -> None:

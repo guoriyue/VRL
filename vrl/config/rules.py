@@ -127,17 +127,24 @@ def check_cross_section_rules(root: RootConfig) -> None:
         raise ValueError("config missing required field: rollout.sde.type")
 
     # ── A loss on the rollout's proposal mean needs it stored at generation,
-    # which happens only on request.
+    # which happens only on request, and the action it scores must be a draw
+    # from that mean: the native path stores the scheduler's deterministic
+    # step as the action.
     from vrl.rollouts.evaluators.types import RolloutProposalSignal
 
-    if algorithm_cls.signal is RolloutProposalSignal and (
-        rollout is None or not rollout.return_prev_sample_mean
-    ):
-        raise ValueError(
-            f"algorithm.kind={kind!r} measures the current-vs-rollout proposal "
-            "drift, which needs the rollout mean stored at generation; set "
-            "rollout.return_prev_sample_mean=true",
-        )
+    if algorithm_cls.signal is RolloutProposalSignal:
+        if rollout is None or not rollout.return_prev_sample_mean:
+            raise ValueError(
+                f"algorithm.kind={kind!r} measures the current-vs-rollout proposal "
+                "drift, which needs the rollout mean stored at generation; set "
+                "rollout.return_prev_sample_mean=true",
+            )
+        if rollout.denoise_mode == "native":
+            raise ValueError(
+                f"algorithm.kind={kind!r} scores the action as a draw from the rollout "
+                "proposal mean, but rollout.denoise_mode='native' stores the "
+                "scheduler's deterministic step as the action; use denoise_mode='sde'",
+            )
 
 
 __all__ = ["check_cross_section_rules"]

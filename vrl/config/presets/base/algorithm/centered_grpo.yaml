@@ -1,0 +1,11 @@
+# Centered GRPO — the group-relative policy gradient scored around the rollout
+# proposal mean instead of a clipped ratio against the rollout log-prob.
+#
+# The gradient is -A (a - mu_rollout) . grad mu_theta / (s^2 d): the score of
+# the draw the sampler took, so a rollout/replay numerics gap in the proposal
+# mean does not enter it at first order (plain GRPO consumes that gap through
+# the ratio and the clip). Reads the rollout proposal mean, so the recipe MUST
+# set rollout.return_prev_sample_mean=true; no ratio or trust region, so one
+# epoch under strict scheduling. kl_coef is GRPO's reference-KL weight.
+algorithm:
+  kind: centered_grpo

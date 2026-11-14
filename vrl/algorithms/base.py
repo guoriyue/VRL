@@ -40,19 +40,24 @@ class Algorithm(ABC):
     # replay_policy: which policy the replay may train relative to the one
     #   that drew the sample. "off_policy": the loss is *defined* by a clipped
     #   or guarded ratio against the rollout policy, so the two must differ
-    #   (more than one epoch, or continuous scheduling). "any": no constraint;
-    #   plain GRPO's clip is only a safety rail.
+    #   (more than one epoch, or continuous scheduling). "on_policy": the loss
+    #   is the score of the sampled action with no importance ratio or trust
+    #   region, so the replay must train the policy that drew the sample (one
+    #   epoch, strict scheduling). "any": no constraint; plain GRPO's clip is
+    #   only a safety rail.
     # signal: the evaluator signal type the loss reads (log-probs from a replay
     #   of the rollout's reverse SDE), or None when it trains without the
     #   evaluator. What the type carries is what the run must provide: a loss
     #   on ``RolloutProposalSignal`` needs the rollout's proposal mean stored
-    #   at generation (rollout.return_prev_sample_mean).
+    #   at generation (rollout.return_prev_sample_mean) and its action to be a
+    #   draw from that mean (rollout.denoise_mode='sde', not the scheduler's
+    #   deterministic step).
     # consumed_sections: for an offline algorithm, the config sections it
     #   consumes (a listed section allows only the named fields; an empty set
     #   only an empty section; None forbids the section); None = unrestricted.
     needs_sde_rollout: ClassVar[bool]
     sft_source: ClassVar[Literal["unsupported", "latents", "preference_winner"]]
-    replay_policy: ClassVar[Literal["any", "off_policy"]] = "any"
+    replay_policy: ClassVar[Literal["any", "off_policy", "on_policy"]] = "any"
     signal: ClassVar[type[SegmentSignal] | None] = None
     consumed_sections: ClassVar[tuple[tuple[str, frozenset[str] | None], ...] | None] = None
 

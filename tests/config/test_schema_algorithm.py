@@ -31,6 +31,7 @@ def test_unknown_algorithm_keys_are_rejected_together() -> None:
         ("dance_grpo", "sft_weight", 0.1),
         ("flow_dppo", "add_kl_coefficient", False),
         ("grpo_guard", "clip_ratio", 0.2),
+        ("centered_grpo", "kl_coef", 0.1),
         ("diffusion_dpo", "beta", 5000.0),
         ("diffusion_nft", "nft_beta", 0.1),
         ("v_grpo", "adv_soft_clip", 2.0),

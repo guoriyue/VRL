@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
+from vrl.algorithms.grpo.continuous import (
+    CenteredGRPOConfig,
+    FlowDPPOConfig,
+    GRPOConfig,
+    GRPOGuardConfig,
+)
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 
@@ -56,4 +61,15 @@ def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
     assert isinstance(BuiltConfigs.from_cfg(cfg).algorithm, config_cls)
     # Required for the trust-region loss; without it generation never stores the
     # rollout proposal mean and the loss fails fast.
+    assert cfg.rollout.return_prev_sample_mean is True
+
+
+def test_centered_grpo_recipe_resolves_on_policy_with_proposal_mean_storage() -> None:
+    # No ratio and no trust region: one strict epoch is the recipe's schedule,
+    # and the loss centers on the stored rollout proposal mean.
+    cfg = load_config(_BASE, overrides=["/recipe/online=flow_matching_centered_grpo"])
+    assert cfg.algorithm.kind == "centered_grpo"
+    built = BuiltConfigs.from_cfg(cfg)
+    assert isinstance(built.algorithm, CenteredGRPOConfig)
+    assert built.algorithm.sde_type == "flow_grpo"
     assert cfg.rollout.return_prev_sample_mean is True

@@ -1,0 +1,24 @@
+# Online flow-matching centered-GRPO recipe: flow_matching_grpo without the
+# ratio clip, scoring the action around the stored rollout proposal mean.
+defaults:
+  - /base/algorithm/centered_grpo
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
+  - /base/trainer
+
+algorithm:
+  # The flow_matching_grpo defaults: KL-as-loss against the adapter-off
+  # reference and global-batch advantage std. There is no clip_ratio: the
+  # objective has no ratio.
+  kl_coef: 0.04
+  global_std: true
+
+rollout:
+  # Required: the loss centers the score on each denoise step's rollout
+  # proposal mean, which generation stores only on request.
+  return_prev_sample_mean: true
+
+trainer:
+  entrypoint: vrl.scripts.common.online:run_online_recipe

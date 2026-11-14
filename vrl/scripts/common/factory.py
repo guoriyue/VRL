@@ -34,14 +34,21 @@ class AlgorithmEvaluatorPair:
         # online kind); run_online_recipe refuses an offline kind's missing online trainer
         # config before it pairs the algorithm.
         kind = built.root.algorithm.kind
-        diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
+        diffusion_logprob_kinds = {
+            "grpo",
+            "dance_grpo",
+            "flash_grpo",
+            "flow_dppo",
+            "grpo_guard",
+            "centered_grpo",
+        }
 
         if kind in diffusion_logprob_kinds:
             # These are flow-matching GRPO-family algorithms on the same SDE
             # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
             # trainer's random timestep selection + multi-reward); flow_dppo /
-            # grpo_guard are trust-region variants whose loss reads the rollout
-            # proposal mean (config rules require it to be stored).
+            # grpo_guard / centered_grpo read the rollout proposal mean (config
+            # rules require it to be stored).
             denoise = (
                 RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()
             )

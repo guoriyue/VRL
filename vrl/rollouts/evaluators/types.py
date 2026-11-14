@@ -41,6 +41,34 @@ class FlowSDESignal(SegmentSignal):
     sigma: Any
     ref_prev_sample_mean: Any | None = None
 
+    def log_prob_at(self, point: Any, *, sde_type: str) -> Any:
+        """Per-sample log-density of ``point`` under this step's transition Gaussian."""
+
+        from vrl.math.denoise.flow_matching import gaussian_step_log_prob
+
+        return gaussian_step_log_prob(
+            point,
+            self.prev_sample_mean,
+            self.std_dev_t,
+            sqrt_neg_dt=self.dt,
+            sde_type=sde_type,
+        )
+
+    def mean_kl(self, other_mean: Any, *, per_step_variance: bool) -> Any:
+        """Per-sample squared distance from this step's mean to ``other_mean`` over a variance.
+
+        ``per_step_variance`` divides by ``2 (std_dev_t * sqrt(-dt))^2``, the
+        variance of a ``flow_grpo`` transition (Flow-GRPO's Wan script).
+        Without it the denominator is ``2 std_dev_t^2``: the exact Gaussian KL
+        of a ``cps`` transition, whose standard deviation is ``std_dev_t``, and
+        on ``flow_grpo`` the form Flow-GRPO's image scripts use, ``-dt`` times
+        the exact KL, which their ``beta`` values are tuned against.
+        """
+
+        scale = self.std_dev_t * self.dt if per_step_variance else self.std_dev_t
+        distance = (self.prev_sample_mean - other_mean) ** 2
+        return distance.mean(dim=tuple(range(1, distance.ndim))) / (2 * scale**2).squeeze()
+
 
 @dataclass(kw_only=True)
 class RolloutProposalSignal(FlowSDESignal):

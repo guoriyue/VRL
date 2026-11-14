@@ -233,20 +233,25 @@ class BuiltConfigs:
             import copy
 
             from vrl.algorithms.advantages import GroupAdvantageConfig
-            from vrl.algorithms.grpo.continuous import FlashGRPOConfig, ImportanceRatioConfig
+            from vrl.algorithms.grpo.continuous import (
+                CenteredGRPOConfig,
+                FlashGRPOConfig,
+                ImportanceRatioConfig,
+            )
 
             algorithm = copy.copy(algorithm)
             if isinstance(algorithm, GroupAdvantageConfig):
                 algorithm.component_weights = dict(reward.weights)
             if isinstance(algorithm, ImportanceRatioConfig):
                 algorithm.precision_correction = trainer.precision_correction
-            if isinstance(algorithm, FlashGRPOConfig):
+            if isinstance(algorithm, (FlashGRPOConfig, CenteredGRPOConfig)):
                 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
                 from vrl.rollouts.collector.config import RolloutCollectorConfig
 
                 denoise = RolloutCollectorConfig.from_root(root).denoise or DenoiseRequestOptions()
-                algorithm.noise_level = denoise.noise_level
                 algorithm.sde_type = denoise.sde_type or "flow_grpo"
+                if isinstance(algorithm, FlashGRPOConfig):
+                    algorithm.noise_level = denoise.noise_level
         return cls(
             root=root,
             algorithm=algorithm,
