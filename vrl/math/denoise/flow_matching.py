@@ -167,6 +167,36 @@ def per_sample_mean(values: Any) -> Any:
     return torch.cat([sample.mean(dim=dims) for sample in values.split(1)])
 
 
+def gaussian_step_log_prob(
+    point: Any,
+    prev_sample_mean: Any,
+    std_dev_t: Any,
+    *,
+    sqrt_neg_dt: Any | None = None,
+    sde_type: str = "flow_grpo",
+) -> Any:
+    """Per-sample log-density of ``point`` under one step's transition Gaussian.
+
+    The same formula scores the drawn action at rollout and replay and, for an
+    objective that centers the score, the rollout's own proposal mean. The
+    mean over latent elements is per sample (``per_sample_mean``). ``cps``
+    keeps its unnormalized squared distance (no scale, no constants);
+    ``flow_grpo`` is the normalized density with scale ``std_dev_t * sqrt(-dt)``.
+    """
+
+    import torch
+
+    if sde_type == "cps":
+        return per_sample_mean(-((point - prev_sample_mean) ** 2))
+    noise_scale = std_dev_t * sqrt_neg_dt
+    log_prob = (
+        -((point - prev_sample_mean) ** 2) / (2 * noise_scale**2)
+        - torch.log(noise_scale)
+        - 0.5 * math.log(2 * math.pi)
+    )
+    return per_sample_mean(log_prob)
+
+
 def sde_step_with_logprob(
     scheduler: Any,
     model_output: Any,
@@ -255,8 +285,12 @@ def sde_step_with_logprob(
         if deterministic:
             prev_sample = sample + dt * model_output
 
-        log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
-        log_prob = per_sample_mean(log_prob)
+        log_prob = gaussian_step_log_prob(
+            prev_sample.detach(),
+            prev_sample_mean,
+            std_dev_t,
+            sde_type="cps",
+        )
     else:
         std_dev_t = schedule.flow_grpo_std_dev_t(noise_level)
 
@@ -277,13 +311,13 @@ def sde_step_with_logprob(
         if deterministic:
             prev_sample = sample + dt * model_output
 
-        noise_scale = std_dev_t * torch.sqrt(-1 * dt)
-        log_prob = (
-            -((prev_sample.detach() - prev_sample_mean) ** 2) / (2 * noise_scale**2)
-            - torch.log(noise_scale)
-            - 0.5 * math.log(2 * math.pi)
+        log_prob = gaussian_step_log_prob(
+            prev_sample.detach(),
+            prev_sample_mean,
+            std_dev_t,
+            sqrt_neg_dt=torch.sqrt(-1 * dt),
+            sde_type="flow_grpo",
         )
-        log_prob = per_sample_mean(log_prob)
 
     if one_plus_sigma_prev is not None:
         prev_sample = prev_sample * one_plus_sigma_prev
@@ -369,5 +403,6 @@ __all__ = [
     "compute_kl_divergence",
     "diffusion_pretraining_pair",
     "flow_sde_scale_terms",
+    "gaussian_step_log_prob",
     "sde_step_with_logprob",
 ]
