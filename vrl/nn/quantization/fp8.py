@@ -100,7 +100,10 @@ class Fp8Linear(QuantizedLinear):
 
     def quantized_forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
-        x_2d = x.reshape(-1, shape[-1])
+        # ``_scaled_mm`` needs a row-major activation; a per-sample slice of a
+        # permuted attention activation reshapes to a strided view, and ``to``
+        # keeps those strides through the fp8 cast.
+        x_2d = x.reshape(-1, shape[-1]).contiguous()
         if self.recipe == "rowwise":
             x_scale = self._amax_scale(x_2d, dim=1)  # [M, 1] per token
             weight_scale = self.weight_scale.reshape(1, self.out_features)  # [1, N] per channel

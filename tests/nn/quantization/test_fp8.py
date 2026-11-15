@@ -303,6 +303,23 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
     assert out.shape == (2, 64, 4096)
 
 
+@pytest.mark.gpu
+@requires_fp8
+def test_fp8_linear_accepts_a_strided_batch_activation():
+    """A per-sample slice of a permuted attention activation reshapes to a
+    strided [M, K] view; the GEMM needs row-major input and must get the same
+    numbers as the contiguous copy."""
+    torch.manual_seed(0)
+    lin = nn.Linear(2048, 1024).cuda().to(torch.bfloat16)
+    fp8 = Fp8Linear(lin).cuda()
+    x = torch.randn(64, 2, 2048, device="cuda", dtype=torch.bfloat16).transpose(
+        0, 1
+    )  # [B, N, K], strided
+    assert not x.is_contiguous()
+    out = fp8(x)
+    assert torch.equal(out, fp8(x.contiguous()))
+
+
 def test_fused_bias_reaches_the_output_of_an_fp32_layer():
     """The bias rides the GEMM epilogue in the bf16 output dtype, also for an
     fp32 master layer fed fp32 activations. CPU ``_scaled_mm`` runs the
