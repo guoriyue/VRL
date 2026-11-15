@@ -115,12 +115,6 @@ class GRPO(ImportanceRatioAlgorithm):
     sft_source = "latents"
     config: GRPOConfig
 
-    @property
-    def requires_reference_policy(self) -> bool:  # type: ignore[override]
-        """The reference replay is needed exactly when the KL term is on."""
-
-        return self.config.kl_coef > 0
-
     def compute_loss(
         self,
         inputs: AlgorithmInput,

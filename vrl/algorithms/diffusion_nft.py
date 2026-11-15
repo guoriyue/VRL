@@ -37,8 +37,6 @@ class DiffusionNFT(ForwardProcessAlgorithm):
     """
 
     needs_sde_rollout = True
-    # The loss reads the pre-training reference unconditionally.
-    requires_reference_policy = True
     config: DiffusionNFTConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
@@ -53,20 +51,22 @@ class DiffusionNFT(ForwardProcessAlgorithm):
         x0, t_expanded, xt = self.renoised(batch, timestep_index)
         xt_input = xt.to(x0.dtype)
 
-        # Two evaluations of the family's own conditional forward at this
-        # trajectory step: the pre-training reference for the KL term, then the
-        # trainable policy. The frozen reference may swap weights in place, so
-        # it runs before the live forward whose graph backward will read.
-        # theta_old is the policy as of this optimizer step: the detached live
-        # prediction, not a third forward.
-        with (
-            model.reference_policy(),
-            torch.no_grad(),
-            model_autocast(model, x0.device),
-        ):
-            ref_prediction = model.replay_forward_with_latents(
-                batch, timestep_index, xt_input, classifier_free_guidance=False
-            )["noise_pred"].detach()
+        # Up to two evaluations of the family's own conditional forward at this
+        # trajectory step: the pre-training reference when the KL term is on,
+        # then the trainable policy. The frozen reference may swap weights in
+        # place, so it runs before the live forward whose graph backward will
+        # read. theta_old is the policy as of this optimizer step: the detached
+        # live prediction, not a third forward.
+        ref_prediction = None
+        if cfg.kl_coef > 0:
+            with (
+                model.reference_policy(),
+                torch.no_grad(),
+                model_autocast(model, x0.device),
+            ):
+                ref_prediction = model.replay_forward_with_latents(
+                    batch, timestep_index, xt_input, classifier_free_guidance=False
+                )["noise_pred"].detach()
         with model_autocast(model, x0.device):
             forward_prediction = model.replay_forward_with_latents(
                 batch, timestep_index, xt_input, classifier_free_guidance=False
@@ -100,7 +100,10 @@ class DiffusionNFT(ForwardProcessAlgorithm):
             flat_mix * positive_loss / beta + (1.0 - flat_mix) * negative_loss / beta
         )
         policy_loss = original_policy_loss.mean() * advantage_scale
-        kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
+        if ref_prediction is None:
+            kl_loss = policy_loss.new_zeros(())
+        else:
+            kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term
         kl_value = float(kl_loss.detach().item())

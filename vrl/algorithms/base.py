@@ -37,8 +37,6 @@ class Algorithm(ABC):
     #   generation must run the stochastic sampler (``rollout.sde``).
     # sft_source: where a clean-target SFT term takes its targets, or that
     #   there is no such term.
-    # requires_reference_policy: the loss reads the pre-training weights
-    #   unconditionally, not only behind a KL weight.
     # replay_policy: which policy the replay may train relative to the one
     #   that drew the sample. "off_policy": the loss is *defined* by a clipped
     #   or guarded ratio against the rollout policy, so the two must differ
@@ -54,7 +52,6 @@ class Algorithm(ABC):
     #   only an empty section; None forbids the section); None = unrestricted.
     needs_sde_rollout: ClassVar[bool]
     sft_source: ClassVar[Literal["unsupported", "latents", "preference_winner"]]
-    requires_reference_policy: ClassVar[bool] = False
     replay_policy: ClassVar[Literal["any", "off_policy"]] = "any"
     signal: ClassVar[type[SegmentSignal] | None] = None
     consumed_sections: ClassVar[tuple[tuple[str, frozenset[str] | None], ...] | None] = None
@@ -71,6 +68,16 @@ class Algorithm(ABC):
         """
 
         return 0.0 if self.sft_source == "unsupported" else float(self.config.sft_weight)
+
+    @property
+    def requires_reference_policy(self) -> bool:
+        """The trainer must serve the pre-training weights to this loss.
+
+        Every loss that reads them does so for its KL term, weighted by its
+        config's ``kl_coef``; a config without that knob has no such term.
+        """
+
+        return getattr(self.config, "kl_coef", 0.0) > 0
 
     def __init__(self, config: Any) -> None:
         self.config = config
