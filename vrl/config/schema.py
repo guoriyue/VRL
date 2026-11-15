@@ -189,12 +189,7 @@ class AlgorithmConfig(ConfigBase):
 
 
 class DataPreprocessingSection(ConfigBase):
-    """``data.preprocessing``: loader-side sample shaping.
-
-    readers: DataConfig._validate_data, vrl/trainers/data/prompts.py
-    load_prompt_examples_from_config, the offline DPO entrypoint, and the
-    i2v/v2w reference-image checks in the online recipe.
-    """
+    """``data.preprocessing``: loader-side sample shaping."""
 
     resolution: StrictInt | None = None
     random_crop: StrictBool | None = None
@@ -220,7 +215,7 @@ class DataConfig(ConfigBase):
     loader: DataLoaderName | None = None
     # The prompt loaders take one manifest path. The ``layered_scenes`` loader
     # takes dataset roots, a path or a {root: scene count} mapping whose keys
-    # the recipe chooses (an open mapping). reader: manifest_sources.
+    # the recipe chooses (an open mapping).
     manifest: str | dict[str, Any] | None = None
     eval_manifest: str | None = None
     preprocessing: DataPreprocessingSection | None = None
@@ -230,12 +225,11 @@ class DataConfig(ConfigBase):
     cache_dir: str | None = None
     # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
     # (algorithm.sft_weight > 0): {target image/video -> VAE latents} written by
-    # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
+    # vrl/scripts/denoise/encode_targets.py.
     sft_latents: str | None = None
     # Cached layered scenes (loader ``layered_scenes``): ``manifest`` names the
     # dataset roots ({root: scene count}), ``token_weights`` the weight map and
     # ``spare_layers_max`` how many transparent spare layers a draw may append.
-    # reader: vrl/scripts/families/qwen_image_layered/train_sft.py
     token_weights: Literal["weighted", "control"] | None = None
     spare_layers_max: StrictInt | None = None
     max_train_samples: StrictInt | None = None
@@ -350,14 +344,11 @@ class SdeConfig(ConfigBase):
     word ``sde``."""
 
     type: Literal["flow_grpo", "cps"]
-    # reader: vrl/generation/bindings/full_sequence/layout.py, which
-    # owns the range/size checks against num_steps at the request boundary.
     window_size: StrictInt | None = None
     window_range: list[StrictInt] | None = None
 
 
 class RolloutConfig(ConfigBase):
-    # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
     sde: SdeConfig | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
@@ -369,21 +360,19 @@ class RolloutConfig(ConfigBase):
     # Strict: a bool is not a batch dimension (OnlineBatchConfig rejects it too).
     n_samples_per_prompt: StrictInt | None = None
     prompts_per_batch: StrictInt | None = None
-    # reader: vrl/generation/bindings/full_sequence/layout.py
-    # _parse_denoise_mode (request boundary).
-    # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
+    # Allowed set is the type; DenoiseRequestOptions re-checks it for
+    # over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: vrl/generation/bindings/full_sequence/layout.py — opt-in to storing
-    # each denoise step's rollout proposal mean for trust-region replay.
+    # Opt-in to storing each denoise step's rollout proposal mean for
+    # trust-region replay.
     return_prev_sample_mean: StrictBool | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: GenerationRequest.sample_batches + diffusion layout. int =
-    # fixed batch size; null = samples_per_prompt.
+    # int = fixed batch size; null = samples_per_prompt.
     samples_per_generation_batch: int | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
@@ -445,7 +434,6 @@ class ActorSection(ConfigBase):
     prompts_per_collection: StrictInt | None = None
     training_microbatch_size: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
-    # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
     gradient_checkpointing: (
         Literal["off", "full", "full_cpu", "selective", "selective_attention"] | StrictBool | None
     ) = None
@@ -479,8 +467,7 @@ class ActorSection(ConfigBase):
     prediction_type: str | None = None
     # Present (``true``, or a section with options), the replay policy's frozen
     # transformer blocks stay on the host and stream per call, so a bf16 ~20B
-    # policy trains on one 32 GB card. readers: the training strategies' root
-    # placement, the offline SFT recipe.
+    # policy trains on one 32 GB card.
     offload: OffloadSection | None = None
 
     @field_validator("offload", mode="before")
@@ -613,8 +600,7 @@ class TrainingSection(ConfigBase):
 class RolloutRuntimeSection(ConfigBase):
     """distributed.rollout: rollout runtime knobs (engine level and rank level).
 
-    reader: vrl/generation/ray/config.py RolloutWorkerConfig.from_root. Release
-    scheduling and colocation are NOT declared here: colocation lives in
+    Release scheduling and colocation are NOT declared here: colocation lives in
     distributed.resources.<role>.devices (an unpinned rollout shares the trainer
     GPU), and release scheduling is derived from GPU topology. Rollout engines are
     always resynced to the trained policy (the syncer flattens whatever is
@@ -651,14 +637,10 @@ class RolloutRuntimeSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py ResourcePlan.from_root(root); the
-    # consuming dataclass is the section type, so pydantic validates it here.
+    # The consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
-    # reader: vrl/generation/ray/config.py RolloutWorkerConfig.from_root (worker
-    # runtime knobs). Colocation lives in resources.<role>.devices.
+    # Colocation lives in resources.<role>.devices, not here.
     rollout: RolloutRuntimeSection | None = None
-    # readers: vrl/trainers/distributed.py DistributedTrainingContext.from_root (rank/device)
-    # + vrl/ray/resources.py strategy-aware trainer GPU validation
     training: TrainingSection | None = None
 
 
