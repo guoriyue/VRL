@@ -167,7 +167,6 @@ class ContinuousRolloutConsumer:
         if all(item is None for item in prompt_batch.results):
             return
         version = prompt_batch.policy_version
-        # Staleness: versions the batch trails the trainer by.
         version_lag = current_policy_version - version
         if version_lag < 0:
             raise RuntimeError(

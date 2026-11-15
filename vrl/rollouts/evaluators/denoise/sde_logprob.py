@@ -99,7 +99,6 @@ class DenoiseSDELogProbEvaluator(Evaluator):
             device,
         )
 
-        # SDE step with log-prob
         result = flow_matching_math.sde_step_with_logprob(
             self.scheduler,
             noise_pred,

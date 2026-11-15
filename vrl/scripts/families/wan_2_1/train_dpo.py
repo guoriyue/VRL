@@ -201,7 +201,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     enable_transformer_gradient_checkpointing(bundle, built.root)
 
-    # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)
     encoders = WanDPOEncoders(
         pipeline,
@@ -210,7 +209,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         dtype=weight_dtype,
     )
 
-    # 3. Data — Pick-a-Pic v2 preference pairs
     # `data.preprocessing.resolution: 0` means "fall back to sampling.height";
     # the schema requires the key for this loader, the `or` keeps that semantic.
     resolution = int(preprocessing.resolution) or int(sampling.height)
@@ -238,7 +236,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     logger.info("Loaded %d preference pairs", len(ds))
 
-    # 4. Trainer — its config was resolved before runtime/data construction so
+    # The trainer config was resolved before runtime/data construction so
     # unsupported optimizer modes fail without paying model or dataset startup.
     pipeline.scheduler.set_timesteps(
         pipeline.scheduler.config.num_train_timesteps,
@@ -268,7 +266,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
         restore_rng_state(resume_checkpoint.rng_state)
 
-    # 5. Output dir + CSV log + resolved config snapshot
     out_dir = Path(str(trainer_section.output_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
     save_resolved_config(cfg, out_dir, resumed=resume_checkpoint is not None)
@@ -289,7 +286,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         ),
     )
 
-    # 6. Training loop
     # The recipe declares these '???', so load_config already rejected a missing one.
     max_train_steps = int(trainer_section.max_train_steps)
     checkpointing_steps = int(trainer_section.checkpointing_steps)

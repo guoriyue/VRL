@@ -171,7 +171,6 @@ class RayGenerationExecutor:
             batch_outputs.append(result.output)
 
         output = self.gatherer.merge_generation_batches(request, batch_outputs)
-        # Log each batch's measured memory peaks.
         for result in results:
             reading = result.memory
             if reading is None:
