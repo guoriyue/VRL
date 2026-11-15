@@ -13,7 +13,6 @@ from vrl.config.precision import (
     PrecisionPolicy,
     QuantizationPolicy,
     RolePrecision,
-    normalize_precision,
 )
 from vrl.config.schema import parse_config
 from vrl.models.dtypes import (
@@ -38,27 +37,14 @@ def _section(precision: Any = None) -> PrecisionConfig | None:
 # -- normalize / convert ----------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        ("bf16", "bf16"),
-        ("no", "fp32"),  # the one legacy spelling we still accept
-        (None, "fp32"),
-        ("", "fp32"),
-    ],
-)
-def test_normalize_precision(value, expected):
-    """Plain tokens pass through; `no`/empty/None mean fp32. The full accepted
-    vocabulary lives in vrl/config/precision.py — pin one member per path, not the table."""
-    assert normalize_precision(value) == expected
-
-
-def test_normalize_rejects_unknown():
-    """Neither a quantization-only token nor a torch dtype spelling is a policy token."""
-    with pytest.raises(ValueError):
-        normalize_precision("int8")
-    with pytest.raises(ValueError):
-        normalize_precision("bfloat16")  # no longer an accepted alias
+def test_dtype_key_rejects_retired_aliases():
+    """A dtype key takes only the plain policy tokens: neither the torch spelling
+    ``bfloat16`` nor accelerate's ``no`` (once read as fp32) is one."""
+    for spelling in ("bfloat16", "no"):
+        block = _plain_precision()
+        block["training"]["dtype"] = spelling
+        with pytest.raises(ValueError, match=r"precision\.training\.dtype must be one of"):
+            _section(block)
 
 
 def test_resolve_torch_dtype():

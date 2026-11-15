@@ -44,35 +44,19 @@ _PLAIN_DTYPES = ("fp32", "bf16", "fp16")
 # not a YAML key: FP8 has only ever run row-wise scaled, and NVFP4 is the
 # complete two-level scaling scheme with no recipe axis.
 _QUANTIZATION_RECIPES: dict[str, str | None] = {"fp8": "rowwise", "nvfp4": None}
-_PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_RECIPES)
-
-
-def normalize_precision(value: Any) -> str:
-    """Normalize a known precision token at a config or tool boundary."""
-
-    if value is None:
-        return "fp32"
-    token = str(value).lower().strip()
-    if not token:
-        return "fp32"
-    if token == "no":
-        return "fp32"
-    if token not in _PRECISION_TOKENS:
-        raise ValueError(
-            f"precision must be one of {_PRECISION_TOKENS} (or legacy 'no'); got {value!r}",
-        )
-    return token
 
 
 def _normalize_plain_dtype(value: Any, *, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path} must be an explicit non-empty dtype")
-    token = normalize_precision(value)
+    token = value.lower().strip()
     if token not in _PLAIN_DTYPES:
-        raise ValueError(
-            f"{path} must be one of {_PLAIN_DTYPES}; got {token!r}. FP8/NVFP4 "
-            "belongs under a `quantization.format` key, not a `dtype` key.",
+        hint = (
+            " FP8/NVFP4 belongs under a `quantization.format` key, not a `dtype` key."
+            if token in _QUANTIZATION_RECIPES
+            else ""
         )
+        raise ValueError(f"{path} must be one of {_PLAIN_DTYPES}; got {value!r}.{hint}")
     return token
 
 
@@ -307,5 +291,4 @@ __all__ = [
     "RolePrecision",
     "RolloutPrecisionConfig",
     "TrainingPrecisionConfig",
-    "normalize_precision",
 ]
