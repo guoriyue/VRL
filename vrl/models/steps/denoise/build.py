@@ -127,6 +127,7 @@ def build_family_replay_runtime_bundle(
     from vrl.utils.config import import_from_path
 
     build.require_replay()
+    QuantizationPass.validate_support(build)
     family_build = entry.family_build
     replay_cls = import_from_path(family_build.replay_cls)
     logger.info(
@@ -160,6 +161,11 @@ def build_family_replay_runtime_bundle(
         model.apply_full_finetune(build)
     if build.fused_kernels:
         _apply_fused_kernels(model, build)
+    # After LoRA, before compile, as in the rollout: the replay swaps the same
+    # linears to the same GEMM, so the two forwards agree by construction.
+    quantization = QuantizationPass()
+    if quantization.enabled(build):
+        quantization.apply(model, build)
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
         model.torch_compile_transformer(compile_cfg["mode"])

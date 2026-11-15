@@ -51,6 +51,19 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "distributed.training.fsdp.precision_policy=none to preserve frozen dtypes",
             )
 
+    # A quantized replay differentiates a frozen base through its cached GEMM;
+    # nothing re-derives that cache after an optimizer step moves the weights.
+    if (
+        root.precision is not None
+        and root.precision.training.quantization is not None
+        and root.model is not None
+        and not root.model.use_lora
+    ):
+        raise ValueError(
+            "precision.training.quantization requires model.use_lora=true: "
+            "the quantized base is frozen",
+        )
+
     # A full resume restores trainable state from checkpoint.pt; a warm-start
     # adapter loaded first could silently change the adapter structure.
     resume_from = root.trainer.resume_from if root.trainer is not None else None

@@ -16,9 +16,10 @@ policy because PyTorch process defaults are not a stable trainer/worker contract
 The pydantic sections below are the single declaration of the YAML shape:
 ``parse_config`` validates them (vocabulary, required keys, unknown keys), and
 :func:`PrecisionPolicy` turns the validated section into the two role
-policies. Quantization is a rollout-only axis: the trainer has no
-autograd-capable quantized Linear, so ``precision.training`` carries no
-``quantization`` block and one is rejected as an unknown key. This module remains
+policies. ``precision.training.quantization`` quantizes the replay forward and,
+unless ``precision.rollout.quantization`` names another format, the rollout with
+it, so both sides run one GEMM. ``precision.rollout.quantization`` alone
+quantizes only the rollout. This module remains
 torch-free; runtime boundaries materialize dtype tokens through
 ``vrl.models.dtypes``.
 """
@@ -195,6 +196,7 @@ class PrecisionPolicy:
             dtype=section.training.dtype,
             float32_precision=float32_precision,
             outer_autocast=section.training.outer_autocast,
+            quantization=QuantizationPolicy.from_section(section.training.quantization),
         )
         rollout_section = section.rollout or RolloutPrecisionConfig()
         rollout = RolePrecision(
@@ -205,7 +207,11 @@ class PrecisionPolicy:
                 if rollout_section.outer_autocast is None
                 else rollout_section.outer_autocast
             ),
-            quantization=QuantizationPolicy.from_section(rollout_section.quantization),
+            quantization=(
+                training.quantization
+                if rollout_section.quantization is None
+                else QuantizationPolicy.from_section(rollout_section.quantization)
+            ),
         )
         prompt_encoders = rollout_section.prompt_encoders
         return cls(
@@ -219,7 +225,7 @@ class PrecisionPolicy:
 
 
 class QuantizationConfig(ConfigBase):
-    """``rollout.quantization`` block: the format; the policy fills its recipe."""
+    """A role's ``quantization`` block: the format; the policy fills its recipe."""
 
     format: str
 
@@ -234,6 +240,7 @@ class QuantizationConfig(ConfigBase):
 class TrainingPrecisionConfig(ConfigBase):
     dtype: str
     outer_autocast: StrictBool = True
+    quantization: QuantizationConfig | None = None
 
     @field_validator("dtype", mode="before")
     @classmethod

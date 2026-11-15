@@ -284,6 +284,15 @@ def test_nvfp4_rollout_is_a_recipe_free_selective_policy():
     assert p.stages_match is False
 
 
+def test_training_quantization_quantizes_both_roles_with_one_policy():
+    block = _plain_precision()
+    block["training"]["quantization"] = {"format": "nvfp4"}
+    p = PrecisionPolicy.from_section(_section(block))
+    assert p.training.quantization == QuantizationPolicy(format="nvfp4")
+    assert p.rollout.quantization == p.training.quantization
+    assert p.stages_match is True
+
+
 def test_legacy_generic_fp4_format_has_a_migration_error():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp4"}

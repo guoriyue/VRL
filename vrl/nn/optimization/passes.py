@@ -193,21 +193,25 @@ class QuantizationPass:
                 "matched 0 linears — the policy has no quantizable linears "
                 "(check the exclude list / min_features). It would be a no-op.",
             )
-        if not getattr(rollout, "base_weight_sync", True):
-            # Base weights will never be synced into this rollout (LoRA syncs
-            # adapters; sync-free contexts sync nothing), so the source masters are
-            # dead weight — drop them BEFORE the device move so a large quantized
-            # rollout does not retain a full source-dtype copy beside its cache.
+        # A replay build carries no rollout options; its base is frozen exactly
+        # when it trains adapters.
+        keeps_masters = rollout.base_weight_sync if rollout is not None else not build.use_lora
+        if not keeps_masters:
+            # Base weights will never be written into this model (LoRA syncs and
+            # trains adapters; sync-free contexts sync nothing), so the source
+            # masters are dead weight — drop them BEFORE the device move so a
+            # large quantized policy does not retain a full source-dtype copy
+            # beside its cache.
             from vrl.nn.quantization import drop_quantized_masters
 
             freed = drop_quantized_masters(model)
             logger.info(
-                "%s rollout without base-weight sync: dropped source masters (%.1f GiB freed)",
+                "%s policy with a frozen base: dropped source masters (%.1f GiB freed)",
                 format_name,
                 freed / 2**30,
             )
         logger.info(
-            "%s rollout (recipe=%s): quantized %d policy linears",
+            "%s (recipe=%s): quantized %d policy linears",
             format_name,
             recipe,
             len(swapped),
