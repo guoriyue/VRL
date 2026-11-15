@@ -68,7 +68,9 @@ def check_cross_section_rules(root: RootConfig) -> None:
     algorithm_cls = algorithm_class(kind)
     rollout = root.rollout
 
-    if algorithm_cls.requires_previous_policy and root.model is not None:
+    from vrl.algorithms.forward_process import ForwardProcessAlgorithm
+
+    if issubclass(algorithm_cls, ForwardProcessAlgorithm) and root.model is not None:
         # These algorithms re-noise the clean latent and evaluate it through the
         # shared full-sequence replay forward (``replay_forward_with_latents``),
         # so the family needs a trainer replay recipe on that regime. The

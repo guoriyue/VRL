@@ -95,7 +95,7 @@ snapshots retain their original configuration and need these key migrations
 if relaunched. An explicit non-default adapter-upcast policy changes identity.
 
 The objective class, not a model recipe, declares the previous-policy and
-reference-policy facts (`requires_previous_policy`,
+reference-policy facts (the `ForwardProcessAlgorithm` base class and
 `requires_reference_policy`; GRPO's reference follows `kl_coef > 0`). NFT and
 V-GRPO read the previous policy `theta_old` as the detached current prediction
 (one trainable forward per replay step, no weight snapshot). The model serves

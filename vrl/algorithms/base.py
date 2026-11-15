@@ -37,10 +37,6 @@ class Algorithm(ABC):
     #   generation must run the stochastic sampler (``rollout.sde``).
     # sft_source: where a clean-target SFT term takes its targets, or that
     #   there is no such term.
-    # requires_previous_policy: the algorithm scores the trainable policy
-    #   against theta_old (the detached current prediction) through the
-    #   full-sequence replay forward; such an algorithm cannot train on a
-    #   stale sample, so continuous scheduling is rejected for it.
     # requires_reference_policy: the loss reads the pre-training weights
     #   unconditionally, not only behind a KL weight.
     # requires_active_trust_region: the loss is *defined* by a clipped or
@@ -57,7 +53,6 @@ class Algorithm(ABC):
     #   only an empty section; None forbids the section); None = unrestricted.
     needs_sde_rollout: ClassVar[bool]
     sft_source: ClassVar[Literal["unsupported", "latents", "preference_winner"]]
-    requires_previous_policy: ClassVar[bool] = False
     requires_reference_policy: ClassVar[bool] = False
     requires_active_trust_region: ClassVar[bool] = False
     signal: ClassVar[type[SegmentSignal] | None] = None

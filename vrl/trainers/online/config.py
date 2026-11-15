@@ -287,13 +287,13 @@ class TrainerConfig:
         config = cls(**payload)
         algorithm = root.algorithm
         if algorithm is not None:
+            from vrl.algorithms.forward_process import ForwardProcessAlgorithm
             from vrl.config.algorithm import algorithm_class
             from vrl.rollouts.orchestration.continuous.types import MAX_STALE_POLICY_VERSIONS
 
             algorithm_cls = algorithm_class(algorithm.kind)
-            if (
-                config.rollout_orchestration.schedule_mode == "continuous"
-                and algorithm_cls.requires_previous_policy
+            if config.rollout_orchestration.schedule_mode == "continuous" and issubclass(
+                algorithm_cls, ForwardProcessAlgorithm
             ):
                 raise ValueError(
                     "trainer.rollout_orchestration.schedule_mode='continuous' trains on "

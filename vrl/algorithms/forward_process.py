@@ -32,13 +32,15 @@ class ForwardProcessConfig(GroupAdvantageConfig):
 class ForwardProcessAlgorithm(OnlineAlgorithm):
     """An algorithm that trains the forward process from the rollout's clean latents.
 
-    No reverse-SDE trajectory, no log-probs, no evaluator; ``theta_old`` is the
-    detached current prediction, so a superseded policy's rollout would be
-    scored against the wrong weights (``requires_previous_policy``).
+    No reverse-SDE trajectory, no log-probs, no evaluator. It scores the
+    trainable policy against ``theta_old``, the detached current prediction,
+    through the full-sequence replay forward. Config resolution reads both
+    halves off this base class: the family must provide that forward, and a
+    superseded policy's rollout would be scored against the wrong weights, so
+    continuous scheduling is rejected.
     """
 
     sft_source = "unsupported"
-    requires_previous_policy = True
     config: ForwardProcessConfig
 
     # -- re-noising -------------------------------------------------------

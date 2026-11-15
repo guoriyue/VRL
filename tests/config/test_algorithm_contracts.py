@@ -12,7 +12,6 @@ from vrl.config.schema import AlgorithmConfig, RootConfig
 _FACTS = (
     "needs_sde_rollout",
     "sft_source",
-    "requires_previous_policy",
     "requires_reference_policy",
     "requires_active_trust_region",
     "consumed_sections",
