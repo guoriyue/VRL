@@ -336,11 +336,13 @@ def test_linear_matches_dequantized_reference() -> None:
     torch.manual_seed(0)
     linear = nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16)
     quantized = Fp4Linear(linear)
-    x = torch.randn(64, 256, device="cuda", dtype=torch.bfloat16)
+    # One sample of 64 tokens: the leading axis is the batch, and each sample
+    # is quantized on its own.
+    x = torch.randn(1, 64, 256, device="cuda", dtype=torch.bfloat16)
 
     with torch.no_grad():
-        output = quantized(x)
-        x4, x_scale, x_tensor_scale = quantize_nvfp4(x)
+        output = quantized(x)[0]
+        x4, x_scale, x_tensor_scale = quantize_nvfp4(x[0])
         weight4, weight_scale, weight_tensor_scale = quantize_nvfp4(linear.weight.data)
         x_dequantized = _dequantize_nvfp4_reference(x4, x_scale, x_tensor_scale)
         weight_dequantized = _dequantize_nvfp4_reference(

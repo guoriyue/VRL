@@ -52,3 +52,22 @@ def test_master_free_module_holds_only_its_cache_and_blocks_base_load(scheme: st
     with pytest.raises(RuntimeError, match="master-free"):
         quantized.load_state_dict({"weight": torch.randn(32, 64)})
     quantized.load_state_dict({}, strict=False)
+
+
+@pytest.mark.gpu
+@_SCHEMES
+def test_a_sample_is_bitwise_independent_of_its_batch(scheme: str) -> None:
+    torch.manual_seed(0)
+    linear = nn.Linear(256, 512).cuda().to(torch.bfloat16)
+    quantized = QUANTIZATION_SCHEMES[scheme](linear, keep_master=False)
+    batch = torch.randn(4, 48, 256, device="cuda", dtype=torch.bfloat16)
+    # Unequal magnitudes: a whole-batch activation scale would follow the largest sample.
+    batch *= torch.tensor([1.0, 8.0, 0.1, 30.0], device="cuda", dtype=torch.bfloat16)[
+        :, None, None
+    ]
+
+    with torch.no_grad():
+        together = quantized(batch)
+        alone = torch.cat([quantized(sample) for sample in batch.split(1)])
+
+    assert torch.equal(together, alone)

@@ -32,7 +32,7 @@ class _FrozenGemm(torch.autograd.Function):
     def forward(ctx, x: torch.Tensor, module: QuantizedLinear) -> torch.Tensor:
         ctx.module = module
         ctx.input_dtype = x.dtype
-        return module.quantized_forward(x)
+        return module.per_sample_forward(x)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
@@ -72,13 +72,27 @@ class QuantizedLinear(nn.Module):
 
         raise NotImplementedError
 
+    def per_sample_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run each sample of the leading batch axis through its own GEMM.
+
+        A whole-batch GEMM lets one sample's numbers depend on its neighbours:
+        the activation scale is taken over the tensor and cuBLAS picks its
+        kernel from the full shape. Measured on SD3.5 Medium under NVFP4, a
+        generation batch of 4 replayed one sample at a time moves the per-step
+        log-prob by 0.54; per sample it is bitwise.
+        """
+
+        if x.dim() < 2 or x.shape[0] == 1:
+            return self.quantized_forward(x)
+        return torch.cat([self.quantized_forward(sample) for sample in x.split(1)])
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Only a frozen base is differentiated here (LoRA training): the cache
         # is derived from the master at load time and no optimizer step
         # refreshes it, so the weight takes no gradient.
         if torch.is_grad_enabled() and x.requires_grad:
             return _FrozenGemm.apply(x, self)
-        return self.quantized_forward(x)
+        return self.per_sample_forward(x)
 
     @classmethod
     def can_replace(cls, linear: nn.Linear) -> bool:
