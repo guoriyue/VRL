@@ -1,8 +1,8 @@
 """Loss-correctness tests for Flow-DPPO and GRPO-Guard.
 
 Both are FlowGRPO-family trust-region variants that read the rollout proposal
-mean (old_prev_sample_mean). These pin the §2.2 / §2.3 acceptance from
-SPRINT_diffusion_algorithm_parity using synthetic SDE signals (no model).
+mean (old_prev_sample_mean). These pin each variant's acceptance with
+synthetic SDE signals (no model).
 """
 
 from __future__ import annotations

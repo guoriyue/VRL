@@ -1,4 +1,4 @@
-"""DDP training strategy (SPRINT_symmetric_colocated_ddp.md).
+"""DDP training strategy.
 
 We cannot run real multi-GPU here, but ``DistributedDataParallel`` runs on a
 single CPU rank (``world_size=1`` + gloo): the module wraps, forward/backward

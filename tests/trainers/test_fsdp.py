@@ -1,4 +1,4 @@
-"""FSDP2 strategy layer (SPRINT_multi_gpu_training.md).
+"""FSDP2 strategy layer.
 
 We cannot run real multi-GPU here, but FSDP2 ``fully_shard`` runs on a single CPU
 rank (``world_size=1`` + gloo): params become DTensors, forward/backward works,

@@ -231,9 +231,9 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=24.0,
     ),
-    # New diffusion-RL algorithms (SPRINT_diffusion_algorithm_parity), each run
-    # on SD3.5 by swapping only the /recipe/online group. flow_dppo / grpo_guard
-    # exercise the §3 old_prev_sample_mean store->replay path on the real
+    # Diffusion-RL algorithms beyond GRPO, each run on SD3.5 by swapping only
+    # the /recipe/online group. flow_dppo / grpo_guard exercise the
+    # old_prev_sample_mean store->replay path on the real
     # executor; on the first step rollout==replay so the trust-region KL is ~0
     # (no masking / ratio_mean_bias), which keeps a live gradient. Their losses
     # report no sample->replay logprob diff, so parity is checked permissively.

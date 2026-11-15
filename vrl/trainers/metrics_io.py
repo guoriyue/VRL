@@ -98,7 +98,7 @@ class OnlineMetricRow:
     continuous_weight_sync_barrier_mode: float = _csv_field(
         ".1f", phase_key="continuous.weight_sync_barrier_mode"
     )
-    # Stage-contract columns (SPRINT_continuous_stage_contracts_and_baseline).
+    # Stage-contract columns.
     # Identity of the consumed iteration plus per-stage worst-observed
     # intervals (gauge reduction; busy totals stay in collect.*_wall phases)
     continuous_batch_id: float = _csv_field(".1f", phase_key="continuous.batch_id")

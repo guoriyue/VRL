@@ -1,4 +1,4 @@
-"""Model build inputs and runtime bundle (CONTRACT.md, SPRINT_model_refactor.md §5.1, §5.3.E).
+"""Model build inputs and runtime bundle.
 
 These two dataclasses are the only sanctioned interface between training scripts
 and family-adjacent builders. Scripts must not import family model classes

@@ -301,7 +301,7 @@ class DenoiseModelBase(nn.Module, ABC):
     # ``load_trainable_state`` to copy a retained version onto the live model, so
     # the same flat ``transformer.*`` payload format works for single-transformer
     # (sd3/cosmos) and multi-transformer (wan) families without per-family code.
-    # The family registry declares the capability; see SPRINT_shadow_model_weight_sync.md.
+    # The family registry declares the capability.
 
     def _versioned_state_slots(self) -> TrainableStateSlots:
         slots = getattr(self, "_trainable_state_slots", None)

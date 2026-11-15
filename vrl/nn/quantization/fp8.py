@@ -3,8 +3,7 @@
 The real ``torch._scaled_mm`` path that lets the rollout DiT run its big policy
 GEMMs (attention QKV/out, MLP) in fp8-e4m3 while keeping a source-dtype master
 weight and a bf16/fp16 output matching the surrounding activation. This is the kernel the rollout engine swaps
-in when ``precision.rollout.quantization.format=fp8``
-(SPRINT_fp8_rollout_gemm_kernel.md), and the replay too under
+in when ``precision.rollout.quantization.format=fp8``, and the replay too under
 ``precision.training.quantization``.
 
 Why a module swap (not a dtype cast): fp8 is not a drop-in dtype — a plain

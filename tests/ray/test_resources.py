@@ -721,7 +721,7 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
         )
 
 
-# ── Symmetric colocated DDP (SPRINT_symmetric_colocated_ddp) ──
+# ── Symmetric colocated DDP ──
 
 
 @pytest.mark.parametrize("strategy", ["ddp", "fsdp"])
@@ -730,7 +730,7 @@ def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -
     single GPU (trainer + colocated rollout on it). world_size drives only the
     collectives, NOT the per-rank GPU plan -- signaled by an unpinned rollout, so
     fsdp's world-covering asymmetric trainer rule and the disjoint rule do not
-    apply (SPRINT_multi_gpu_training Phase 4)."""
+    apply."""
     resolved = ResourcePlan.from_root(
         parse_config(
             OmegaConf.create(

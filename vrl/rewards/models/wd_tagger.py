@@ -12,9 +12,10 @@ The dense score exists because GRPO consumes the *ordering* of rewards within a
 prompt group, and a thresholded count barely orders anything: with a median of
 six requested tags the recall can take seven values at most, and inside a
 16-sample group it took two to four, which collapsed the advantage and left the
-policy unable to move (SPRINT_anima_geneval_spatial_rl 7.5 measured the same
-failure on the GenEval verdict, and 8.2 measured a dense reward moving the same
-policy at t=+9.52). Capping each tag at the threshold is what keeps the dense
+policy unable to move. §7.5 of
+archive/main-20261016:docs/sprints/info/SPRINT_anima_geneval_spatial_rl.md
+measured the same failure on the GenEval verdict, and §8.2 measured a dense
+reward moving the same policy at t=+9.52. Capping each tag at the threshold is what keeps the dense
 score honest: once a tag is detected, pushing its probability higher pays
 nothing, so the gradient goes to the tags that are actually missing rather than
 to inflating confidence on tags already rendered. The two scores therefore

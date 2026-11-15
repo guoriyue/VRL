@@ -1,4 +1,4 @@
-"""GenerationWorkerCore sleep/wake (SPRINT_frozen_component_preservation, defect A).
+"""GenerationWorkerCore sleep/wake.
 
 Level-1 offload-and-restore for on-demand activation: ``sleep`` delegates to the
 worker's memory-parking owner. The backend follows from residency, never from

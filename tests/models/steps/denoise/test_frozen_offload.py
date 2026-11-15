@@ -1,4 +1,4 @@
-"""Pipeline frozen-component offload (SPRINT_frozen_component_preservation).
+"""Pipeline frozen-component offload.
 
 nn.Module.to moves only registered submodules — for diffusion families that is
 just the transformer; the diffusers pipeline (with its frozen VAE / text

@@ -1,4 +1,4 @@
-"""FP16 GradScaler acceptance gates for OnlineTrainer (SPRINT_fp16_training_gradscaler).
+"""FP16 GradScaler acceptance gates for OnlineTrainer.
 
 G1 enable matrix, G2 unscale-before-clip ordering, G4 skipped-step propagation
 (the scaler-skipped step must not update EMA or publish rollout weights; it runs

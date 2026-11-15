@@ -63,10 +63,10 @@ class BatchExecutorBase:
         GPU at a time and the copied results are readable when the loop returns.
 
         The copy itself is not overlapped with the next batch's compute: measured
-        on Cosmos 240p (SPRINT_diffusion_rollout_stage_pipeline, 2026-06-27) the
-        device-to-host copy is a few percent of denoise time and a side-stream
-        overlap recovered nothing (6735 ms serial vs 6729 ms overlapped), so the
-        loop keeps the plain synchronous copy.
+        on Cosmos 240p on 2026-06-27, the device-to-host copy is a few percent of
+        denoise time and a side-stream overlap recovered nothing (6735 ms serial
+        vs 6729 ms overlapped), so the loop keeps the plain synchronous copy
+        (archive/main-20261016:docs/sprints/reading/SPRINT_diffusion_rollout_stage_pipeline.md).
 
         ``stage_batch_result`` runs on each copied batch result and its return value is
         what the loop keeps: the Ray rank passes ``ray.put`` so the loop returns

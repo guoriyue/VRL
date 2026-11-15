@@ -1,7 +1,8 @@
 """DINOv2 perceptual target-similarity reward for robot-domain Video2World.
 
 Drop-in successor to ``target_video_similarity`` (the retired 64x64 pixel-L1
-reward, see ``SPRINT_future_reward`` S1). It keeps the exact same metadata
+reward; ``archive/main-20261016:docs/sprints/done/SPRINT_future_reward.md`` S1
+records why it was retired). It keeps the exact same metadata
 contract (``target_video`` / ``target_image`` from the manifest) and the same
 sequence / final-frame / temporal weighting, but replaces the reward-hackable
 per-frame feature: instead of flattened low-res RGB compared by L1, each frame is
@@ -11,15 +12,15 @@ Why this is not pixel-L1 in disguise: a DINOv2 embedding is a learned semantic
 feature, so the conditional-mean ("blur the prediction to the temporal average")
 solution that maximizes pixel L1 no longer maximizes cosine similarity -- a blurry
 or frozen frame lands off the real-image manifold and its embedding drifts away
-from the target's. Measured on the SPRINT_future_reward adversarial battery:
+from the target's. Measured on that sprint's adversarial battery:
 blur / temporal-mean scored >0.15 cosine below the exact match. Discrimination
 regressions are now caught by a human reviewing rollouts (the automated probe
 was removed).
 
 This is a *perceptual anchor* that still scores against a single recorded future, so
 it penalizes plausible divergent rollouts -- the weaker "imitate one recording"
-regime (SPRINT_future_reward S6). For instruction-grounded action-following, the
-sprint designs an inverse-dynamics reward in S3 (not shipped).
+regime (S6 there). Instruction-grounded action-following needs a different
+reward; none is shipped.
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ class TargetDinoSimilarityModel(LazyTorchModule):
         # Temporal weight is high on purpose: per-frame cosine alone cannot separate
         # a frozen / temporal-mean clip from the real one (same scene -> ~0.76 cosine),
         # so the order-sensitive temporal term carries equal weight to appearance.
-        # These defaults pass the SPRINT S4 discrimination probe (gap_ratio ~0.30,
+        # These defaults passed that sprint's S4 discrimination probe (gap_ratio ~0.30,
         # temporal-mean ~0.25 cosine below exact); a lower temporal weight fails it.
         self.sequence_weight = float(cfg.get("sequence_weight", 0.4))
         self.final_weight = float(cfg.get("final_weight", 0.2))

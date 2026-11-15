@@ -86,10 +86,8 @@ def _register_builtins() -> None:
             "text_regions": TextRegionsReward,
             "pickscore": PickScoreReward,
             "wd_tagger": WDTaggerReward,
-            # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
-            # motion guard. They replaced the deleted pixel-L1 target_video_similarity (it was
-            # reward-hackable, see S1). The IDM action-following signal is designed in S3 but
-            # not shipped.
+            # DINOv2 perceptual anchor + RAFT motion guard; they replaced the deleted,
+            # reward-hackable pixel-L1 target_video_similarity (see target_dino_similarity.py).
             "target_dino_similarity": TargetDinoSimilarityReward,
             "motion_dynamics": MotionDynamicsReward,
             "robotics_video_reward": RoboticsVideoReward,

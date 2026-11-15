@@ -455,8 +455,7 @@ class FSDPStrategy(TrainerParking):
     workers never see a shard or wrapper key. The collective work lives in
     ``vrl/trainers/fsdp.py``; this class is the trainer-facing adapter.
 
-    This is the strategy *layer* of ``SPRINT_multi_gpu_training.md``. The online
-    recipe drives it through the same per-rank-local symmetric-colocated path as
+    The online recipe drives it through the same per-rank-local symmetric-colocated path as
     DDP: every torchrun rank owns a local rollout/training device, while FSDP
     handles DTensor sharding and collectives behind this adapter.
     """

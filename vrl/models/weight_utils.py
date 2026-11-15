@@ -147,8 +147,7 @@ class TrainableStateSlots:
     The continuous rollout worker installs one slot per weight sync, keyed by
     policy version, so a generation request that was stamped under an older
     version can still find its weights after the trainer has advanced — the
-    prerequisite for a *non-draining* weight sync (no drain bubble; see
-    ``SPRINT_shadow_model_weight_sync.md``).
+    prerequisite for a *non-draining* weight sync (no drain bubble).
 
     It holds ONLY the trainable-state payload dicts (whatever the sync sender
     selected — LoRA/adapter params for the common case, or full-param), never the

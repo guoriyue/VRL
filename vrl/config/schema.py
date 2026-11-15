@@ -546,9 +546,8 @@ class FSDPConfig(ConfigBase):
     ``TrainingSection``): ``vrl/trainers/strategy.py`` build_strategy +
     ``vrl/trainers/fsdp.py`` read ``context_parallel`` /
     ``precision_policy`` / ``cpu_offload`` / ``shard_trainable_only``; FSDP
-    always reshards after forward (ZeRO-3). The remaining FSDP2 knobs from
-    SPRINT_multi_gpu_training.md §3 (activation_checkpointing, state_dict,
-    process-group backend/init) land here when their readers do —
+    always reshards after forward (ZeRO-3). Other FSDP2 knobs
+    (activation_checkpointing, state_dict, process-group backend/init) land here when their readers do —
     declaring an unread knob is a user-facing no-op footgun.
     """
 

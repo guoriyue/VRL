@@ -31,7 +31,7 @@ class StaleSlotDiscard(Exception):
     evicted under a non-draining weight sync, NOT a real generation failure. The
     continuous finite-batch producer catches this distinct type and terminates
     the batch with the fixed-version cause instead of retrying it as a collect
-    error. See SPRINT_shadow_model_weight_sync.md §3.1 / §4.
+    error.
     """
 
 
@@ -173,7 +173,7 @@ class GenerationBatchResult:
     # trainable-state slot for ``request.policy_version`` (the request outlived
     # the slot-retention window under a non-draining weight sync). Distinct from a
     # real generation failure so the caller counts it as a stale discard, not an
-    # error — see SPRINT_shadow_model_weight_sync.md.
+    # error.
     stale_slot: bool = False
 
 

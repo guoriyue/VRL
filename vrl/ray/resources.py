@@ -546,7 +546,7 @@ class ResourcePlan:
         # world (trainer = num_nodes*gpus_per_node GPUs, rollout/reward on separate
         # cards) — the single-node multi-GPU model. SYMMETRIC COLOCATED: one torchrun
         # rank per node, each owning its 1 local GPU with a colocated rollout — the same
-        # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
+        # per-rank-local model ddp uses, signaled by
         # an unpinned rollout (it shares the trainer GPU). Only asymmetric fsdp sizes
         # the trainer to the whole world; symmetric fsdp follows the per-rank
         # single-GPU rule like ddp.

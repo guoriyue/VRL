@@ -402,9 +402,8 @@ def load_full_state_dict(
     """Load a full (unsharded) state dict back into a sharded module on all ranks.
 
     ``broadcast_from_rank0=True`` lets rank0 hold the only full copy (the others
-    pass an empty/placeholder dict) and FSDP scatters the shards — the resume
-    contract from ``SPRINT_multi_gpu_training.md`` §8 (all ranks end up with the
-    same trainable state). A no-op broadcast at ``world_size=1``.
+    pass an empty/placeholder dict) and FSDP scatters the shards, so all ranks
+    resume with the same trainable state. A no-op broadcast at ``world_size=1``.
     """
 
     from torch.distributed.checkpoint.state_dict import (

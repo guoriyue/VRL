@@ -23,7 +23,8 @@ The dense score exists because GRPO consumes the *ordering* of rewards within a
 prompt group, and a thresholded verdict barely orders anything: measured on 8
 prompts x 16 samples, the partial score took only 2-4 distinct values per group
 (2 on counting prompts), so the advantage collapsed to "which half of the batch
-am I in" and the policy could not move (SPRINT_anima_geneval_spatial_rl 7.5).
+am I in" and the policy could not move
+(archive/main-20261016:docs/sprints/info/SPRINT_anima_geneval_spatial_rl.md §7.5).
 Detection confidence, colour probability, and position margin are continuous in
 exactly the region the thresholds cut, so scoring them directly restores a full
 ordering without changing what the objective means. Detection runs at a lower
