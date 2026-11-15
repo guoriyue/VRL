@@ -80,8 +80,6 @@ class OfflineTrainer:
                 eps=cfg.adam_epsilon,
             )
 
-    # Noise injection — branch on prediction_type
-
     def _sample_timestep_indices(
         self,
         bsz: int,

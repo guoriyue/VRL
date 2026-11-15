@@ -93,7 +93,6 @@ class RewardConfig(ConfigBase):
 
     @model_validator(mode="after")
     def _validate_reward(self) -> RewardConfig:
-        # All kwargs entries must be mappings (or null)
         for name, sub in self.kwargs.items():
             if sub is not None and not isinstance(sub, dict):
                 raise ValueError(

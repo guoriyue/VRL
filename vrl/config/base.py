@@ -74,10 +74,8 @@ def _extract_error_message(exc: ValidationError, *, section: str = "") -> str:
     error_type = first["type"]
     msg = first["msg"]
     loc = location(first)
-    # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
-    # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
     if error_type == "literal_error":
         input_val = first.get("input", "")
         expected = msg.replace("Input should be", "expected")

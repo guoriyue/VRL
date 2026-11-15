@@ -44,8 +44,6 @@ class DPOStepMetrics:
     grad_norm: float = 0.0
 
 
-# Forward adapters — caller plugs in a model-specific forward function.
-
 # A ForwardFn takes ``(model, noisy_latents, timesteps, encoder_hidden_states)``
 # and returns the prediction tensor. Concrete adapters live with
 # the family recipe that selects them (e.g. ``wan_forward`` in
@@ -133,7 +131,6 @@ class OfflineDPOTrainer(OfflineTrainer):
             timestep_indices=timestep_indices,
         )
 
-        # 5. Forward — policy + frozen reference
         with model_autocast(self.model, self.device):
             model_pred = self.forward_fn(
                 self.model,
@@ -163,7 +160,6 @@ class OfflineDPOTrainer(OfflineTrainer):
             sft_loss_val = self.algorithm.sft_loss(model_pred[:bsz].float(), target[:bsz].float())
             loss = loss + sft_weight * sft_loss_val
 
-        # 6. Backward + step (with optional accumulation)
         grad_norm = self._optimizer_update(loss)
 
         return DPOStepMetrics(

@@ -133,7 +133,6 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "vrl/scripts/denoise/encode_targets.py)",
             )
 
-    # Algorithms that collect through the stochastic sampler need rollout.sde.
     # Membership of sde.type itself is the SdeConfig Literal's job; only the
     # presence of the block is a cross-section fact.
     if algorithm_cls.needs_sde_rollout and (rollout is None or rollout.sde is None):

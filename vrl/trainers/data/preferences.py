@@ -152,7 +152,6 @@ class PickAPicPreferenceDataset(Dataset):
         from PIL import Image
 
         row = self._ds[idx]
-        # Winner is whichever of jpg_0 / jpg_1 has label==1
         if row["label_0"] == 1:
             w_bytes, l_bytes = row["jpg_0"], row["jpg_1"]
         else:

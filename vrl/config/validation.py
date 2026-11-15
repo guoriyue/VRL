@@ -39,9 +39,6 @@ def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolic
     return root, precision
 
 
-# torch.compile compatibility matrix
-
-
 @dataclass(frozen=True, slots=True)
 class CompileConflict:
     """One feature that cannot coexist with the requested torch.compile."""
