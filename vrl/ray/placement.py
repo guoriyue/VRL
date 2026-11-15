@@ -344,8 +344,7 @@ class GlobalRayPlacementOwner:
         from ray.util.placement_group import placement_group
 
         bundle_requirements = self._bundle_requirements()
-        # Cross-node spreads bundles across nodes; single-node packs them. The
-        # handle is not ready yet.
+        # The handle is not ready yet.
         strategy = "SPREAD" if self.resources.cross_node else "PACK"
         pg = placement_group(bundle_requirements, strategy=strategy)
         # Claim the raw handle before waiting for readiness. A ready/probe/assign

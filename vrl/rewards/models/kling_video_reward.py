@@ -434,7 +434,6 @@ def load_kling_video_reward_checkpoint(
     model: Any,
     checkpoint_dir: Path,
 ) -> tuple[Any, str]:
-    # The newest checkpoint-<step> directory under the model root.
     checkpoint_paths = sorted(
         checkpoint_dir.glob("checkpoint-*"),
         key=lambda path: int(path.name.split("-")[-1]),
@@ -569,8 +568,6 @@ def _create_model_and_processor(
             lora_namespan_exclude = [excluded]
         else:
             lora_namespan_exclude = list(excluded)
-        # Every Linear/Embedding outside the excluded name spans, optionally
-        # only the last ``num_lora_modules`` of them.
         target_modules = [
             name
             for name, module in model.named_modules()

@@ -32,8 +32,6 @@ if TYPE_CHECKING:
     from vrl.models.parking import ParkingMechanism
     from vrl.rewards.ray import RayRewardPlacement
 
-# Registry of reward function factories.
-# Each factory takes (device,) and returns a RewardFunction instance.
 _REWARD_REGISTRY: dict[str, type[ModelRewardFunction]] = {}
 
 

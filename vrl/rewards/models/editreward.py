@@ -78,7 +78,6 @@ class EditRewardModel(LazyTorchModule):
             source = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert(
                 "RGB"
             )
-        # Score the source at the candidate's geometry.
         source = source.resize(image.size, Image.Resampling.LANCZOS)
         with torch.inference_mode():
             values = (

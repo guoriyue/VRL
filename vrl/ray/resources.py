@@ -610,7 +610,6 @@ class ResourcePlan:
             tuple(trainer_devices) if reward_follows_trainer else tuple(reward_devices)
         )
 
-        # Offload scheduling is read straight off the resolved device sets.
         lifecycle = RoleLifecycle(
             trainer=tuple(trainer_devices),
             rollout=tuple(rollout_devices),
