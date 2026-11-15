@@ -386,7 +386,7 @@ class FlowDPPO(ImportanceRatioAlgorithm):
     """
 
     # The trust region is the loss; it needs a behaviour policy that moved.
-    requires_active_trust_region = True
+    replay_policy = "off_policy"
     signal = RolloutProposalSignal
     config: FlowDPPOConfig
 
@@ -492,7 +492,7 @@ class GRPOGuard(ImportanceRatioAlgorithm):
     """
 
     # The guard is the loss; it needs a behaviour policy that moved.
-    requires_active_trust_region = True
+    replay_policy = "off_policy"
     signal = RolloutProposalSignal
     config: GRPOGuardConfig
 

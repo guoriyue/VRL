@@ -39,10 +39,11 @@ class Algorithm(ABC):
     #   there is no such term.
     # requires_reference_policy: the loss reads the pre-training weights
     #   unconditionally, not only behind a KL weight.
-    # requires_active_trust_region: the loss is *defined* by a clipped or
-    #   guarded ratio against the rollout policy, so it needs a behaviour
-    #   policy that differs from the trained one.
-    #   Plain GRPO's clip is only a safety rail and leaves this False.
+    # replay_policy: which policy the replay may train relative to the one
+    #   that drew the sample. "off_policy": the loss is *defined* by a clipped
+    #   or guarded ratio against the rollout policy, so the two must differ
+    #   (more than one epoch, or continuous scheduling). "any": no constraint;
+    #   plain GRPO's clip is only a safety rail.
     # signal: the evaluator signal type the loss reads (log-probs from a replay
     #   of the rollout's reverse SDE), or None when it trains without the
     #   evaluator. What the type carries is what the run must provide: a loss
@@ -54,7 +55,7 @@ class Algorithm(ABC):
     needs_sde_rollout: ClassVar[bool]
     sft_source: ClassVar[Literal["unsupported", "latents", "preference_winner"]]
     requires_reference_policy: ClassVar[bool] = False
-    requires_active_trust_region: ClassVar[bool] = False
+    replay_policy: ClassVar[Literal["any", "off_policy"]] = "any"
     signal: ClassVar[type[SegmentSignal] | None] = None
     consumed_sections: ClassVar[tuple[tuple[str, frozenset[str] | None], ...] | None] = None
 

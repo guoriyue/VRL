@@ -13,7 +13,7 @@ _FACTS = (
     "needs_sde_rollout",
     "sft_source",
     "requires_reference_policy",
-    "requires_active_trust_region",
+    "replay_policy",
     "consumed_sections",
 )
 

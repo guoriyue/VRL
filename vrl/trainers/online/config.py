@@ -303,7 +303,7 @@ class TrainerConfig:
                     "importance ratio to absorb that lag. Use schedule_mode="
                     "'strict_on_policy'.",
                 )
-            if algorithm_cls.requires_active_trust_region and not config.replays_off_policy:
+            if algorithm_cls.replay_policy == "off_policy" and not config.replays_off_policy:
                 raise ValueError(
                     f"algorithm.kind={algorithm.kind!r} is defined by its importance-ratio "
                     "trust region, but the rollout schedule permits no behavior-policy "
