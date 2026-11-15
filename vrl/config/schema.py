@@ -148,6 +148,7 @@ class AlgorithmConfig(ConfigBase):
         "flow_dppo",
         "grpo_guard",
         "centered_grpo",
+        "mean_target_grpo",
         "diffusion_dpo",
         "diffusion_nft",
         "diffusion_sft",

@@ -1,0 +1,21 @@
+# Online flow-matching mean-target GRPO recipe: flow_matching_grpo with the
+# clipped ratio replaced by a regression onto a fixed mean-space target.
+defaults:
+  - /base/algorithm/mean_target_grpo
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
+  - /base/trainer
+
+algorithm:
+  # The flow_matching_grpo defaults for the reference KL and the advantage std.
+  kl_coef: 0.04
+  global_std: true
+
+rollout:
+  # Required: the target is built from each step's rollout proposal mean.
+  return_prev_sample_mean: true
+
+trainer:
+  entrypoint: vrl.scripts.common.online:run_online_recipe

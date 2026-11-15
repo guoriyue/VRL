@@ -1,0 +1,8 @@
+# Mean-target GRPO — the group-relative update as a regression of the proposal
+# mean onto a fixed target mu_q + step_size * A * (a - mu_q), in the
+# transition's own metric. The first gradient is the centered score's; the
+# target does not move with theta, so later epochs on the same batch keep
+# fitting the same improvement without a ratio. Reads the rollout proposal
+# mean, so the recipe MUST set rollout.return_prev_sample_mean=true.
+algorithm:
+  kind: mean_target_grpo

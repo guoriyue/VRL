@@ -15,6 +15,7 @@ from vrl.algorithms.grpo.continuous import (
     FlowDPPOConfig,
     GRPOConfig,
     GRPOGuardConfig,
+    MeanTargetGRPOConfig,
 )
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
@@ -72,4 +73,20 @@ def test_centered_grpo_recipe_resolves_on_policy_with_proposal_mean_storage() ->
     built = BuiltConfigs.from_cfg(cfg)
     assert isinstance(built.algorithm, CenteredGRPOConfig)
     assert built.algorithm.sde_type == "flow_grpo"
+    assert cfg.rollout.return_prev_sample_mean is True
+
+
+def test_mean_target_recipe_resolves_and_allows_a_second_epoch() -> None:
+    # The target is fixed by the rollout, so replaying the batch needs no ratio.
+    cfg = load_config(
+        _BASE,
+        overrides=[
+            "/recipe/online=flow_matching_mean_target_grpo",
+            "actor.ppo_epochs=2",
+            "actor.prompts_per_collection=0",
+        ],
+    )
+    built = BuiltConfigs.from_cfg(cfg)
+    assert isinstance(built.algorithm, MeanTargetGRPOConfig)
+    assert built.trainer.ppo_epochs == 2
     assert cfg.rollout.return_prev_sample_mean is True

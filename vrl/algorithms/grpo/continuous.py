@@ -623,3 +623,89 @@ class CenteredGRPO(OnlineAlgorithm):
             update=PolicyUpdateStats(approx_kl=proposal_gap.mean().item()),
         )
         return loss, metrics
+
+
+@dataclass(slots=True)
+class MeanTargetGRPOConfig(GroupAdvantageConfig):
+    """Hyper-parameters for GRPO as a regression onto a fixed mean-space target."""
+
+    # Length of the mean-space step toward (or away from) the drawn action, in
+    # units of the advantage: the target is mu_q + step_size * A * (a - mu_q).
+    step_size: float = 1.0
+    kl_coef: float = 0.0
+    # Bridged by ``BuiltConfigs.from_cfg`` from the rollout denoise options, as
+    # for ``CenteredGRPOConfig``. Never a YAML key here.
+    sde_type: str = field(default="flow_grpo", init=False)
+
+
+class MeanTargetGRPO(OnlineAlgorithm):
+    """GRPO as a regression of the proposal mean onto a fixed per-transition target.
+
+    The policy gradient in mean space needs no network Jacobian: for the draw
+    ``a = mu_q + s * eps`` it is ``A * eps / s``. The update is therefore posed
+    as fitting ``mu_theta`` to the fixed target
+
+        mu* = mu_q + c * (a - mu_q),    c = step_size * A
+
+    under the transition's own metric, ``|mu_theta - mu*|^2 / (2 s^2 d)``. With
+    ``mu* = (1 - c) mu_q + c a`` that squared distance is, up to a
+    theta-independent term, ``(1 - c) |mu_theta - mu_q|^2 + c |mu_theta - a|^2``,
+    so the loss is ``-[c * log p_theta(a) + (1 - c) * log p_theta(mu_q)]``: the
+    replay density at the action and at the rollout mean, no stored action
+    needed beyond what the replay already scores.
+
+    At ``mu_theta == mu_q`` the gradient is ``step_size`` times the centered
+    score's (``CenteredGRPO``). Unlike it, the target does not move with theta,
+    so further epochs on the same batch keep fitting the same improvement
+    without a ratio, and the residual ``|mu_theta - mu*|`` is a forward
+    quantity: a wrong Jacobian slows the fit, it does not bias the target.
+    """
+
+    needs_sde_rollout = True
+    sft_source = "unsupported"
+    signal = RolloutProposalSignal
+    config: MeanTargetGRPOConfig
+
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
+        import torch
+
+        cfg = self.config
+        signals = inputs.signals.primary
+        if not isinstance(signals, RolloutProposalSignal):
+            raise ValueError(
+                "mean_target_grpo builds its target from the rollout proposal mean, "
+                "which the flow-SDE replay carries only when generation stored it "
+                "(rollout.return_prev_sample_mean=true)",
+            )
+        advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
+        old_prev_sample_mean = signals.old_prev_sample_mean.to(signals.prev_sample_mean.dtype)
+        log_prob_at_rollout_mean = signals.log_prob_at(old_prev_sample_mean, sde_type=cfg.sde_type)
+        coefficient = cfg.step_size * advantages
+        fit = coefficient * signals.log_prob + (1.0 - coefficient) * log_prob_at_rollout_mean
+        keep = signals.mask.to(fit.dtype)
+        policy_loss = (-fit * keep).sum() / keep.sum().clamp_min(1.0)
+
+        if cfg.kl_coef > 0:
+            kl_loss = torch.mean(
+                signals.mean_kl(signals.ref_prev_sample_mean, per_step_variance=False),
+            )
+            kl_term = cfg.kl_coef * kl_loss
+            loss = policy_loss + kl_term
+        else:
+            kl_loss = torch.tensor(0.0, device=signals.log_prob.device)
+            kl_term = torch.tensor(0.0, device=signals.log_prob.device)
+            loss = policy_loss
+
+        # Distance already covered from the rollout mean, in the same density.
+        proposal_gap = (
+            signals.log_prob_at(signals.prev_sample_mean, sde_type=cfg.sde_type)
+            - log_prob_at_rollout_mean
+        )
+        metrics = TrainStepMetrics(
+            loss=loss.item(),
+            policy_loss=policy_loss.item(),
+            kl_penalty=kl_loss.item(),
+            weighted_kl_loss=kl_term.item(),
+            update=PolicyUpdateStats(approx_kl=proposal_gap.mean().item()),
+        )
+        return loss, metrics

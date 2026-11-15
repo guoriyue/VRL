@@ -41,6 +41,7 @@ class AlgorithmEvaluatorPair:
             "flow_dppo",
             "grpo_guard",
             "centered_grpo",
+            "mean_target_grpo",
         }
 
         if kind in diffusion_logprob_kinds:

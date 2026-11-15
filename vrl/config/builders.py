@@ -237,6 +237,7 @@ class BuiltConfigs:
                 CenteredGRPOConfig,
                 FlashGRPOConfig,
                 ImportanceRatioConfig,
+                MeanTargetGRPOConfig,
             )
 
             algorithm = copy.copy(algorithm)
@@ -244,7 +245,7 @@ class BuiltConfigs:
                 algorithm.component_weights = dict(reward.weights)
             if isinstance(algorithm, ImportanceRatioConfig):
                 algorithm.precision_correction = trainer.precision_correction
-            if isinstance(algorithm, (FlashGRPOConfig, CenteredGRPOConfig)):
+            if isinstance(algorithm, (FlashGRPOConfig, CenteredGRPOConfig, MeanTargetGRPOConfig)):
                 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
                 from vrl.rollouts.collector.config import RolloutCollectorConfig
 
