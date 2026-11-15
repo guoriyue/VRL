@@ -9,7 +9,6 @@ distributed:
     num_nodes: 1
     gpus_per_node: 2
     fsdp:
-      mesh: [dp_shard, cp]
       context_parallel:
         ulysses_degree: 2
       precision_policy: none

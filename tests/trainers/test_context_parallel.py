@@ -19,7 +19,7 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from torch import nn
 
-from vrl.config.schema import FSDPConfig, parse_config
+from vrl.config.schema import parse_config
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.context_parallel import (
     ContextParallelRolloutSchedule,
@@ -78,18 +78,6 @@ def test_context_rejects_cp_size_that_does_not_divide_the_world() -> None:
         )
 
 
-def test_fsdp_config_ties_the_cp_mesh_axis_to_the_degrees() -> None:
-    assert FSDPConfig().context_parallel.size == 1
-    cfg = FSDPConfig(mesh=["dp_shard", "cp"], context_parallel={"ulysses_degree": 2})
-    assert cfg.context_parallel.size == 2
-    with pytest.raises(ValueError, match="includes 'cp' exactly when"):
-        FSDPConfig(context_parallel={"ulysses_degree": 2})
-    with pytest.raises(ValueError, match="includes 'cp' exactly when"):
-        FSDPConfig(mesh=["dp_shard", "cp"])
-    with pytest.raises(ValueError, match="must be"):
-        FSDPConfig(mesh=["dp_replicate", "dp_shard"])
-
-
 def test_from_root_reads_the_cp_size_and_checks_divisibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -98,7 +86,7 @@ def test_from_root_reads_the_cp_size_and_checks_divisibility(
         "strategy": "fsdp",
         "num_nodes": 1,
         "gpus_per_node": 4,
-        "fsdp": {"mesh": ["dp_shard", "cp"], "context_parallel": {"ulysses_degree": 2}},
+        "fsdp": {"context_parallel": {"ulysses_degree": 2}},
     }
     root = parse_config(OmegaConf.create({"distributed": {"training": training}}))
     ctx = DistributedTrainingContext.from_root(

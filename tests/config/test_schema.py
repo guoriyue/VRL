@@ -183,14 +183,3 @@ def test_missing_mandatory_value_produces_repo_standard_message() -> None:
     OmegaConf.update(cfg, "algorithm.kind", "???")
     with pytest.raises(ValueError, match="config missing required field"):
         parse_config(cfg)
-
-
-# ── extra="ignore" migration policy ──────────────────────────────────────────
-
-
-def test_fsdp_mesh_vocabulary_is_closed_at_parse() -> None:
-    """2D HSDP is the multi-node follow-on; the schema refuses it before any mesh is built."""
-    from vrl.config.schema import FSDPConfig
-
-    with pytest.raises(ValueError, match=r"mesh must be \['dp_shard'\]"):
-        FSDPConfig(mesh=["dp_replicate", "dp_shard"])

@@ -558,7 +558,7 @@ class FSDPConfig(ConfigBase):
 
     Only the fields a reader consumes are declared (the same philosophy as
     ``TrainingSection``): ``vrl/trainers/strategy.py`` build_strategy +
-    ``vrl/trainers/fsdp.py`` read ``mesh`` / ``context_parallel`` /
+    ``vrl/trainers/fsdp.py`` read ``context_parallel`` /
     ``precision_policy`` / ``cpu_offload`` / ``shard_trainable_only``; FSDP
     always reshards after forward (ZeRO-3). The remaining FSDP2 knobs from
     SPRINT_multi_gpu_training.md §3 (activation_checkpointing, state_dict,
@@ -566,10 +566,9 @@ class FSDPConfig(ConfigBase):
     declaring an unread knob is a user-facing no-op footgun.
     """
 
-    # ["dp_shard"]: 1D ZeRO-3 over the whole world. ["dp_shard", "cp"]: the
-    # world is dp groups of context_parallel.size ranks that share one sample's
-    # sequence. 2D HSDP is the multi-node follow-on.
-    mesh: list[str] = Field(default_factory=lambda: ["dp_shard"])
+    # FSDP shards over the whole world (1D ZeRO-3). ulysses_degree > 1 groups
+    # that many ranks to share one sample's sequence inside the shard axis.
+    # 2D HSDP is the multi-node follow-on.
     context_parallel: ContextParallelConfig = Field(default_factory=ContextParallelConfig)
     # actor -> trainable params stored in the model dtype, fp32 gradient reduction;
     # none -> native dtypes and reduction. Neither casts params or inputs for compute.
@@ -588,21 +587,6 @@ class FSDPConfig(ConfigBase):
     # default full sharding. Requires precision_policy=none so the replicated
     # base keeps its native dtypes.
     shard_trainable_only: bool = False
-
-    @model_validator(mode="after")
-    def _mesh_matches_context_parallel(self) -> FSDPConfig:
-        if self.mesh not in (["dp_shard"], ["dp_shard", "cp"]):
-            raise ValueError(
-                "distributed.training.fsdp.mesh must be ['dp_shard'] or "
-                f"['dp_shard', 'cp']; got {self.mesh!r}",
-            )
-        if ("cp" in self.mesh) != (self.context_parallel.size > 1):
-            raise ValueError(
-                "distributed.training.fsdp.mesh includes 'cp' exactly when "
-                "context_parallel.ulysses_degree > 1; got "
-                f"mesh={self.mesh!r}, ulysses_degree={self.context_parallel.ulysses_degree}",
-            )
-        return self
 
 
 class TrainingSection(ConfigBase):

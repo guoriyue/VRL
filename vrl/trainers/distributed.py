@@ -54,8 +54,9 @@ class DistributedTrainingContext:
     rank: int
     world_size: int
     device: torch.device
-    # Ranks per context-parallel group (fsdp mesh ["dp_shard", "cp"]). Groups are
-    # contiguous: ranks 0..cp_size-1 share one sample's sequence, and so on.
+    # Ranks per context-parallel group (fsdp.context_parallel.ulysses_degree).
+    # Groups are contiguous: ranks 0..cp_size-1 share one sample's sequence, and
+    # so on.
     cp_size: int = 1
 
     def __post_init__(self) -> None:

@@ -38,10 +38,9 @@ def build_fsdp_mesh(context: DistributedTrainingContext) -> Any:
     §3). With context parallelism the peers are *inside* the shard axis, so
     parameter memory keeps scaling with every rank and FSDP's reduce-scatter
     is the only gradient collective; the CP mesh is a separate object
-    (``build_context_parallel_mesh``). The config schema admits only the
-    ``["dp_shard"]`` / ``["dp_shard", "cp"]`` spellings of ``fsdp.mesh``; 2D
-    HSDP needs ``num_nodes`` * ``gpus_per_node`` from config, which the
-    single-process-shaped context here does not carry.
+    (``build_context_parallel_mesh``). 2D HSDP needs ``num_nodes`` *
+    ``gpus_per_node`` from config, which the single-process-shaped context here
+    does not carry.
     """
 
     from torch.distributed.device_mesh import init_device_mesh
