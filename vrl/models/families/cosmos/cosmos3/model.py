@@ -123,7 +123,6 @@ class Cosmos3Model(CosmosReplayForward, DiffusersModelBase):
             device=build.device,
         )
 
-    # the per-step transformer call -> flow velocity
     def forward_step(
         self,
         state: Cosmos3SamplingState,

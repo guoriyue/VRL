@@ -74,7 +74,7 @@ class DenoiseModelBase(nn.Module, ABC):
         super().__init_subclass__(**kwargs)
         fn = cls.__dict__.get("forward_step")
         if fn is not None and not getattr(fn, "__vrl_outer_autocast__", False):
-            # Apply the selected role dtype at every diffusion forward boundary.
+
             @functools.wraps(fn)
             def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
                 with model_autocast(self, self.device):
