@@ -593,9 +593,11 @@ def test_config_parsing_stays_torch_free() -> None:
 
     probe = (
         "import sys; "
-        "from vrl.config.loading import load_config; "
+        "from vrl.config.loading import list_bundled_configs, load_config; "
         "from vrl.config.schema import parse_config; "
-        "parse_config(load_config('experiment/sana/online_grpo_aesthetic')); "
+        "names = list_bundled_configs('experiment'); "
+        "assert names; "
+        "[parse_config(load_config(name.removesuffix('.yaml'))) for name in names]; "
         "raise SystemExit(1 if 'torch' in sys.modules else 0)"
     )
     assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0

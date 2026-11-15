@@ -307,6 +307,42 @@ def test_chunk_executor_base_stays_family_registry_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
+def test_family_implementations_are_reached_only_through_the_registry() -> None:
+    """Outside ``vrl.models`` a family module is named only through the registry, its
+    semantics table, or its name normalizer; scripts never build a diffusers pipeline.
+    """
+    public = (
+        "vrl.models.families.names",
+        "vrl.models.families.registry",
+        "vrl.models.families.semantics",
+    )
+    violations = [
+        (path.relative_to(ROOT), target)
+        for path in _python_files(VRL_ROOT)
+        if path.relative_to(VRL_ROOT).parts[0] != "models"
+        for target in _imports(path)
+        if _is_module_or_child(target, "vrl.models.families")
+        and not any(_is_module_or_child(target, name) for name in public)
+    ]
+    violations += _forbidden_imports(VRL_ROOT / "scripts", forbidden=("diffusers",))
+    assert not violations, _format_violations(violations)
+
+
+def test_reward_contract_modules_import_without_torch_or_aiohttp() -> None:
+    """The collector isinstance-checks ``RewardRuntime``, so the contract modules stay
+    light; the implementations in ``vrl.rewards.runtime`` carry the heavy imports.
+    """
+    code = "import sys, vrl.rewards.protocols, vrl.rewards.types\nprint('\\n'.join(sys.modules))\n"
+    loaded = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.split()
+    heavy = ("aiohttp", "torch", "vrl.utils.cuda_memory")
+    leaked = sorted(
+        module for module in loaded if any(_is_module_or_child(module, item) for item in heavy)
+    )
+    assert not leaked, leaked
+
+
 def _forbidden_imports(
     root: Path,
     *,
