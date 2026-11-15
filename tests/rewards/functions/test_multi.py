@@ -13,6 +13,7 @@ from vrl.rewards.base import (
 )
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
+from vrl.rewards.protocols import MemoryParkingScorer
 from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.server import RewardService
@@ -315,6 +316,25 @@ def test_shared_parking_rejects_multiple_gpu_reward_components() -> None:
         config.validate_memory_parking("cuda:0")
 
 
+def test_cpu_only_rewards_do_not_take_the_shared_gpu_slot() -> None:
+    """A CPU-only reward that resolved to the GPU would count as a second CuMem owner."""
+    names = (
+        "aesthetic",
+        "image_sharpness",
+        "layered_grouping",
+        "locality_keep",
+        "ocr",
+        "text_regions",
+        "wd_tagger",
+    )
+    config = RewardRuntimeConfig(
+        weights={name: 1.0 for name in names},
+        kwargs={},
+        inference_configs={name: RewardInferenceConfig(kind="in_process") for name in names},
+    )
+    config.validate_memory_parking("cuda:0")
+
+
 @pytest.mark.parametrize(
     ("resolved_device", "component_device"),
     [("cpu", "cuda:0"), ("cuda:0", "cuda:1")],
@@ -391,6 +411,8 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     component = reward.rewards[0][2]
     assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
+    # The operator owns the service's GPU; the trainer must never park or wake it.
+    assert not isinstance(component.scorer, MemoryParkingScorer)
 
 
 def test_reward_config_rejects_runtime_injection_keys() -> None:

@@ -76,6 +76,23 @@ def test_profile_range_pops_nvtx_on_exception(monkeypatch: pytest.MonkeyPatch) -
     assert calls == {"push": 1, "pop": 1}
 
 
+def test_profile_range_is_transparent_when_the_profiler_cannot_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken profiler must neither skip the body nor swallow its exception."""
+
+    def unavailable(*_args: object) -> None:
+        raise RuntimeError("profiler unavailable")
+
+    monkeypatch.setattr(torch.profiler, "record_function", unavailable)
+    ran = []
+    with profile_range("test.unavailable", emit_nvtx=True):
+        ran.append(1)
+    assert ran == [1]
+    with pytest.raises(ValueError, match="body"), profile_range("test.unavailable"):
+        raise ValueError("body")
+
+
 @_NVTX_DEPTH_IS_UNOBSERVABLE
 def test_profile_range_nvtx_follows_env(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"push": 0, "pop": 0}

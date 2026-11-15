@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
+import vrl.utils.stats as stats_module
 from vrl.utils.stats import (
     Recorded,
     Stats,
@@ -137,6 +140,40 @@ def test_timed_coroutine_times_the_awaited_body_not_its_creation() -> None:
 
     assert at_creation.phase_seconds == {}
     assert at_await.phase_seconds["rollout.weight_sync_s"] >= 0.02
+
+
+def test_overlapping_calls_of_one_timed_coroutine_each_record_their_own_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A decorator sharing one timer across calls would let B's start overwrite A's."""
+    clock = [0.0]
+    monkeypatch.setattr(
+        stats_module,
+        "time",
+        SimpleNamespace(perf_counter=lambda: clock[0], time=time.time),
+    )
+
+    @timed("reward.latency_s")
+    async def work(gate: asyncio.Event) -> None:
+        await gate.wait()
+
+    async def run() -> Stats:
+        gate_a, gate_b = asyncio.Event(), asyncio.Event()
+        with recording() as stats:
+            call_a = asyncio.create_task(work(gate_a))
+            await asyncio.sleep(0)
+            clock[0] = 10.0
+            call_b = asyncio.create_task(work(gate_b))
+            await asyncio.sleep(0)
+            clock[0] = 15.0
+            gate_a.set()
+            await call_a
+            clock[0] = 16.0
+            gate_b.set()
+            await call_b
+        return stats
+
+    assert asyncio.run(run()).phase_seconds == {"reward.latency_s": 21.0}
 
 
 def test_an_inner_binding_shadows_the_outer_until_it_closes() -> None:

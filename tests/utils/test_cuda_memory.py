@@ -9,7 +9,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from vrl.utils.cuda_memory import gpu_process_used_bytes
+from vrl.utils.cuda_memory import (
+    gpu_process_used_bytes,
+    release_cuda_memory,
+    release_cuda_memory_for_parking,
+)
 
 
 @pytest.fixture
@@ -59,6 +63,22 @@ def test_cpu_does_not_require_nvml(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     assert gpu_process_used_bytes() == 0
     assert gpu_process_used_bytes("cpu") == 0
+
+
+def test_parking_release_propagates_cache_release_failure(monkeypatch):
+    """A failed release must not certify a parking handoff; the best-effort path may swallow it."""
+
+    def fail_empty_cache():
+        raise RuntimeError("cache release failed")
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda *_: None)
+    monkeypatch.setattr(torch.cuda, "ipc_collect", lambda: None)
+    monkeypatch.setattr(torch.cuda, "empty_cache", fail_empty_cache)
+
+    release_cuda_memory()
+    with pytest.raises(RuntimeError, match="cache release failed"):
+        release_cuda_memory_for_parking()
 
 
 @pytest.mark.gpu

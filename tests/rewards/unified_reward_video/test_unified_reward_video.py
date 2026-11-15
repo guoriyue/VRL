@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from vrl.rewards.assets.video_judge_prompts import UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE
 from vrl.rewards.models.unified_reward_video import _load_rubric, _parse_axis_scores
 
 
@@ -21,6 +22,18 @@ def test_parse_axis_scores_reads_floats() -> None:
     assert scores["physics"] == pytest.approx(3.0987)
     assert scores["style"] == pytest.approx(3.3889)
     assert scores["overall"] == pytest.approx((2.4036 + 3.0987 + 3.3889) / 3.0)
+
+
+def test_reply_in_the_prompted_format_parses() -> None:
+    """Rewording the prompt's output-format block must update the parser too."""
+    block = UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE.split("format below:\n\n")[1].split("\n\n")[0]
+    reply = block.replace("X", "5").replace("Y", "3").replace("Z", "1")
+    assert _parse_axis_scores(reply) == {
+        "alignment": 5.0,
+        "physics": 3.0,
+        "style": 1.0,
+        "overall": 3.0,
+    }
 
 
 def test_parse_axis_scores_normalizes_model_declared_scale() -> None:

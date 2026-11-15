@@ -10,6 +10,7 @@ import pytest
 
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import ModelRewardFunction, RewardFunction
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.utils.deadline import OperationTimeout
 
@@ -136,7 +137,10 @@ class _ParkingScorer:
         self.park_calls += 1
 
     async def score_batch(self, request: Any) -> Any:
-        raise AssertionError("not scored")
+        return [
+            RewardInferenceResult(artifact_id=artifact.artifact_id, scores={"score": 1.0})
+            for artifact in request.artifacts
+        ]
 
 
 @pytest.mark.asyncio
@@ -168,6 +172,21 @@ async def test_park_reaches_the_scorer_once_per_activation() -> None:
     await runtime.activate()
     await runtime.park_memory()
     assert scorer.park_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_scoring_leaves_parking_to_the_collector() -> None:
+    """Whether a GPU-sharing reward parks is the placement plan's call, not score's."""
+    scorer = _ParkingScorer()
+    runtime = RewardFunctionRuntime(_UnitReward(scorer=scorer))
+    await runtime.activate()
+
+    output = await runtime.score((_sample("a"), _sample("b")))
+
+    assert output.scores == (1.0, 1.0)
+    assert scorer.park_calls == 0
+    await runtime.park_memory()
+    assert scorer.park_calls == 1
 
 
 @pytest.mark.asyncio

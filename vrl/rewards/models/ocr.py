@@ -33,8 +33,8 @@ OCR_DEBUG_SCHEMA = "vrl.ocr-debug/v6"
 def normalize_ocr_text(text: str) -> str:
     """Match Flow-GRPO OCR targets by lowercasing and removing ASCII spaces.
 
-    Punctuation remains significant; this is the exact comparison key the
-    reward scores against, so dataset targets must be derived the same way.
+    Punctuation remains significant; the reward applies this key to both the
+    target and the recognized text.
     """
 
     return text.replace(" ", "").lower()

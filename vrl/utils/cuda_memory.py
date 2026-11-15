@@ -153,9 +153,9 @@ def release_cuda_memory_for_parking(
 ) -> None:
     """Strict CUDA cleanup before publishing a memory-parking proof.
 
-    Unlike :func:`release_cuda_memory` this path must not swallow failures:
-    the caller is about to certify physical GPU release to a phase handoff,
-    so any error here invalidates the handoff and propagates.
+    Unlike :func:`release_cuda_memory` this path propagates failures: the caller
+    is about to certify physical GPU release to a phase handoff, so any error
+    here invalidates the handoff.
     CPU-offload callers may clear idle BLAS workspaces that pin allocator
     segments. Do not opt in when preserving device-resident graph/pool state.
     """

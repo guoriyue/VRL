@@ -8,9 +8,10 @@ This module is the construction boundary between YAML config and reward code:
 ``MultiReward.from_mapping`` (called from ``RewardRuntimeConfig.build_function``
 in ``vrl/config/builders.py`` with the resolved ``reward.components`` /
 ``reward.kwargs``) instantiates them.
-The heavyweight scoring networks are never built here — each function only
-pins a ``model_factory`` dotted path that the scorer resolves later, on the
-resolved device inside its own memory frame.
+Scoring weights are never loaded here. Each function pins a ``model_factory``
+dotted path; ``eager_model`` rewards build that model wrapper at construction so
+config errors surface early, and every model loads its weights later, on the
+resolved device inside the scorer's own memory frame.
 """
 
 from __future__ import annotations

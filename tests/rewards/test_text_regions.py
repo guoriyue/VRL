@@ -372,3 +372,8 @@ def test_read_scores_a_decoded_image_as_the_artifact_path_does():
     assert model.normalize("Wait  here.") == "Wait here" and has_word("Wait here", "wait")
     with pytest.raises(ValueError, match="declared canvas"):
         model.read(Image.new("RGB", (10, 10)), layout)
+
+
+def test_an_empty_word_is_never_present() -> None:
+    """An empty pattern matches any text, so a missing forbidden word would read as present."""
+    assert has_word("Follow the purple signs", "") is False

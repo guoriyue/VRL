@@ -10,6 +10,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from vrl.scripts.supervise import RunSupervisor
 from vrl.training_run_result import TrainingRunResultWriter
 
@@ -207,6 +209,22 @@ def test_train_result_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     assert result["error_class"] == "RayOperationTimeout"
     assert "offload cleanup failed" in result["error_message"]
     assert "RayOperationTimeout" in result["error_message"]
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [{"RANK": "x", "WORLD_SIZE": "2"}, {"RANK": "-1", "WORLD_SIZE": "2"}],
+    ids=["unparseable", "negative"],
+)
+def test_malformed_rank_environment_still_publishes_the_failure(tmp_path, environ) -> None:
+    """A broken torchrun environment must not mask the trainer's own failure."""
+    out = tmp_path / "run"
+
+    TrainingRunResultWriter(out, environ=environ).write(error=RuntimeError("boom"))
+
+    result = json.loads((out / "training_run_result.json").read_text())
+    assert result["status"] == "failed"
+    assert result["error_class"] == "RuntimeError"
 
 
 def test_supervisor_clears_previous_success_before_new_process(tmp_path):

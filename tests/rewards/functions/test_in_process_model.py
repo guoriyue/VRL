@@ -130,6 +130,32 @@ def test_lazy_reward_models_defer_module_construction(
         assert built_on == ["cuda:7"]  # one build per runtime lifetime
 
 
+_EAGER_BUILDS: list[dict] = []
+
+
+def _recording_factory(worker_config: dict) -> object:
+    _EAGER_BUILDS.append(worker_config)
+    return object()
+
+
+class _EagerReward(ModelRewardFunction):
+    model_factory = f"{__name__}:_recording_factory"
+    name = "eager"
+    default_score_key = "score"
+    eager_model = True
+
+
+def test_eager_reward_under_sleep_offload_leaves_the_build_to_the_parking_runtime() -> None:
+    """An eager build outside the runtime's CuMem pool would silently lose parking."""
+    _EAGER_BUILDS.clear()
+    parked = _EagerReward(device="cuda:0", worker_config={"sleep_offload": True})
+    assert _EAGER_BUILDS == []
+    assert parked.scorer.requires_memory_parking is True
+
+    _EagerReward(device="cpu")
+    assert len(_EAGER_BUILDS) == 1
+
+
 def test_constructor_rejects_bad_score_keys_and_stray_model_knobs() -> None:
     """Construction-time checks shared by every ModelRewardFunction (base.py)."""
 

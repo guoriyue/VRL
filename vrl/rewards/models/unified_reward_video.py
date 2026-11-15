@@ -87,8 +87,7 @@ class UnifiedRewardVideoModel:
         self,
         artifact: RewardInferenceArtifact,
     ) -> dict[str, float]:
-        # The rubric is caption-conditioned, so an empty prompt must fail fast
-        # (drift fix: this raise was silently missing here).
+        # The rubric is caption-conditioned; the helper rejects an empty prompt.
         prompt, video_path = artifact.require_prompt_and_video_path(
             family="UnifiedReward-2.0",
         )

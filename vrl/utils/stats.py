@@ -166,8 +166,7 @@ class timed:
             stats.phase_events.append((self.name, self._wall_start, time.time()))
 
     def __call__[**P, R](self, function: Callable[P, R]) -> Callable[P, R]:
-        # Each call times itself with its own context, so concurrent calls of
-        # one decorated function never share a start time.
+        # A fresh ``timed`` per call: its start time is per-call state.
         name, profile = self.name, self.profile
         if inspect.iscoroutinefunction(function):
 

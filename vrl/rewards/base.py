@@ -192,8 +192,8 @@ class ModelRewardFunction(RewardFunction):
     default_reward_name: ClassVar[str | None] = None
     default_score_key: ClassVar[str]
     # In-process transport only: build the model in the constructor so config
-    # validation fails at construction. Skipped under sleep_offload, whose pooled
-    # model must be factory-built by the runtime itself.
+    # validation fails at construction. Under sleep_offload the runtime builds it
+    # instead, inside its CuMem pool.
     eager_model: ClassVar[bool] = False
     # The score keys this reward can select; empty means any non-empty key.
     score_keys: ClassVar[tuple[str, ...]] = ()
