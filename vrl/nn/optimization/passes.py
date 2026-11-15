@@ -172,7 +172,18 @@ class QuantizationPass:
         # ``QuantizationPolicy`` fills the format's recipe (FP8 row-wise, NVFP4
         # none), so its presence — not a second per-scheme table — decides whether
         # this scheme takes one.
-        swap_kwargs: dict[str, Any] = {"exclude": model.quantization_exclude}
+        # Base weights are written into this model only by a full-finetune
+        # weight sync; a replay build carries no rollout options and trains
+        # adapters exactly when its base is frozen. A frozen base is quantized
+        # master-free, linear by linear, so a large policy never holds a
+        # source-dtype copy beside its cache. Either way the cache is quantized
+        # on the build's device.
+        keep_master = rollout.base_weight_sync if rollout is not None else not build.use_lora
+        swap_kwargs: dict[str, Any] = {
+            "exclude": model.quantization_exclude,
+            "keep_master": keep_master,
+            "device": build.device,
+        }
         if recipe is not None:
             swap_kwargs["recipe"] = recipe
         from peft import PeftModel
@@ -193,27 +204,11 @@ class QuantizationPass:
                 "matched 0 linears — the policy has no quantizable linears "
                 "(check the exclude list / min_features). It would be a no-op.",
             )
-        # A replay build carries no rollout options; its base is frozen exactly
-        # when it trains adapters.
-        keeps_masters = rollout.base_weight_sync if rollout is not None else not build.use_lora
-        if not keeps_masters:
-            # Base weights will never be written into this model (LoRA syncs and
-            # trains adapters; sync-free contexts sync nothing), so the source
-            # masters are dead weight — drop them BEFORE the device move so a
-            # large quantized policy does not retain a full source-dtype copy
-            # beside its cache.
-            from vrl.nn.quantization import drop_quantized_masters
-
-            freed = drop_quantized_masters(model)
-            logger.info(
-                "%s policy with a frozen base: dropped source masters (%.1f GiB freed)",
-                format_name,
-                freed / 2**30,
-            )
         logger.info(
-            "%s (recipe=%s): quantized %d policy linears",
+            "%s (recipe=%s, keep_master=%s): quantized %d policy linears",
             format_name,
             recipe,
+            keep_master,
             len(swapped),
         )
         return len(swapped)

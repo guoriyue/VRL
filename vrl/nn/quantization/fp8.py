@@ -45,21 +45,21 @@ class Fp8Linear(QuantizedLinear):
     quantization_scheme = "fp8"
     cache_buffer_names = ("weight_fp8", "weight_scale")
 
-    def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
+    def __init__(
+        self,
+        linear: nn.Linear,
+        *,
+        keep_master: bool = True,
+        device: torch.device | str | None = None,
+        recipe: str = "rowwise",
+    ) -> None:
         super().__init__()
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.recipe = recipe
-        # Keep the source-dtype master under its original ``.weight`` key so RL
-        # weight-sync (full fine-tune syncs the base weights every step) can load
-        # updated weights normally; the fp8 cache is re-derived after each load
-        # (_load_from_state_dict). LoRA rollouts sync adapters, not the base, so
-        # this only matters for full fine-tune — but it makes the swap correct for
-        # both. Inference-only use just pays the one init-time quantization.
-        self.weight = nn.Parameter(
-            linear.weight.data.clone(),
-            requires_grad=linear.weight.requires_grad,
-        )
+        # A kept master sits under the original ``.weight`` key so a
+        # full-finetune weight sync loads it normally; the fp8 cache is
+        # re-derived after each load (_load_from_state_dict).
         # Bias keeps its master dtype in storage; forward fuses it into the GEMM.
         self.bias = linear.bias
         # fp8 cache (non-persistent: derived from `weight`, never in the state_dict
@@ -68,7 +68,19 @@ class Fp8Linear(QuantizedLinear):
             "weight_fp8", torch.empty(0, dtype=torch.float8_e4m3fn), persistent=False
         )
         self.register_buffer("weight_scale", torch.empty(0), persistent=False)
+        # The cache is quantized on ``device``, where the forward will run: the
+        # CPU and CUDA quantizers do not agree bit for bit on real weights, so
+        # a rollout and a replay match only if both quantize on the same kind
+        # of device. A frozen base is never written again and keeps no master;
+        # the source Linear's storage is released with the Linear.
+        source = linear.weight.data if device is None else linear.weight.data.to(device)
+        self.weight = nn.Parameter(source, requires_grad=False)
         self._requantize_weight()
+        self.weight = (
+            nn.Parameter(linear.weight.data.clone(), requires_grad=linear.weight.requires_grad)
+            if keep_master
+            else None
+        )
 
     @staticmethod
     def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:

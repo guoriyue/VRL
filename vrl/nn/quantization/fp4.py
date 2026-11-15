@@ -8,7 +8,10 @@ is rebuilt after each load. Training/replay remains unquantized.
 The single ``nvfp4`` recipe uses two-level NVIDIA scaling: an FP32 tensor scale,
 1x16 E4M3 block scales in cuBLAS's blocked layout, and signed E2M1 values. CUDA
 quantization and packing use the fused Triton kernel in ``fp4_kernels.py``; the
-CPU implementation here is the independent bit reference.
+CPU implementation here is the format reference. The two agree bit for bit on
+the test vectors but not on every input (on SD3.5 Medium weights about 0.3% of
+the codes differ, an equally valid rounding), so a weight cache is always
+quantized on the device its forward runs on.
 
 Block scales are chosen "four over six": each block is quantized twice, with its
 amax mapped onto E2M1's 6 (plain max scaling) and onto 4, and keeps the scale
@@ -218,7 +221,13 @@ class Fp4Linear(QuantizedLinear):
             )
         return None
 
-    def __init__(self, linear: nn.Linear) -> None:
+    def __init__(
+        self,
+        linear: nn.Linear,
+        *,
+        keep_master: bool = True,
+        device: torch.device | str | None = None,
+    ) -> None:
         super().__init__()
         error = self._alignment_error(linear)
         if error is not None:
@@ -226,10 +235,6 @@ class Fp4Linear(QuantizedLinear):
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.recipe = "nvfp4"
-        self.weight = nn.Parameter(
-            linear.weight.data.clone(),
-            requires_grad=linear.weight.requires_grad,
-        )
         self.bias = linear.bias
         self.register_buffer(
             "weight_fp4",
@@ -242,7 +247,19 @@ class Fp4Linear(QuantizedLinear):
             persistent=False,
         )
         self.register_buffer("weight_tensor_scale", torch.empty(0), persistent=False)
+        # The cache is quantized on ``device``, where the forward will run: the
+        # CPU and CUDA quantizers do not agree bit for bit on real weights, so
+        # a rollout and a replay match only if both quantize on the same kind
+        # of device. A frozen base is never written again and keeps no master;
+        # the source Linear's storage is released with the Linear.
+        source = linear.weight.data if device is None else linear.weight.data.to(device)
+        self.weight = nn.Parameter(source, requires_grad=False)
         self._requantize_weight()
+        self.weight = (
+            nn.Parameter(linear.weight.data.clone(), requires_grad=linear.weight.requires_grad)
+            if keep_master
+            else None
+        )
 
     @classmethod
     def can_replace(cls, linear: nn.Linear) -> bool:

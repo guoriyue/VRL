@@ -221,11 +221,10 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
         def __init__(self) -> None:
             super().__init__()
             base = nn.Linear(16, 16, bias=False).requires_grad_(False)
-            self.base_layer = Fp8Linear(base)
+            self.base_layer = Fp8Linear(base, keep_master=False)
             self.lora = nn.Parameter(torch.zeros(2, 16))
 
     policy = _AdapterPolicy()
-    policy.base_layer.drop_master()
     cached_weight = policy.base_layer.weight_fp8.clone()
     update = torch.ones_like(policy.lora)
 
@@ -251,8 +250,7 @@ def test_fp8_cache_survives_cpu_to_cuda_dtype_move() -> None:
 @pytest.mark.gpu
 @requires_fp8
 def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
-    fp8 = Fp8Linear(nn.Linear(128, 128, bias=False).to(torch.bfloat16))
-    fp8.drop_master()
+    fp8 = Fp8Linear(nn.Linear(128, 128, bias=False).to(torch.bfloat16), keep_master=False)
     fp8.to("cuda", dtype=torch.bfloat16)
     assert fp8.weight_fp8.device.type == "cuda"
     assert fp8.weight_fp8.dtype is torch.float8_e4m3fn
@@ -264,9 +262,8 @@ def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
 @requires_fp8
 def test_fp8_replay_under_autograd_is_the_rollout_forward_with_the_cache_jacobian():
     torch.manual_seed(0)
-    quantized = Fp8Linear(nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16))
-    quantized.requires_grad_(False)
-    quantized.drop_master()
+    linear = nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16).requires_grad_(False)
+    quantized = Fp8Linear(linear, keep_master=False)
     x = torch.randn(3, 64, 256, device="cuda", dtype=torch.bfloat16)
     with torch.no_grad():
         rollout = quantized(x)
@@ -338,6 +335,7 @@ def _rollout_spec(
         None if quantization is None else QuantizationPolicy(format=quantization, recipe=recipe)
     )
     return SimpleNamespace(
+        device="cpu",
         precision=RolePrecision("bf16", "tf32", policy),
         rollout=SimpleNamespace(
             base_weight_sync=True,

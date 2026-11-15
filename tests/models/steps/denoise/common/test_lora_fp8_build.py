@@ -165,16 +165,11 @@ def test_shared_builder_moves_plain_lora_after_attach(monkeypatch) -> None:
     assert events == ["attach", "move"]
 
 
-def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch) -> None:
-    import vrl.nn.quantization as quantization
+def test_shared_builder_quantizes_a_frozen_base_master_free_before_the_move(monkeypatch) -> None:
+    from vrl.nn.quantization import QuantizedLinear
 
     events: list[str] = []
     _record_swap(monkeypatch, events)
-    monkeypatch.setattr(
-        quantization,
-        "drop_quantized_masters",
-        lambda _model: events.append("drop") or 4,
-    )
     build = ModelBuild(
         model_name_or_path="fake",
         revision=None,
@@ -193,11 +188,12 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         sampling_config={"num_steps": 1},
     )
 
-    _build_sd35_rollout(
-        monkeypatch, build, _BuilderPolicy(_TrackingTransformer(events, quantizable=True), events)
-    )
+    transformer = _TrackingTransformer(events, quantizable=True)
+    _build_sd35_rollout(monkeypatch, build, _BuilderPolicy(transformer, events))
 
-    assert events == ["attach", "quantize", "drop", "move"]
+    assert events == ["attach", "quantize", "move"]
+    quantized = [m for m in transformer.modules() if isinstance(m, QuantizedLinear)]
+    assert quantized and all(m.weight is None for m in quantized)
 
 
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(

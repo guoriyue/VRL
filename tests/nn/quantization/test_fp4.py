@@ -259,7 +259,8 @@ def test_quantization_pass_dispatches_nvfp4(capsys, monkeypatch) -> None:
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
     model = QuantizablePolicy()
-    QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
+    # The capability gate is stubbed, so the swap itself runs on the host.
+    QuantizationPass().quantize(model, _rollout_spec(device="cpu"))
     assert len(model.swapped(Fp4Linear)) == 1
     # The ``vrl`` logger does not propagate to the root (vrl/utils/logging.py);
     # its handler writes to the live stdout.
@@ -360,9 +361,8 @@ def test_linear_matches_dequantized_reference() -> None:
 @requires_nvfp4
 def test_replay_under_autograd_is_the_rollout_forward_with_the_cache_jacobian() -> None:
     torch.manual_seed(0)
-    quantized = Fp4Linear(nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16))
-    quantized.requires_grad_(False)
-    quantized.drop_master()
+    linear = nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16).requires_grad_(False)
+    quantized = Fp4Linear(linear, keep_master=False)
     x = torch.randn(3, 64, 256, device="cuda", dtype=torch.bfloat16)
     with torch.no_grad():
         rollout = quantized(x)
@@ -389,8 +389,9 @@ def test_linear_preserves_leading_dims_and_dtype() -> None:
 @pytest.mark.gpu
 @requires_nvfp4
 def test_master_free_forward_still_runs() -> None:
-    quantized = Fp4Linear(nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16))
-    quantized.drop_master()
+    quantized = Fp4Linear(
+        nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16), keep_master=False
+    )
     output = quantized(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16))
     assert output.shape == (16, 128)
 
@@ -412,8 +413,7 @@ def test_cache_survives_cpu_to_cuda_dtype_move() -> None:
 @pytest.mark.gpu
 @requires_nvfp4
 def test_master_free_cache_moves_without_dtype_cast() -> None:
-    quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
-    quantized.drop_master()
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16), keep_master=False)
     quantized.to("cuda", dtype=torch.bfloat16)
     assert quantized.weight_fp4.device.type == "cuda"
     assert quantized.weight_fp4.dtype is torch.float4_e2m1fn_x2

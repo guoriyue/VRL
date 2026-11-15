@@ -12,7 +12,7 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.nn.quantization import QUANTIZATION_SCHEMES, drop_quantized_masters
+from vrl.nn.quantization import QUANTIZATION_SCHEMES
 
 _SCHEMES = pytest.mark.parametrize("scheme", sorted(QUANTIZATION_SCHEMES))
 
@@ -44,20 +44,11 @@ def test_requantizes_on_state_dict_load(scheme: str) -> None:
 
 
 @_SCHEMES
-def test_drop_master_frees_and_blocks_base_load(scheme: str) -> None:
-    quantized = _quantized(scheme)
+def test_master_free_module_holds_only_its_cache_and_blocks_base_load(scheme: str) -> None:
+    quantized = QUANTIZATION_SCHEMES[scheme](nn.Linear(64, 32, bias=False), keep_master=False)
 
-    assert quantized.drop_master() == 32 * 64 * 4
     assert quantized.weight is None
-    assert quantized.drop_master() == 0
+    assert set(quantized.state_dict()) == set()
     with pytest.raises(RuntimeError, match="master-free"):
         quantized.load_state_dict({"weight": torch.randn(32, 64)})
     quantized.load_state_dict({}, strict=False)
-
-
-@_SCHEMES
-def test_drop_quantized_masters_walks_the_tree(scheme: str) -> None:
-    root = nn.Sequential(_quantized(scheme))
-
-    assert drop_quantized_masters(root) > 0
-    assert root[0].weight is None

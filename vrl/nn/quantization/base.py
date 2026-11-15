@@ -104,7 +104,7 @@ class QuantizedLinear(nn.Module):
         A Linear is quantized when its dotted path matches no ``exclude``
         substring, meets ``min_features`` on both dimensions, and passes
         ``cls.can_replace``. ``init_kwargs`` reach the
-        scheme constructor (fp8's ``recipe``). Returns the dotted paths swapped.
+        scheme constructor (``keep_master``, ``device``, fp8's ``recipe``). Returns the dotted paths swapped.
         """
 
         swapped: list[str] = []
@@ -126,30 +126,15 @@ class QuantizedLinear(nn.Module):
                 swapped.append(path)
         return swapped
 
-    def drop_master(self) -> int:
-        """Free the source-dtype master, keeping only the derived cache.
-
-        Valid whenever weight-sync never loads base weights into this module:
-        LoRA rollouts sync adapters only, and probes/inference sync nothing.
-        A subsequent state-dict load fails loud (see ``_load_from_state_dict``)
-        instead of silently skipping the (gone) master. Returns the bytes freed.
-        """
-
-        if self.weight is None:
-            return 0
-        freed = self.weight.numel() * self.weight.element_size()
-        self.weight = None
-        return freed
-
     def _load_from_state_dict(self, state_dict, prefix, *args) -> None:
-        """Reject base-weight loads after ``drop_master``; refresh cache otherwise."""
+        """Reject base-weight loads into a master-free module; refresh cache otherwise."""
 
         if self.weight is None and f"{prefix}weight" in state_dict:
             raise RuntimeError(
                 f"cannot load base weights into a master-free {type(self).__name__} "
-                f"({prefix.rstrip('.')}): the source master was dropped "
-                "(drop_master). Master-free is for adapter-only/frozen "
-                "rollouts; full-finetune weight-sync must keep the master.",
+                f"({prefix.rstrip('.')}): it was built with keep_master=False. "
+                "Master-free is for a frozen base; full-finetune weight-sync "
+                "must keep the master.",
             )
         super()._load_from_state_dict(state_dict, prefix, *args)
         # Full-parameter sync overwrites `weight`, so refresh the derived cache.
@@ -197,20 +182,4 @@ class QuantizedLinear(nn.Module):
         return result
 
 
-def drop_quantized_masters(root: nn.Module) -> int:
-    """Free every quantized linear's high-precision master under ``root``.
-
-    Returns the bytes freed. Valid whenever weight-sync never loads base weights
-    into these modules (adapter-only or sync-free rollouts) — see the per-scheme
-    ``drop_master`` docstrings.
-
-    Deliberately a free function while ``swap_linears`` is a classmethod: this
-    walk is scheme-agnostic (it visits every scheme under ``root`` at once),
-    reads no class attribute, and constructs nothing, so it has no subject.
-    """
-    return sum(
-        module.drop_master() for module in root.modules() if isinstance(module, QuantizedLinear)
-    )
-
-
-__all__ = ["QuantizedLinear", "drop_quantized_masters"]
+__all__ = ["QuantizedLinear"]
