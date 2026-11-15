@@ -61,7 +61,7 @@ UNCOND_SKIP_LAYERS: tuple[int, ...] = (22,)
 
 @dataclass
 class MossImageSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private MOSS-Image sampling state. Engine MUST NOT introspect."""
+    """Private MOSS-Image sampling state."""
 
     prompt_embeds: torch.Tensor
     prompt_embeds_mask: torch.Tensor

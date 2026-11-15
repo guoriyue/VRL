@@ -14,6 +14,7 @@ from vrl.models.checkpoint_identity import (
     MODEL_IDENTITY_SCHEMA,
     LocalCheckpointContent,
     _field_metadata,
+    require_checkpoint_source_member,
     resolve_checkpoint_model_identity,
 )
 from vrl.models.families.registry import FAMILY_REGISTRY
@@ -216,6 +217,30 @@ def test_remote_source_requires_valid_huggingface_repo_id() -> None:
         resolve_checkpoint_model_identity(
             _build(path="../missing-local-checkpoint"),
         )
+
+
+@pytest.mark.parametrize(
+    ("member", "message"),
+    [
+        ("../vae", "must stay within"),
+        ("/abs/vae", "must stay within"),
+        ("C:/vae", "must stay within"),
+        ("vae//config.json", "must stay within"),
+        ("vae\\config.json", "POSIX"),
+        (" vae", "non-empty relative"),
+    ],
+)
+def test_checkpoint_source_member_cannot_escape_its_source(member: str, message: str) -> None:
+    """An artifact outside the source root must use its own path field, not ``..``."""
+    with pytest.raises(ValueError, match=message):
+        require_checkpoint_source_member(member, field_name="model.vae_subfolder")
+
+
+def test_checkpoint_source_member_keeps_a_nested_relative_path() -> None:
+    assert (
+        require_checkpoint_source_member("transformer/config.json", field_name="f")
+        == "transformer/config.json"
+    )
 
 
 def test_remote_identity_uses_protocol_source_and_behavior_keys() -> None:

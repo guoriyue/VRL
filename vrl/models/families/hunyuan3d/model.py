@@ -65,7 +65,7 @@ VOLUME_RESOLUTION = 128
 
 @dataclass
 class Hunyuan3DSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Hunyuan3D sampling state. Engine MUST NOT introspect."""
+    """Private Hunyuan3D sampling state."""
 
     image_embeds: torch.Tensor
     do_cfg: bool

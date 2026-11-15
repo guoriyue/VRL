@@ -777,8 +777,7 @@ class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
     # The pipeline class comes from the checkpoint's ``model_index.json``
     # (``DiffusionPipeline.from_pretrained``); every module component but the
     # transformer is frozen, so a family declares nothing for the loader.
-    # Component names ``from_build`` left on the host (``model.memory.cpu_resident``);
-    # parking's wake never moves them back onto the GPU.
+    # Component names ``from_build`` left on the host (``model.memory.cpu_resident``).
     _cpu_resident: frozenset[str] = frozenset()
 
     @classmethod

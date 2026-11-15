@@ -81,6 +81,21 @@ def test_batched_cfg_rejects_unequal_branch_rows() -> None:
         )
 
 
+def test_batched_cfg_rejects_branches_with_different_non_tensor_kwargs() -> None:
+    """One packed call can carry only one value per non-tensor kwarg; keeping cond's
+    would silently run the uncond rows under the cond setting."""
+    cond, uncond = _branches()
+    cond["joint_attention_kwargs"] = {"scale": 1.0}
+    uncond["joint_attention_kwargs"] = {"scale": 0.5}
+    transformer = _RecordingTransformer()
+
+    with pytest.raises(ValueError, match="cannot be batched"):
+        predict_with_cfg(
+            transformer, cond, uncond, guidance_scale=2.0, batched=True, dtype=torch.float32
+        )
+    assert transformer.calls == []
+
+
 def test_combine_cfg_bases_and_norm_rescale() -> None:
     """The SD form ``uncond + g*(cond - uncond)``, the Cosmos form ``cond + g*(cond - uncond)``,
     and the norm-preserving rescale back to the conditional branch's norm.

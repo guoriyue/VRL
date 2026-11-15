@@ -64,7 +64,7 @@ PIXELS_PER_TOKEN = 16
 
 @dataclass
 class Krea2SamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Krea 2 sampling state. Engine MUST NOT introspect."""
+    """Private Krea 2 sampling state."""
 
     prompt_embeds: torch.Tensor
     prompt_embeds_mask: torch.Tensor

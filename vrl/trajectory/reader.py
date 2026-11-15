@@ -114,8 +114,8 @@ class TrajectoryReader:
     ) -> dict[str, Any]:
         """Return replay tensors, optionally selecting one explicitly named axis.
 
-        Axis and index must be provided together. Tensors without that axis
-        retain their full value, such as static prompt embeddings during replay.
+        Tensors without that axis retain their full value, such as static
+        prompt embeddings during replay.
         Only ``segment_name=None`` selects the primary trainable segment.
         """
 

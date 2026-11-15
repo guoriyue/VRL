@@ -61,8 +61,8 @@ class Fp8Linear(QuantizedLinear):
         # re-derived after each load (_load_from_state_dict).
         # Bias keeps its master dtype in storage; forward fuses it into the GEMM.
         self.bias = linear.bias
-        # fp8 cache (non-persistent: derived from `weight`, never in the state_dict
-        # so the trainable-key check sees exactly `weight`).
+        # fp8 cache, derived from `weight`; non-persistent so the trainable-key
+        # check sees exactly `weight`.
         self.register_buffer(
             "weight_fp8", torch.empty(0, dtype=torch.float8_e4m3fn), persistent=False
         )

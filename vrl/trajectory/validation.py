@@ -12,9 +12,8 @@ from vrl.trajectory.types import (
     TrajectoryTensor,
 )
 
-# The core role triple a trainable segment must have exactly one of each.
-# Single ordered source of truth: the uniqueness check (below) and the
-# completeness check (TrajectoryValidator) both derive from it.
+# Single ordered source of truth for the trainable role triple: the uniqueness
+# check (below) and the completeness check (TrajectoryValidator) both derive from it.
 REQUIRED_TRAINABLE_ROLES = ("action", "old_log_prob", "mask")
 SINGLETON_TENSOR_ROLES = frozenset(REQUIRED_TRAINABLE_ROLES)
 

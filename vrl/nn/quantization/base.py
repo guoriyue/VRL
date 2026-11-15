@@ -44,11 +44,9 @@ class _FrozenGemm(torch.autograd.Function):
 class QuantizedLinear(nn.Module):
     """Base for a low-precision drop-in ``nn.Linear`` replacement.
 
-    Subclasses declare their derived caches through ``cache_buffer_names``.
-    ``Module.to(dtype=...)`` must never cast packed FP4/FP8 caches into the model's
-    base dtype: when a source master exists, caches are rebuilt from the moved
-    master; master-free rollout caches move as raw bytes and preserve their exact
-    format.
+    Subclasses declare their derived caches through ``cache_buffer_names``. A
+    dtype move rebuilds the caches from the moved master when one exists;
+    master-free caches move as raw bytes, keeping their exact format.
 
     They also own their module-tree swap policy: ``can_replace`` rejects shapes
     the scheme's kernels cannot take, and ``swap_linears`` is the one traversal.

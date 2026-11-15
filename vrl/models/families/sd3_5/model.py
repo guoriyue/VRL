@@ -13,10 +13,8 @@ The collector owns the scheduler step / SDE step. ``forward_step`` does only
 one transformer forward (with optional batched CFG concat) and returns noise
 predictions.
 
-Per-family ``SD3SamplingState`` is private to this file — engine /
-collector code MUST NOT introspect it beyond the documented attributes
-(``latents``, ``timesteps``, ``scheduler``, plus the embeds the eval path
-re-builds explicitly).
+Per-family ``SD3SamplingState`` is private to this file; the eval path
+re-builds its embeds explicitly.
 
 Timestep shape convention used by ``forward_step``:
 - During rollouts ``timesteps`` is a 1-D tensor ``[T]`` of scheduler
@@ -56,7 +54,7 @@ from vrl.models.steps.denoise.common import (
 
 @dataclass
 class SD3SamplingState(GuidedDenoiseSamplingStateBase):
-    """Private SD3 sampling state. Engine MUST NOT introspect."""
+    """Private SD3 sampling state."""
 
     prompt_embeds: torch.Tensor
     pooled_prompt_embeds: torch.Tensor

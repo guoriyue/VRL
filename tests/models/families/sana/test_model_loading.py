@@ -16,7 +16,7 @@ import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule, build_tiny_transformer
 from vrl.config.precision import RolePrecision
-from vrl.models.families.sana.model import SanaPipelineModel
+from vrl.models.families.sana.model import SanaModel, SanaPipelineModel
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 pytest.importorskip("diffusers")
@@ -92,6 +92,17 @@ def test_from_build_reapplies_the_fp16_saturation_clamp_off_fp16(monkeypatch) ->
     _, pipeline, _ = _load(monkeypatch, torch.float32)
 
     assert _linear_attn_processor_names(pipeline.transformer) == {"_SaturatedLinearAttnProcessor"}
+
+
+def test_replay_installs_the_same_saturation_clamp_as_rollout() -> None:
+    """Replay recomputes rollout's log-probs, so it must clamp exactly when rollout does."""
+    clamped = SanaModel(transformer=build_tiny_transformer("sana"), scheduler=None, device="cpu")
+    clamped.prepare_replay(_build(torch.float32))
+    native = SanaModel(transformer=build_tiny_transformer("sana"), scheduler=None, device="cpu")
+    native.prepare_replay(_build(torch.float16))
+
+    assert _linear_attn_processor_names(clamped.transformer) == {"_SaturatedLinearAttnProcessor"}
+    assert _linear_attn_processor_names(native.transformer) == {"SanaLinearAttnProcessor2_0"}
 
 
 def test_prepare_sampling_runs_on_the_swapped_flow_match_scheduler(monkeypatch) -> None:

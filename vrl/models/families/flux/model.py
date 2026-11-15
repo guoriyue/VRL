@@ -53,7 +53,7 @@ from vrl.models.steps.denoise.common import (
 
 @dataclass
 class FluxSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private FLUX sampling state. Engine MUST NOT introspect."""
+    """Private FLUX sampling state."""
 
     prompt_embeds: torch.Tensor
     pooled_prompt_embeds: torch.Tensor

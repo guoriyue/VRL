@@ -52,7 +52,7 @@ from vrl.models.steps.denoise.common import (
 
 @dataclass
 class QwenImageSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Qwen-Image sampling state. Engine MUST NOT introspect."""
+    """Private Qwen-Image sampling state."""
 
     prompt_embeds: torch.Tensor
     prompt_embeds_mask: torch.Tensor | None

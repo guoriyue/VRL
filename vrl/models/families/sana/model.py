@@ -54,11 +54,7 @@ from vrl.models.weight_utils import unwrap_compile_and_ddp
 
 @dataclass
 class SanaSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private SANA sampling state. Engine MUST NOT introspect.
-
-    ``latents`` / ``timesteps`` / ``scheduler`` are the only fields the batch
-    executor may touch.
-    """
+    """Private SANA sampling state."""
 
     prompt_embeds: torch.Tensor
     prompt_attention_mask: torch.Tensor | None

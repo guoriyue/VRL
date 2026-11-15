@@ -24,10 +24,9 @@ from typing import Any
 # identity entry (a canonical name accepts itself) is generated, not hand-listed.
 # For the three plain dtypes, the first alias is also the public precision token;
 # dtype_to_precision_token intentionally derives from that ordering.
-# The sub-byte float8/float4 names are wire/checkpoint dtypes (Hopper/Blackwell);
-# they resolve only on a torch build that compiled the dtype in (guarded in
-# resolve_torch_dtype), never silently degrading to a wider type. NVFP4 rollout
-# selection remains a separate policy decision.
+# The sub-byte float8/float4 names are wire/checkpoint dtypes (Hopper/Blackwell)
+# and need a torch build that compiled them in. NVFP4 rollout selection remains a
+# separate policy decision.
 _DTYPE_SPELLINGS: dict[str, tuple[str, ...]] = {
     "bfloat16": ("bf16",),
     "float16": ("fp16", "half"),
@@ -58,9 +57,7 @@ def resolve_torch_dtype(value: Any) -> Any:
     except KeyError as exc:
         raise ValueError(f"unsupported torch dtype: {value!r}") from exc
     # Derive the torch.dtype from its canonical name instead of a hand-listed map
-    # so float8/float4 need no per-dtype branch. A name the running torch build
-    # did not compile in (older builds lack float8/float4) fails loudly rather
-    # than silently widening to a different precision.
+    # so float8/float4 need no per-dtype branch; older builds lack float8/float4.
     dtype = getattr(torch, name, None)
     if not isinstance(dtype, torch.dtype):
         raise ValueError(

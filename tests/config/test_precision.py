@@ -324,6 +324,14 @@ def test_resolve_torch_dtype_subbyte(spelling, torch_name):
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
+def test_subbyte_dtype_missing_from_the_torch_build_is_refused_not_widened(monkeypatch):
+    """A torch build without float4 must fail loudly, never fall back to bf16/fp32."""
+    monkeypatch.delattr(torch, "float4_e2m1fn_x2")
+    with pytest.raises(ValueError, match="does not provide"):
+        resolve_torch_dtype("fp4")
+    assert resolve_torch_dtype("bf16") is torch.bfloat16
+
+
 @pytest.mark.parametrize("section", ["training", "prompt_encoders"])
 def test_required_precision_dtype_does_not_default_empty_values(section):
     block = {"float32_precision": "ieee", "training": {"dtype": "bf16"}}

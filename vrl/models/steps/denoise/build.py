@@ -118,10 +118,9 @@ def build_family_replay_runtime_bundle(
     """Build replay through a family's ``replay_cls`` and apply the training knobs.
 
     Called only by ``ModelFamilyEntry.build_replay``, which has already matched
-    ``build.family`` and rejected generation-only families. A descriptor with a
-    transformer class loads the transformer and scheduler here, honoring
-    ``build.materialize_weights``; one without it hands the whole load to
-    ``replay_cls.from_build``.
+    ``build.family``. A descriptor with a transformer class loads the
+    transformer and scheduler here, honoring ``build.materialize_weights``; one
+    without it hands the whole load to ``replay_cls.from_build``.
     """
 
     from vrl.utils.config import import_from_path

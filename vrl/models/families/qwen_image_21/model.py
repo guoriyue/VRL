@@ -64,7 +64,7 @@ _LATENT_TOKENS_PER_MASK_SLOT = 4
 
 @dataclass
 class QwenImage21SamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Qwen-Image-2.1 sampling state. Engine MUST NOT introspect."""
+    """Private Qwen-Image-2.1 sampling state."""
 
     prompt_embeds: torch.Tensor
     prompt_embeds_mask: torch.Tensor | None

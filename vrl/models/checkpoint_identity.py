@@ -252,8 +252,8 @@ def require_checkpoint_source_member(value: Any, *, field_name: str) -> str:
     """Return one safe POSIX-relative member of a checkpoint source.
 
     Local directories and Hugging Face repositories share this contract. An
-    artifact outside a source root is a separate source and must use its own
-    explicit path field instead of escaping through ``..`` or an absolute path.
+    artifact outside a source root is a separate source with its own explicit
+    path field.
     """
 
     member = str(value)

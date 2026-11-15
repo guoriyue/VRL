@@ -274,6 +274,29 @@ def test_model_build_rejects_missing_family() -> None:
         _build(family="")
 
 
+def test_each_role_builder_refuses_a_build_resolved_for_the_other_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay must not load from a rollout build (it would load the prompt encoders),
+    nor rollout from a replay build; both refuse before any weights load."""
+    from vrl.models.families.registry import get_model_family_entry
+    from vrl.models.steps.denoise import build as _shared_build
+    from vrl.utils.config import import_from_path
+
+    def refuse_load(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("weights loaded before the role check")
+
+    entry = get_model_family_entry("sd3_5")
+    monkeypatch.setattr(_shared_build, "load_diffusers_transformer", refuse_load)
+    monkeypatch.setattr(import_from_path(entry.family_build.model_cls), "from_build", refuse_load)
+
+    rollout_build = _build(rollout=RolloutBuildOptions(prompt_encoder_dtype="fp32"))
+    with pytest.raises(ValueError, match=r"requires ModelBuild\.rollout=None"):
+        entry.build_replay(rollout_build, expected_identity=None)
+    with pytest.raises(ValueError, match=r"requires ModelBuild\.rollout;"):
+        entry.build_rollout(_build(), expected_identity=None)
+
+
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

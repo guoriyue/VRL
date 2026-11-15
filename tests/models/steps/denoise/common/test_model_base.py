@@ -203,6 +203,13 @@ def test_shared_from_build_keeps_cpu_resident_components_on_the_host(monkeypatch
     assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
     assert model._cpu_resident == frozenset({"text_encoder"})
 
+    # Parking's sleep/wake cycle moves the other frozen components but leaves
+    # the host-resident encoder where from_build put it.
+    model.move_frozen_components("cpu")
+    model.move_frozen_components("cuda:0")
+    assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
+    assert pipeline.vae.to_calls[-2:] == [("cpu", None), ("cuda:0", None)]
+
 
 def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch) -> None:
     _load_pipeline(monkeypatch, _LoadedPipeline())

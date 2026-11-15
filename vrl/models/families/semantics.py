@@ -3,9 +3,7 @@
 These fields classify the executable policy variant selected by the registry,
 not every component stored in a checkpoint.  A hybrid checkpoint may contain a
 causal reasoner, a token prior, and a frozen denoise renderer while exposing
-only one of those stages as the RL policy. Generation-only entries retain the
-same routing vocabulary but omit a replay recipe in the family registry;
-semantics alone never imply trainability.
+only one of those stages as the RL policy.
 """
 
 from __future__ import annotations

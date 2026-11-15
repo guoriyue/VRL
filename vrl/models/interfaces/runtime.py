@@ -73,8 +73,8 @@ class RolloutBuildOptions:
     boundaries; putting their dtype under this option would advertise a knob
     they ignore.
 
-    Replay builds carry ``rollout=None`` instead of hauling these fields through
-    a path that must never load generation-only prompt encoders.
+    Replay builds carry ``rollout=None``: replay never loads generation-only
+    prompt encoders.
     """
 
     prompt_encoder_dtype: Any
@@ -164,10 +164,9 @@ class ModelBuild:
     # Resolved generation-only model memory policy. A primitive mapping is
     # accepted only at the Ray wire boundary and normalized immediately.
     generation_memory: GenerationMemoryPolicy | Mapping[str, Any] | None = None
-    # Full-generation build inputs. ``None`` is the replay contract: replay owns
-    # only differentiable policy modules and must not react to rollout FP8/frozen
-    # component settings. A nested primitive mapping is accepted only for the Ray
-    # wire boundary and normalized immediately in ``__post_init__``.
+    # Full-generation build inputs. ``None`` is the replay contract (replay owns
+    # only differentiable policy modules). A nested primitive mapping is accepted
+    # only for the Ray wire boundary and normalized immediately in ``__post_init__``.
     rollout: RolloutBuildOptions | Mapping[str, Any] | None = None
     # Per-rank replay load choice set by the training strategy. False asks for a
     # meta-parameter skeleton of the trainable roots, which the strategy fills
@@ -295,7 +294,6 @@ class ModelBuild:
         return bool((self.model_config or {}).get("use_lora", False))
 
     def _model_section_cls(self) -> type[ModelSection]:
-        # Only the lightweight schema is imported, never the model/backend.
         from vrl.models.families.registry import get_model_family_entry
         from vrl.utils.config import import_from_path
 

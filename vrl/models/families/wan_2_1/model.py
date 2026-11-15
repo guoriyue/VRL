@@ -14,10 +14,8 @@ The collector owns the scheduler step / SDE step. ``forward_step`` does only
 one transformer forward (with optional batched CFG concat) and returns noise
 predictions.
 
-Per-family ``WanT2VSamplingState`` is private to this file. The engine /
-collector code MUST NOT introspect it beyond the documented attributes
-(``latents``, ``timesteps``, ``scheduler``, plus the embeds the eval path
-re-builds explicitly).
+Per-family ``WanT2VSamplingState`` is private to this file; the eval path
+re-builds its embeds explicitly.
 
 Differences from SD3:
 - ``prompt_embeds`` only (no pooled/CLIP); transformer signature lacks
@@ -67,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Wan T2V sampling state. Engine MUST NOT introspect."""
+    """Private Wan T2V sampling state."""
 
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
@@ -81,7 +79,7 @@ class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
 
 @dataclass
 class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Wan I2V sampling state. Engine MUST NOT introspect."""
+    """Private Wan I2V sampling state."""
 
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None

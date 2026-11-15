@@ -71,3 +71,25 @@ def test_a_sample_is_bitwise_independent_of_its_batch(scheme: str) -> None:
         alone = torch.cat([quantized(sample) for sample in batch.split(1)])
 
     assert torch.equal(together, alone)
+
+
+@_SCHEMES
+def test_dtype_move_keeps_cache_format_with_and_without_master(scheme: str) -> None:
+    """``Module.to(dtype=...)`` must not cast a packed FP8/FP4 cache to the base dtype:
+    with a master the cache is rebuilt; master-free it moves byte for byte."""
+    quantized = _quantized(scheme)
+    names = type(quantized).cache_buffer_names
+    dtypes = {name: quantized._buffers[name].dtype for name in names}
+
+    quantized.to(dtype=torch.bfloat16)
+    assert quantized.weight.dtype is torch.bfloat16
+    assert {name: quantized._buffers[name].dtype for name in names} == dtypes
+
+    master_free = QUANTIZATION_SCHEMES[scheme](nn.Linear(64, 32, bias=False), keep_master=False)
+    raw = {
+        name: master_free._buffers[name].reshape(-1).view(torch.uint8).clone() for name in names
+    }
+    master_free.to(dtype=torch.float16)
+    assert {name: master_free._buffers[name].dtype for name in names} == dtypes
+    for name in names:
+        assert torch.equal(master_free._buffers[name].reshape(-1).view(torch.uint8), raw[name])

@@ -14,10 +14,9 @@ The collector owns the scheduler step / SDE step. ``forward_step`` does
 only one transformer forward (with optional CFG branch) and returns noise
 predictions; it does NOT mutate ``state.latents``.
 
-Per-family :class:`CosmosPredict2SamplingState` is private to this file —
-collector code MUST NOT introspect it beyond the documented attributes
-(``latents``, ``timesteps``, ``scheduler``); cosmos-specific conditioning
-fields are projected via ``export_*`` / ``restore_eval_state``.
+Per-family :class:`CosmosPredict2SamplingState` is private to this file;
+cosmos-specific conditioning fields are projected via ``export_*`` /
+``restore_eval_state``.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ _SIGMA_CONDITIONING = 0.0001
 
 @dataclass
 class CosmosPredict2SamplingState(GuidedDenoiseSamplingStateBase):
-    """Private Cosmos Predict2 sampling state. Collector MUST NOT introspect.
+    """Private Cosmos Predict2 sampling state.
 
     Cosmos Predict2 Video2World needs the full conditioning bundle
     (``init_latents`` + cond/uncond masks + indicators + padding mask + fps)
