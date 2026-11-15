@@ -155,13 +155,12 @@ Denoise step time did not change: SD3.5 Medium 131 ms/step (batch 4, 512px) and
 
 ## Selective rollout quantization
 
-Quantization is layered on `rollout.dtype`; it does not replace that dtype.
+Quantization is layered on a role's `dtype`; it does not replace that dtype.
 Normalization, residuals, excluded or unsupported Linears, and quantized GEMM
-inputs/outputs still need the rollout base dtype.
+inputs/outputs still need the base dtype.
 
-Quantization is rollout-only. The trainer has no autograd-capable quantized
-Linear, so `precision.training` carries no `quantization` block; one is rejected
-as an unknown key rather than accepted as a silent no-op.
+`rollout.quantization` quantizes the rollout alone; `training.quantization`
+quantizes the replay and the rollout together (see below).
 
 ### FP8
 
@@ -197,7 +196,38 @@ NVFP4 is a Blackwell-only path. It replaces the same eligible attention
 projections and MLP Linears as FP8. NVFP4 is the complete scaling
 scheme. The old generic `format: fp4` spelling is rejected; use `format: nvfp4`.
 
-A quantized rollout differs from an unquantized replay even when both base dtypes
+### Quantizing the replay too
+
+```yaml
+precision:
+  float32_precision: tf32
+  training:
+    dtype: bf16
+    quantization:
+      format: nvfp4
+```
+
+`training.quantization` swaps the replay's linears to the same scheme, and the
+rollout inherits it unless `rollout.quantization` names another format. The
+replay then runs the rollout's GEMM under autograd and backpropagates through
+the dequantized cache, so the two forwards are one computation: on SD3.5 Medium
+with both roles on fp8 or on NVFP4 the two-model probe gives max |Δlogprob| 0 at
+generation batches 1, 4 and 16 replayed one sample at a time, and a 3-update
+LoRA run holds the 1e-6 replay-parity gate. Three things make that hold:
+
+- The quantized base is frozen. The block requires `model.use_lora: true`; the
+  cache is derived once and no optimizer step refreshes it. The adapter is
+  trained against the quantized base and belongs to it.
+- Each weight cache is quantized on the build's device. The CPU and CUDA NVFP4
+  quantizers differ on real weights (about 0.3% of the codes on SD3.5 Medium).
+- Each sample of a batch runs its own GEMM, so its activation scale and cuBLAS
+  kernel never depend on its neighbours. This costs throughput at large
+  generation batches: SD3.5 Medium at batch 16 runs 0.530 s/sample under NVFP4
+  against 0.435 in bf16, so on a model that already fits the card NVFP4 is a
+  memory lever, not a speed one.
+
+A rollout quantized on its own (`rollout.quantization` without
+`training.quantization`) differs from its unquantized replay even when both base dtypes
 are BF16: on SD3.5 Medium an fp8 rollout moves the per-step log-prob by 4e-2
 and NVFP4 by 1.8e-1 against a bf16 replay, so with the diffusion GRPO clip of
 1e-4 nearly every step leaves the trust region before the first update and half
