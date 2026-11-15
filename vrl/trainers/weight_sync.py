@@ -87,8 +87,8 @@ def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]
 def select_trainable_state(module: Any, name: str) -> dict[str, Any]:
     """Pick a module's trainable-parameter entries from its state dict, prefixed ``name.``.
 
-    ``module`` must already be unwrapped enough that its ``named_parameters()``
-    names match its ``state_dict()`` keys.
+    The module is unwrapped by the caller; a wrapper whose ``state_dict()`` keys
+    differ from its ``named_parameters()`` names is rejected.
     """
 
     if not name:

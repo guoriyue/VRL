@@ -24,6 +24,7 @@ from vrl.trainers.distributed import DistributedTrainingContext  # noqa: E402
 from vrl.trainers.fsdp import (  # noqa: E402
     apply_fsdp,
     build_fsdp_mesh,
+    full_cpu_tensor,
     gather_checkpoint_state_dict,
     load_checkpoint_state_dict,
     mixed_precision_policy,
@@ -155,6 +156,16 @@ def test_checkpoint_state_is_selective_and_round_trips_on_every_rank() -> None:
         assert all_cpu, f"rank{rank} gathered non-CPU tensors"
         assert trainable_restored, f"rank{rank} did not restore the full LoRA tensors"
         assert frozen_unchanged, f"rank{rank} changed frozen base state during LoRA load"
+
+
+def test_full_cpu_tensor_snapshot_does_not_alias_a_cpu_tensor() -> None:
+    """A snapshot of a CPU tensor (Adam's step counter) must not move with the next step."""
+    step = torch.tensor(3.0)
+    snapshot = full_cpu_tensor(step, keep=True)
+    step.add_(1)
+
+    assert snapshot.item() == 3.0
+    assert full_cpu_tensor(step, keep=False) is None
 
 
 def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:

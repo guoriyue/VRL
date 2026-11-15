@@ -161,15 +161,11 @@ class DistributedTrainingContext:
                     f"distributed.training: LOCAL_RANK={local_rank} is out of range for "
                     f"gpus_per_node={gpus_per_node} (expected 0..{gpus_per_node - 1})."
                 )
-            # The rank's device is an index into the devices THIS PROCESS can see,
-            # which is not always the local rank. Symmetric-colocated placement is
-            # resolved per rank as "my one local GPU" (vrl/ray/resources.py), so a
-            # single-node launch narrows each rank to its own card with
-            # CUDA_VISIBLE_DEVICES; that rank then sees exactly one device and
-            # cuda:<local_rank> would be out of range for every rank but 0. Only the
-            # two known shapes map implicitly; a partial mask (more ranks than
-            # visible devices, but not exactly one) must fail here instead of
-            # silently double-mapping ranks onto one card and dying later in NCCL.
+            # The rank's device indexes the devices THIS PROCESS can see, not
+            # always the local rank: a single-node symmetric-colocated launch
+            # narrows each rank to its own card (vrl/ray/resources.py). Only full
+            # visibility and a one-device mask map implicitly; a partial mask
+            # would double-map ranks onto one card and die later in NCCL.
             cp_size = 1
             if strategy == "fsdp" and training.fsdp is not None:
                 cp_size = int(training.fsdp.context_parallel.size)

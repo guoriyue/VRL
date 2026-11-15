@@ -18,6 +18,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -42,6 +43,7 @@ from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
+from vrl.rollouts.orchestration.continuous import thread as thread_module
 from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -101,6 +103,31 @@ async def test_empty_prefetch_fails_before_initial_weight_sync(monkeypatch, tmp_
         assert bench.trace.requests == []
     finally:
         await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_owner_bootstrap_failure_reaches_the_caller(monkeypatch) -> None:
+    """A controller that fails to build surfaces as the root cause, not as a start timeout."""
+
+    class Boom(Exception):
+        pass
+
+    def broken_controller(**_kwargs: Any) -> None:
+        raise Boom("controller construction failed")
+
+    monkeypatch.setattr(thread_module, "_ContinuousRolloutController", broken_controller)
+    # A regression (no ready signal) then fails in 2 s instead of the real timeout.
+    monkeypatch.setattr(thread_module, "_OWNER_START_TIMEOUT_S", 2.0)
+    owner = ContinuousRolloutThread(
+        lifecycle=SimpleNamespace(),
+        settings=ContinuousRolloutSettings(
+            max_inflight_groups=1, wait_timeout_s=1.0, versioned_weight_sync=False
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="failed to start") as caught:
+        await owner.next_iteration(["p0"], group_size=1, initial_weights=None)
+    assert isinstance(caught.value.__cause__, Boom)
 
 
 @pytest.mark.asyncio

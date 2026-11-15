@@ -103,6 +103,22 @@ def test_fsdp_local_rank_must_be_in_range() -> None:
         )
 
 
+def test_partial_cuda_mask_is_refused_and_a_single_device_mask_maps_to_cuda0(
+    cuda_devices,
+) -> None:
+    """A partial mask would double-map ranks onto one card; a one-device mask is that rank's own card."""
+    cfg = parse_config(_cfg({"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 4}))
+    env = {"RANK": "3", "LOCAL_RANK": "3", "WORLD_SIZE": "4"}
+
+    cuda_devices(2)
+    with pytest.raises(ValueError, match="sees only 2 CUDA devices"):
+        DistributedTrainingContext.from_root(cfg, device=torch.device("cpu"), env=env)
+
+    cuda_devices(1)
+    ctx = DistributedTrainingContext.from_root(cfg, device=torch.device("cpu"), env=env)
+    assert ctx.device == torch.device("cuda:0")
+
+
 # Execution wiring lives outside this resolver: build_strategy constructs the
 # FSDP/DDP adapter, while the online lifecycle tests cover the supported
 # symmetric-colocated multi-rank orchestration. This module only resolves and

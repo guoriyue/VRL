@@ -24,6 +24,21 @@ def test_unknown_algorithm_keys_are_rejected_together() -> None:
     assert unknown_keys(cfg) == ["algorithm.adv_estimator", "algorithm.future_field"]
 
 
+def test_bridged_algorithm_fields_are_not_yaml_keys() -> None:
+    """``BuiltConfigs.from_cfg`` fills these from other sections and would overwrite a YAML value."""
+
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "kind": "grpo",
+                "component_weights": {"ocr": 1.0},
+                "precision_correction": {"tis_mode": "truncate"},
+            }
+        }
+    )
+    assert unknown_keys(cfg) == ["algorithm.component_weights", "algorithm.precision_correction"]
+
+
 @pytest.mark.parametrize(
     ("kind", "field", "value"),
     [

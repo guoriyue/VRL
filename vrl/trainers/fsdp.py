@@ -304,12 +304,12 @@ def gather_checkpoint_state_dict(module: nn.Module, *, rank0_only: bool = False)
 def full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
     """Gather one (D)Tensor to a full CPU clone; ``keep=False`` releases it at once.
 
-    Every rank must call this for a DTensor (the all-gather is collective) even
-    when only some ranks keep the result. ``Tensor.cpu()`` aliases an already-CPU
-    tensor such as Adam's step counter; a checkpoint snapshot must not change
-    when the live optimizer takes its next step, so the copy is forced. For a
-    device tensor the forced ``to`` is the device->host copy itself, where
-    ``.cpu().clone()`` would copy the gathered tensor to host and then again.
+    Every rank calls this for a DTensor (the all-gather is collective) even when
+    only some ranks keep the result. The copy is forced because ``Tensor.cpu()``
+    aliases an already-CPU tensor such as Adam's step counter, and a checkpoint
+    snapshot would then move with the next optimizer step. For a device tensor
+    the forced ``to`` is the device->host copy itself, where ``.cpu().clone()``
+    would copy twice.
     """
 
     from torch.distributed.tensor import DTensor

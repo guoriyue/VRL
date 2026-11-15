@@ -74,6 +74,19 @@ def test_visible_inferable_pixels_are_not_raised(tmp_path) -> None:
     assert stats["k"] == 0.0
 
 
+def test_hidden_unknowable_tokens_are_not_raised(tmp_path) -> None:
+    """Only the inferable part of the hidden room is raised; the rest of it keeps the baseline."""
+    # The object covers tokens 10..30; only its centre (tokens 15..25) is inferable.
+    scene = _scene(tmp_path, inferable_box=(240, 240, 400, 400))
+
+    weights, _ = token_weights(scene, 2, height=_SIZE, width=_SIZE)
+
+    frames = weights.reshape(3, _SIZE // 16, _SIZE // 16)
+    baseline = frames[0, 0, 0]
+    assert torch.all(frames[1, 10:15, 10:30] == baseline)
+    assert torch.all(frames[1, 15:25, 15:25] > baseline)
+
+
 def test_spare_layers_append_transparent_targets_and_keep_mean_one() -> None:
     clean = torch.randn(1, 6, 4)
     raw = torch.tensor([1.0, 1.0, 3.0, 3.0, 1.0, 1.0]).reshape(1, 6, 1)

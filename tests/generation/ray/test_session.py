@@ -62,6 +62,8 @@ async def test_close_releases_policies_then_kills_workers(
         assert wait == {"timeout": 60}
         assert _killed(calls) == actors
         assert session.engines == []
+        # The executor keeps its own engine list; the session emptied only its copy.
+        assert len(session.executor.engines) == 2
         assert all(is_dead(local_ray, actor) for actor in actors)
 
 

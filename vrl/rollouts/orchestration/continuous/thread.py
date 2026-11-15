@@ -464,7 +464,7 @@ class ContinuousRolloutThread:
                 self._controller = controller
             self._ready.set()
             loop.run_forever()
-        except BaseException as error:  # bootstrap failures must reach the caller
+        except BaseException as error:  # surfaced by _ensure_thread instead of a start timeout
             self._bootstrap_error = error
             self._ready.set()
         finally:

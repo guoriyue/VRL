@@ -215,6 +215,9 @@ def test_reward_observation_axes_survive_fixed_csv_schema_and_checkpoint_resume(
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [record["epoch"] for record in records] == [0, 1, 2]
     assert records[2]["components"] == {"judge/alignment": 0.9}
+    csv_paths = [tmp_path / "metrics.csv", tmp_path / "metrics.full_precision.csv"]
+    csv_before = [csv_path.read_text() for csv_path in csv_paths]
     with pytest.raises(ValueError, match="Out of range"):
         resumed.append(3, TrainStepMetrics(reward_components={"judge/hidden": float("nan")}))
     assert len(path.read_text().splitlines()) == 3
+    assert [csv_path.read_text() for csv_path in csv_paths] == csv_before

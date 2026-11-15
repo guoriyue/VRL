@@ -13,6 +13,7 @@ from vrl.trainers.weight_sync import (
     RayRuntimeWeightSyncer,
     flatten_trainable_module_state,
     require_trainable_modules,
+    select_trainable_state,
 )
 
 
@@ -133,3 +134,23 @@ def test_flatten_reads_live_weights_rather_than_an_earlier_snapshot() -> None:
     with torch.no_grad():
         modules["adapter"].weight.fill_(7.0)
     assert flatten_trainable_module_state(modules)["adapter.weight"].eq(7.0).all()
+
+
+class _PrefixedStateDict(torch.nn.Module):
+    """A wrapper whose state_dict keys carry a prefix its parameter names lack."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.inner = torch.nn.Linear(2, 2)
+
+    def named_parameters(self, *args: Any, **kwargs: Any):
+        return self.inner.named_parameters(*args, **kwargs)
+
+    def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {f"base_model.{key}": value for key, value in self.inner.state_dict().items()}
+
+
+def test_select_rejects_a_wrapper_whose_state_dict_keys_differ_from_parameter_names() -> None:
+    """A key mismatch must fail loudly instead of shipping an empty rollout payload."""
+    with pytest.raises(ValueError, match="missing trainable parameters: bias, weight"):
+        select_trainable_state(_PrefixedStateDict(), "transformer")

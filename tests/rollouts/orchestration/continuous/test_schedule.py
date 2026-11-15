@@ -32,6 +32,7 @@ from vrl.rollouts.orchestration import ContinuousRolloutSchedule
 from vrl.rollouts.orchestration.continuous import types as continuous_types
 from vrl.trainers.core.types import ContinuousRolloutConfig
 from vrl.trainers.data.prompts import PromptExample
+from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.stats import recording
 
 
@@ -153,6 +154,32 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner(
     assert bench.trace.events.count("collector_shutdown") == 2
     assert schedule._rollout_thread._closed is True
     assert thread is not None and not thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_policy_export_runs_on_the_trainer_thread(monkeypatch, tmp_path) -> None:
+    """Strategy export may run DDP/FSDP collectives, so the owner thread must never call it."""
+
+    main_thread = threading.get_ident()
+    export_threads: list[int] = []
+    real_export = SingleProcessStrategy.export_rollout_state
+
+    def recording_export(self: SingleProcessStrategy, bundle: Any) -> dict[str, Any]:
+        export_threads.append(threading.get_ident())
+        return real_export(self, bundle)
+
+    monkeypatch.setattr(SingleProcessStrategy, "export_rollout_state", recording_export)
+    schedule = _build(_continuous_config(), _bench(monkeypatch, tmp_path))
+    try:
+        await schedule.next_iteration(["p0"], group_size=1)
+        await schedule.after_train_step()
+        await schedule.next_iteration(["p0"], group_size=1)
+    finally:
+        await schedule.shutdown()
+
+    # The initial export and the post-train export.
+    assert len(export_threads) == 2
+    assert set(export_threads) == {main_thread}
 
 
 @pytest.mark.asyncio

@@ -25,8 +25,8 @@ class ImportanceRatioConfig(GroupAdvantageConfig):
     """Settings of every objective whose loss is a ratio against the rollout policy."""
 
     # Bridged by ``BuiltConfigs.from_cfg`` from ``trainer.precision_correction`` (the
-    # trainer owns the knob: its replay-parity gate reads the same one), never
-    # a YAML key here. Bounds rollout->replay precision drift inside the loss.
+    # trainer owns the knob: its replay-parity gate reads the same one). Bounds
+    # rollout->replay precision drift inside the loss.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig, init=False
     )

@@ -451,8 +451,8 @@ class OnlineMetricsCSV:
 
     def append(self, epoch: int, metrics: TrainStepMetrics) -> None:
         row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
-        # Serialize before writing any sink: malformed/nonfinite observations
-        # must not become successful CSV evidence with the offending axis hidden.
+        # Serialize first, so a non-finite observation fails before any CSV row
+        # can hide its axis.
         observations = json.dumps(
             {
                 "schema": "vrl.reward-components.v1",

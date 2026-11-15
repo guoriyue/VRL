@@ -35,7 +35,8 @@ class TestGRPOSingleSampleNaN:
 
     @pytest.mark.parametrize(
         ("dtype", "global_std"),
-        [(torch.bfloat16, False), (torch.float32, True)],
+        # fp16 + global_std: the cross-rank std path must upcast too, or eps underflows.
+        [(torch.bfloat16, False), (torch.float32, True), (torch.float16, True)],
     )
     def test_constant_non_binary_reward_returns_exact_zero(
         self,
@@ -268,6 +269,31 @@ class TestGRPORejectSampling:
         assert loss.item() == pytest.approx(-1.7)
         assert metrics.update.tis_clip_fraction == pytest.approx(1 / 3)
         assert metrics.update.rs_seq_masked_fraction == pytest.approx(1 / 3)
+
+
+def test_masked_transitions_carry_no_loss_or_gradient() -> None:
+    """Masked (cache-finalization) transitions are not policy actions: out of the mean and the gradient."""
+    log_prob = torch.zeros(2, 3, requires_grad=True)
+    mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 0.0, 0.0]])
+    segment = SegmentSignal(
+        name="denoise",
+        distribution="flow_matching",
+        log_prob=log_prob,
+        old_log_prob=log_prob.detach().clone(),
+        mask=mask,
+    )
+    signals = TrajectorySignalBatch(
+        segments={"denoise": segment}, group_ids=torch.arange(2), primary_segment="denoise"
+    )
+
+    loss, _ = GRPO(GRPOConfig(kl_coef=0.0)).compute_loss(
+        AlgorithmInput(signals=signals, advantages=torch.tensor([1.0, -1.0]))
+    )
+    loss.backward()
+
+    # Three kept transitions: two at advantage 1, one at -1.
+    assert loss.item() == pytest.approx(-1 / 3)
+    assert torch.all(log_prob.grad[mask == 0] == 0)
 
 
 def _flow_signals(
