@@ -88,8 +88,6 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
                 f"model.fused_kernels: {type(self).__name__} has no CosmosTransformerBlock"
             )
 
-    # -- forward_step --------------------------------------------------
-
     def forward_step(
         self,
         state: CosmosPredict2SamplingState,
@@ -217,7 +215,7 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
     decode; this class also exports the trajectory tensors replay reads back.
     """
 
-    # -- backend ownership (called by runtime, not by collectors) -------
+    # backend ownership (called by runtime, not by collectors)
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> CosmosPredict2PipelineModel:
@@ -247,8 +245,6 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
         )
         model._cpu_resident = cpu_resident
         return model
-
-    # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(
         self,
@@ -282,8 +278,6 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
             "negative_prompt_embeds": negative_prompt_embeds,
             "reference_image": kwargs.get("reference_image"),
         }
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -384,8 +378,6 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
             fps=request.fps or 16,
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(
         self,
         state: CosmosPredict2SamplingState,
@@ -442,8 +434,6 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
                 else None
             ),
         }
-
-    # -- decode_latents ------------------------------------------------
 
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode a clean video into scheduler-domain latents.

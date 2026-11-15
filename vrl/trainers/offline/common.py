@@ -80,9 +80,7 @@ class OfflineTrainer:
                 eps=cfg.adam_epsilon,
             )
 
-    # ------------------------------------------------------------------
     # Noise injection — branch on prediction_type
-    # ------------------------------------------------------------------
 
     def _sample_timestep_indices(
         self,
@@ -149,10 +147,6 @@ class OfflineTrainer:
             target = noise - latents
             return noisy, target
         raise ValueError(f"unknown prediction_type: {pt}")
-
-    # ------------------------------------------------------------------
-    # Step boundary
-    # ------------------------------------------------------------------
 
     def _optimizer_update(self, loss: torch.Tensor) -> float:
         """Backward one micro-step; clip and step at the accumulation boundary.

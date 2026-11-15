@@ -123,7 +123,7 @@ class Cosmos3Model(CosmosReplayForward, DiffusersModelBase):
             device=build.device,
         )
 
-    # ---- the per-step transformer call -> flow velocity ----
+    # the per-step transformer call -> flow velocity
     def forward_step(
         self,
         state: Cosmos3SamplingState,
@@ -308,7 +308,6 @@ class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
         model._cpu_resident = cpu_resident
         return model
 
-    # ---- encode ----
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -332,7 +331,7 @@ class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
             "guidance_scale": guidance_scale,
         }
 
-    # ---- sampling-state assembly (the step-invariant packed_static) ----
+    # sampling-state assembly (the step-invariant packed_static)
     def prepare_sampling(
         self,
         request: DenoiseRequest,
@@ -429,7 +428,7 @@ class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
         decoded = pipe.vae.decode(z_raw).sample.to(in_dtype)
         return pipe.video_processor.postprocess_video(decoded, output_type="pt")[0]
 
-    # ---- replay export/restore (batch=1) ----
+    # replay export/restore (batch=1)
     def export_batch_context(self, state: Cosmos3SamplingState) -> dict[str, Any]:
         return {
             "guidance_scale": state.guidance_scale,

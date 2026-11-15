@@ -372,7 +372,6 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
     def patch_size(self) -> tuple[int, int, int]:
         return tuple(int(p) for p in self.transformer.config.patch_size)
 
-    # ---- schedule ----
     def apply_fused_kernels(self, build: ModelBuild) -> None:
         """Swap every policy core's blocks to ``FusedMiniMaxH3TransformerBlock``."""
 
@@ -506,7 +505,6 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
             row_timestep_plan=plan,
         )
 
-    # ---- the per-step transformer call ----
     def forward_step(self, state: MiniMaxH3SamplingState, step_idx: int) -> dict[str, Any]:
         """One joint forward: video velocity out as ``noise_pred`` (flow convention),
         audio rows advanced to the next step as a side effect.
@@ -709,7 +707,6 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
     def audio_scheduler(self) -> Any:
         return self.pipeline.audio_scheduler
 
-    # ---- encode ----
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -753,7 +750,6 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
             "max_text_tokens": max_text_tokens,
         }
 
-    # ---- sampling-state assembly ----
     def prepare_sampling(
         self,
         request: DenoiseRequest,
@@ -837,7 +833,6 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
             int(vae.spatial_compression_ratio),
         )
 
-    # ---- decode ----
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Video latents -> ``[B, C, T, H, W]`` in ``[0, 1]``.
 
@@ -879,7 +874,6 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
         )
         return decoder(latents).to(output_device)
 
-    # ---- replay export/restore ----
     def export_batch_context(self, state: MiniMaxH3SamplingState) -> dict[str, Any]:
         return {
             "guidance_scale": 1.0,

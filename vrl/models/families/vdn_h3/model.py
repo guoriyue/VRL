@@ -66,8 +66,6 @@ class VDNH3Model(MiniMaxH3Model):
     recomputed log-probs would describe a different model.
     """
 
-    # -- loading -----------------------------------------------------------
-
     @classmethod
     def from_build(cls, build: ModelBuild) -> VDNH3Model:
         """Transformer + both H3 schedulers, with the hybrid graft applied.
@@ -135,8 +133,6 @@ class VDNH3Model(MiniMaxH3Model):
                 dtype=build.parameter_dtype,
             ),
         )
-
-    # -- per-forward geometry ---------------------------------------------
 
     def forward_step(self, state: MiniMaxH3SamplingState, step_idx: int) -> dict[str, Any]:
         """Install the packed geometry, then run MiniMax-H3's own joint forward."""

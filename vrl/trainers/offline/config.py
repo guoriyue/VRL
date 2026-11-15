@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 class OfflineTrainerConfig:
     """Configuration for the offline training loops (DPO and SFT)."""
 
-    # --- optimizer ---
     # The caller resolves lr scaling (e.g. by effective batch size) before
     # constructing this config; the trainer applies ``lr`` as-is.
     lr: float = 1e-8
@@ -28,10 +27,8 @@ class OfflineTrainerConfig:
     max_grad_norm: float = 1.0
     gradient_accumulation_steps: int = 1
 
-    # --- noise / schedule ---
     prediction_type: str = "flow_matching"  # "epsilon" | "v_prediction" | "flow_matching"
 
-    # --- placement ---
     # ``actor.offload``: present, the recipe streams the frozen blocks of its
     # host-resident trainable roots instead of moving the roots whole.
     offload: Offload | None = None

@@ -241,7 +241,6 @@ class DenoiseModelBase(nn.Module, ABC):
 
         return temporarily_disable_lora(self._require_transformer())
 
-    # -- policies other than the trainable one ---------------------------
     # The KL reference uses the base model with LoRA disabled, or a snapshot
     # for full fine-tuning. Objectives use the same policy interface in either
     # case.
@@ -297,7 +296,7 @@ class DenoiseModelBase(nn.Module, ABC):
         transformer = self._require_transformer()
         require_weights_for(transformer, state_dict, prefix="transformer")
 
-    # -- versioned trainable-state slots (non-draining weight sync) ---------
+    # versioned trainable-state slots (non-draining weight sync)
     # Diffusion families support versioned slots generically: activation reuses
     # ``load_trainable_state`` to copy a retained version onto the live model, so
     # the same flat ``transformer.*`` payload format works for single-transformer
@@ -348,7 +347,6 @@ class DenoiseModelBase(nn.Module, ABC):
         """Load the backend from a runtime build."""
         raise NotImplementedError
 
-    # ── LoRA ──────────────────────────────────────────────────────────
     # One attach implementation over ``trainable_modules`` + ``set_module_root``.
     # Family schemas resolve adapter defaults before this shared PEFT sequence.
     # Attach never places the roots: the rollout builder moves them after the
@@ -776,7 +774,6 @@ class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
                 moved.add(id(module))
                 module.to(device)
 
-    # -- backend ownership -------------------------------------------------
     # The pipeline class comes from the checkpoint's ``model_index.json``
     # (``DiffusionPipeline.from_pretrained``); every module component but the
     # transformer is frozen, so a family declares nothing for the loader.

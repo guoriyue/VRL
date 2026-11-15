@@ -43,8 +43,6 @@ class ForwardProcessAlgorithm(OnlineAlgorithm):
     sft_source = "unsupported"
     config: ForwardProcessConfig
 
-    # -- re-noising -------------------------------------------------------
-
     def renoised(self, batch: Any, timestep_index: int) -> tuple[Any, Any, Any]:
         """``(x0, t, xt)`` at this replay step: the clean latent, flow time
         broadcast to its shape, and the fp32 interpolation ``(1-t)*x0 + t*noise``

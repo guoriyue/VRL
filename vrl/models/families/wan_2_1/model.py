@@ -372,8 +372,6 @@ class WanT2VModel(DiffusersModelBase):
         )
         return {"noise_pred": noise_pred}
 
-    # -- forward_step --------------------------------------------------
-
     def _transformer_inputs(
         self,
         state: Any,
@@ -437,7 +435,7 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         self.transformer_2 = transformer
         self.pipeline.transformer_2 = transformer
 
-    # -- backend ownership (called by runtime, not by collectors) -------
+    # backend ownership (called by runtime, not by collectors)
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> WanT2VPipelineModel:
@@ -476,8 +474,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             self._validate_wan_trainable_state(state_dict)
         )
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -512,8 +508,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             "prompt_embeds": prompt_embeds,
             "negative_prompt_embeds": negative_prompt_embeds,
         }
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -568,8 +562,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: WanT2VSamplingState) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""
         return {
@@ -585,8 +577,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             "negative_prompt_embeds": state.negative_prompt_embeds,
             "latents_clean": state.latents.detach(),
         }
-
-    # -- decode_latents ------------------------------------------------
 
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode clean target video into Wan's normalized latent domain.

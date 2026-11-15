@@ -156,8 +156,6 @@ class SD3_5PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SD3_5Model)
     decode; this class also exports the trajectory tensors replay reads back.
     """
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -207,8 +205,6 @@ class SD3_5PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SD3_5Model)
             "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
         }
 
-    # -- prepare_sampling ----------------------------------------------
-
     def prepare_sampling(
         self,
         request: DenoiseRequest,
@@ -257,8 +253,6 @@ class SD3_5PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SD3_5Model)
             guidance_scale=request.guidance_scale,
             do_cfg=do_cfg,
         )
-
-    # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: SD3SamplingState) -> dict[str, Any]:
         """Project SD3 sampling state into trajectory context."""

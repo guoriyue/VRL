@@ -130,8 +130,6 @@ class FluxModel(DiffusersModelBase):
         )
         return latent_image_ids.reshape(height * width, 3)
 
-    # -- forward_step --------------------------------------------------
-
     def forward_step(
         self,
         state: FluxSamplingState,
@@ -243,8 +241,6 @@ class FluxPipelineModel(DiffusersPipelineModelBase, FluxModel):
         self._decode_height = 1024
         self._decode_width = 1024
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -287,8 +283,6 @@ class FluxPipelineModel(DiffusersPipelineModelBase, FluxModel):
                 except StopIteration:
                     continue
         return self.device
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -350,8 +344,6 @@ class FluxPipelineModel(DiffusersPipelineModelBase, FluxModel):
             width=int(request.width),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: FluxSamplingState) -> dict[str, Any]:
         """Project FLUX sampling state into trajectory context.
 
@@ -381,8 +373,6 @@ class FluxPipelineModel(DiffusersPipelineModelBase, FluxModel):
             "pooled_prompt_embeds": state.pooled_prompt_embeds,
             "latents_clean": state.latents.detach(),
         }
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode packed latents → image via FLUX VAE (unpack, then 4D decode)."""

@@ -19,7 +19,6 @@ from typing import Literal
 GenerationRegime = Literal["full_sequence"]
 
 
-# ── Family task vocabulary ──────────────────────────────────────────────────
 # Owner of the task-token vocabulary carried by ``ModelFamilyEntry.task`` and
 # ``GenerationRequest.task``. The video-task set and the task->task_type
 # projection both derive from this one place, so a new token is a single edit

@@ -127,8 +127,6 @@ class GenEvalOwlRewardModel(LazyTorchModule):
         self._color_fn: ColorClassifier | None = cfg.get("color_fn")
         self._processors: tuple[Any, Any] | None = None
 
-    # -- RewardModel protocol ----------------------------------------------
-
     def score_batch(self, artifacts: Sequence[Any]) -> list[dict[str, float]]:
         """Compatibility API for direct callers that only consume numeric scores."""
         return [result.scores for result in self.score_results(artifacts)]

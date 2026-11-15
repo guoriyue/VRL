@@ -44,9 +44,7 @@ class DPOStepMetrics:
     grad_norm: float = 0.0
 
 
-# ---------------------------------------------------------------------------
 # Forward adapters — caller plugs in a model-specific forward function.
-# ---------------------------------------------------------------------------
 
 # A ForwardFn takes ``(model, noisy_latents, timesteps, encoder_hidden_states)``
 # and returns the prediction tensor. Concrete adapters live with
@@ -54,11 +52,6 @@ class DPOStepMetrics:
 # ``vrl/scripts/families/wan_2_1/train_dpo.py``), never here: this module must
 # stay family-neutral.
 ForwardFn = Callable[..., torch.Tensor]
-
-
-# ---------------------------------------------------------------------------
-# OfflineDPOTrainer
-# ---------------------------------------------------------------------------
 
 
 class OfflineDPOTrainer(OfflineTrainer):
@@ -97,10 +90,6 @@ class OfflineDPOTrainer(OfflineTrainer):
         self.forward_fn = forward_fn
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-
-    # ------------------------------------------------------------------
-    # One training step
-    # ------------------------------------------------------------------
 
     def step(self, batch: PreferenceBatch) -> DPOStepMetrics:
         """Train on one preference microbatch; update at the accumulation boundary."""

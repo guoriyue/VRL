@@ -324,8 +324,6 @@ class GlobalRayPlacementOwner:
     def __post_init__(self) -> None:
         self.layout = BundleLayout.from_resources(self.resources)
 
-    # -- lifecycle -----------------------------------------------------------
-
     def create(self) -> None:
         """Create the placement group, probe GPU bundles, and assign roles."""
 
@@ -413,8 +411,6 @@ class GlobalRayPlacementOwner:
         self._placement_ready = False
         self._role_bundles.clear()
 
-    # -- role placement handles ---------------------------------------------
-
     @property
     def rollout_placement(self) -> RolePlacement | None:
         bundles = self._role_bundles.get("rollout", ())
@@ -449,7 +445,7 @@ class GlobalRayPlacementOwner:
             ),
         )
 
-    # -- role assignment (pure; unit-tested with an injected probe) ----------
+    # role assignment (pure; unit-tested with an injected probe)
 
     def assign_roles(self, probed: dict[int, int]) -> dict[str, tuple[int, ...]]:
         """Map roles to bundle indices given a ``bundle_index -> gpu_id`` probe.
@@ -519,8 +515,6 @@ class GlobalRayPlacementOwner:
                 )
             matched.append(bundle_index)
         return tuple(matched)
-
-    # -- internals -----------------------------------------------------------
 
     def _bundle_requirements(self) -> list[dict[str, float]]:
         requirements: list[dict[str, float]] = []

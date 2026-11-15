@@ -93,8 +93,6 @@ class VGRPO(ForwardProcessAlgorithm):
         # updates while staying fixed within one.
         self._update_counter = 0
 
-    # -- the loss ---------------------------------------------------------
-
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         """One ``(t, eps)`` pair of the surrogate for a rollout batch.
 
@@ -157,8 +155,6 @@ class VGRPO(ForwardProcessAlgorithm):
                 draws[group] = torch.randn(shape, generator=generator, dtype=torch.float32)
             rows.append(draws[group])
         return torch.stack(rows, dim=0).to(device=x0.device)
-
-    # -- lifecycle ------------------------------------------------------------
 
     def after_optimizer_step(self, global_step: int) -> None:
         # Advance the group-noise counter so the shared noise changes across

@@ -118,7 +118,7 @@ class OCRRewardModel:
         self._ensure_loaded()
         output = artifact.as_media()
 
-        # ---- extract frames as list of numpy uint8 [H, W, C] ----
+        # extract frames as list of numpy uint8 [H, W, C]
         # SD3 image OCR in flow_grpo uses OcrScorer, while video OCR uses
         # OcrScorer_video_or_image. The substring full-credit shortcut is
         # image-only, so keep track of whether this output is a single image.
@@ -150,7 +150,7 @@ class OCRRewardModel:
             frames = [array]
             single_image = array.ndim == 3
 
-        # ---- per-frame OCR + Levenshtein, matches flow_grpo ----
+        # per-frame OCR + Levenshtein, matches flow_grpo
         from Levenshtein import distance
 
         target_len = len(target_text)

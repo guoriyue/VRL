@@ -98,7 +98,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 f"model.family={root.model.family} does not provide one",
             )
 
-    # ── Sections and explicit fields outside the algorithm's declared surface.
+    # Sections and explicit fields outside the algorithm's declared surface.
     # An empty allowed set permits only an empty section; a None entry forbids
     # the section outright; consumed_sections=None imposes no restriction.
     for section_name, allowed in algorithm_cls.consumed_sections or ():
@@ -112,7 +112,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
             fields = ", ".join(f"{section_name}.{name}" for name in unsupported)
             raise ValueError(f"{kind} does not consume config field(s): {fields}")
 
-    # ── A clean-target SFT weight must be valid and backed by the data source
+    # A clean-target SFT weight must be valid and backed by the data source
     # its algorithm declares. An algorithm without the term has no such knob:
     # the YAML key is unknown there and is rejected by the schema.
     if algorithm_cls.sft_source != "unsupported":
@@ -133,13 +133,13 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "vrl/scripts/denoise/encode_targets.py)",
             )
 
-    # ── Algorithms that collect through the stochastic sampler need rollout.sde.
+    # Algorithms that collect through the stochastic sampler need rollout.sde.
     # Membership of sde.type itself is the SdeConfig Literal's job; only the
     # presence of the block is a cross-section fact.
     if algorithm_cls.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
 
-    # ── A loss on the rollout's proposal mean needs it stored at generation,
+    # A loss on the rollout's proposal mean needs it stored at generation,
     # which happens only on request, and the action it scores must be a draw
     # from that mean: the native path stores the scheduler's deterministic
     # step as the action.

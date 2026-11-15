@@ -62,8 +62,6 @@ from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.utils.config import import_from_path
 from vrl.utils.profiling import TorchProfilerConfig
 
-# ── Reward section ────────────────────────────────────────────────────────────
-
 
 class RewardConfig(ConfigBase):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -135,9 +133,6 @@ class RewardConfig(ConfigBase):
             raise ValueError(_extract_error_message(exc, section="reward")) from exc
 
 
-# ── Algorithm section ─────────────────────────────────────────────────────────
-
-
 class AlgorithmConfig(ConfigBase):
     """Public ``algorithm`` section.
 
@@ -191,9 +186,6 @@ class AlgorithmConfig(ConfigBase):
         except ValidationError as exc:
             raise ValueError(_extract_error_message(exc, section="algorithm")) from exc
         return {**section, "hyperparameters": hyperparameters}
-
-
-# ── Data section ──────────────────────────────────────────────────────────────
 
 
 class DataPreprocessingSection(ConfigBase):
@@ -346,9 +338,6 @@ class DataConfig(ConfigBase):
             ) from exc
 
 
-# ── Supporting sections for cross-field validation ────────────────────────────
-
-
 class SdeConfig(ConfigBase):
     """Typed rollout.sde block. ``type`` is the user-facing allow-list, replacing
     hand-written membership checks previously duplicated in the
@@ -431,9 +420,6 @@ def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
         raise ValueError("sampling requires model.family")
     entry = get_model_family_entry(str(family))
     return import_from_path(entry.sampling_section_cls)
-
-
-# ── actor / trainer sections ──────────────────────────────────────────────────
 
 
 class ActorSection(ConfigBase):
@@ -677,9 +663,6 @@ class DistributedSection(ConfigBase):
     training: TrainingSection | None = None
 
 
-# ── Root config ───────────────────────────────────────────────────────────────
-
-
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
@@ -761,9 +744,6 @@ class RootConfig(ConfigBase):
 
         check_cross_section_rules(self)
         return self
-
-
-# ── Parse boundary ────────────────────────────────────────────────────────────
 
 
 def parse_config(cfg: DictConfig) -> RootConfig:

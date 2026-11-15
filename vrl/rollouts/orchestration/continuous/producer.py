@@ -77,8 +77,6 @@ class ContinuousRolloutProducer:
 
         return len(self._running_tasks)
 
-    # -- lifecycle ------------------------------------------------------
-
     async def start(self) -> None:
         """Start cadence after the owner has committed initial weights.
 
@@ -180,8 +178,6 @@ class ContinuousRolloutProducer:
         self._loop_task = None
         self._running_tasks.clear()
 
-    # -- weight-sync barrier -------------------------------------------
-
     def pause_admission(self) -> None:
         self.state.paused_for_weight_sync = True
 
@@ -258,8 +254,6 @@ class ContinuousRolloutProducer:
             return
         self._harvest_done()
         self._admit()
-
-    # -- main loop ------------------------------------------------------
 
     async def _run(self) -> None:
         try:

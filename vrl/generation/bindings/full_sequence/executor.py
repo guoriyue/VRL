@@ -185,8 +185,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         # request object with new inputs.
         self._encoded_prompt: tuple[tuple[Any, ...], dict[str, Any]] | None = None
 
-    # -- protocol ------------------------------------------------------
-
     def parse_sampling_params(self, request: GenerationRequest) -> DenoiseSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest.
 
@@ -476,8 +474,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         # What this batch hands the driver: the denoise path, replay tensors and media.
         count("generation.payload_bytes", trajectory_tensor_bytes(result))
         return result
-
-    # -- family hooks --------------------------------------------------
 
     def encode_prompt_for_batch(
         self,

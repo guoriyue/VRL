@@ -70,9 +70,6 @@ def _normalize_float32_precision(value: Any) -> Float32Precision:
     return cast("Float32Precision", mode)
 
 
-# ── Resolved runtime policy ───────────────────────────────────────────────────
-
-
 @dataclass(frozen=True, slots=True)
 class QuantizationPolicy:
     """Selective low-precision kernel policy layered on a role's base dtype.
@@ -203,9 +200,6 @@ class PrecisionPolicy:
             rollout=rollout,
             prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
         )
-
-
-# ── Public YAML sections ──────────────────────────────────────────────────────
 
 
 class QuantizationConfig(ConfigBase):

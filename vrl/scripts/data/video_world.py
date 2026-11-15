@@ -194,9 +194,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(json.dumps(view_report, indent=2, sort_keys=True))
 
 
-# ── Manifest rows ─────────────────────────────────────────────────────────
-
-
 def build_video_world_rows(
     episodes: Iterable[Mapping[str, Any]],
     *,
@@ -352,7 +349,7 @@ def derive_text_video_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, 
     return derived
 
 
-# ── LeRobot v3.0 sources ──────────────────────────────────────────────────
+# LeRobot v3.0 sources
 
 
 def _hub_file(repo_id: str, rel: str) -> str:

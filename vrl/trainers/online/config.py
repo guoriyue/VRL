@@ -150,7 +150,7 @@ class TrainerConfig:
     ``versioned_weight_sync``, which :meth:`from_root` computes.
     """
 
-    # --- required: experiment-semantic decisions ---
+    # required: experiment-semantic decisions
     optim: OptimConfig
     batch_config: OnlineBatchConfig
     # Fraction of denoise timesteps that receive loss (gradient estimator
@@ -161,7 +161,6 @@ class TrainerConfig:
     # weight); changes the trained sample set.
     drop_zero_advantage: bool
 
-    # --- nested groups ---
     ema: EMAConfig = field(default_factory=EMAConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
     replay_parity: ReplayParityConfig = field(default_factory=ReplayParityConfig)
@@ -177,7 +176,6 @@ class TrainerConfig:
     )
     torch_profiler: TorchProfilerConfig = field(default_factory=TorchProfilerConfig)
 
-    # --- gradient ---
     max_norm: float = 1.0
 
     # How the trained denoise-step subset is chosen each update: "strided"
@@ -191,10 +189,8 @@ class TrainerConfig:
     # so it must be left at 1.0.
     timestep_selection: str = "strided"
 
-    # --- PPO/GRPO loop ---
     ppo_epochs: int = 1
 
-    # --- profiling ---
     # Host wall-clock phase timings land in rollout_stats.jsonl every step;
     # profile adds a CUDA sync around each trainer phase and phase_events.jsonl.
     profile: bool = False

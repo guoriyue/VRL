@@ -103,8 +103,6 @@ class OnlineAlgorithm(Algorithm):
 
     config: GroupAdvantageConfig
 
-    # -- lifecycle entry points -------------------------------------------
-
     def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
         """Once per optimizer update, before its first replay forward.
 
@@ -119,8 +117,6 @@ class OnlineAlgorithm(Algorithm):
         """After every applied (not scaler-skipped) optimizer step."""
 
         del global_step
-
-    # -- advantages -----------------------------------------------------------
 
     def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
         """Standardize and clamp the weighted reward total within each prompt group."""
@@ -181,8 +177,6 @@ class OnlineAlgorithm(Algorithm):
             weighted = cfg.component_weights[name] * advantage
             total = weighted if total is None else total + weighted
         return torch.clamp(total, -cfg.adv_clip_max, cfg.adv_clip_max)
-
-    # -- the loss -------------------------------------------------------------
 
     @abstractmethod
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:

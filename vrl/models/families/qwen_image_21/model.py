@@ -131,8 +131,6 @@ class QwenImage21Model(DiffusersModelBase):
         scheduler.set_timesteps(num_steps, device=device, sigmas=sigmas, mu=mu)
         return scheduler.timesteps
 
-    # -- forward_step --------------------------------------------------
-
     def _img_shapes(self, state: QwenImage21SamplingState, bsz: int) -> list:
         vsf = state.vae_scale_factor
         return [[*state.reference_shapes, (1, state.height // vsf, state.width // vsf)]] * bsz
@@ -249,8 +247,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
         self._decode_width = 1024
         self._output_mode = "rgb"
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -350,8 +346,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             result["negative_image_pad_mask"] = negative_image_pad_mask
         return result
 
-    # -- prepare_sampling ----------------------------------------------
-
     def prepare_sampling(
         self,
         request: DenoiseRequest,
@@ -414,8 +408,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             reference_shapes=encoded.get("reference_shapes", ()),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: QwenImage21SamplingState) -> dict[str, Any]:
         """Project Qwen-Image-2.1 sampling state into trajectory context."""
         return {
@@ -451,8 +443,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             tensors["negative_image_pad_mask"] = state.negative_image_pad_mask.to(torch.int64)
         return tensors
 
-    # -- encode_video_to_latents ---------------------------------------
-
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode clean target images into the packed, normalized latent domain.
 
@@ -481,8 +471,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             )
         latent_h, latent_w = latent.shape[-2:]
         return pipe._pack_latents(latent, latent.shape[0], latent.shape[1], latent_h, latent_w)
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode packed latents into RGB or opt-in RGBA output.

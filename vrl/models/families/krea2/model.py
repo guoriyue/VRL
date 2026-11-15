@@ -119,8 +119,6 @@ class Krea2Model(DiffusersModelBase):
             text_seq_len, height // PIXELS_PER_TOKEN, width // PIXELS_PER_TOKEN, device
         )
 
-    # -- forward_step --------------------------------------------------
-
     def forward_step(
         self,
         state: Krea2SamplingState,
@@ -223,8 +221,6 @@ class Krea2PipelineModel(DiffusersPipelineModelBase, Krea2Model):
         self._decode_height = 1024
         self._decode_width = 1024
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -261,8 +257,6 @@ class Krea2PipelineModel(DiffusersPipelineModelBase, Krea2Model):
             prompts, max_sequence_length, self._encoder_device()
         )
         return embeds.to(self.device, dtype=self.transformer.dtype), mask.to(self.device)
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -331,8 +325,6 @@ class Krea2PipelineModel(DiffusersPipelineModelBase, Krea2Model):
             width=int(request.width),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: Krea2SamplingState) -> dict[str, Any]:
         """Project Krea 2 sampling state into trajectory context.
 
@@ -361,8 +353,6 @@ class Krea2PipelineModel(DiffusersPipelineModelBase, Krea2Model):
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
             tensors["negative_prompt_embeds_mask"] = state.negative_prompt_embeds_mask
         return tensors
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode packed latents -> image via the Qwen-Image video VAE.

@@ -277,7 +277,6 @@ class RoleLifecycle:
 
         return bool(set(getattr(self, role)) & set(getattr(self, other)))
 
-    # ── the three offload bits ────────────────────────────────────────
     @property
     def offload_train(self) -> bool:
         """Trainer parks its model/optimizer while rollout or reward use its GPU."""
@@ -302,7 +301,6 @@ class RoleLifecycle:
             "reward", "rollout"
         )
 
-    # ── boundary views ────────────────────────────────────────────────
     @property
     def rollout_mode(self) -> Literal["resident", "on_demand"]:
         """``resident`` keeps serving across phases; ``on_demand`` parks at a

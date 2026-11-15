@@ -141,7 +141,7 @@ class SanaModel(DiffusersModelBase):
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
         )
 
-    # -- backend ownership (called by runtime, not by collectors) -------
+    # backend ownership (called by runtime, not by collectors)
 
     @staticmethod
     def _apply_fp16_saturation_clamp(transformer: Any) -> None:
@@ -189,8 +189,6 @@ class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
     this class also exports the trajectory tensors replay reads back.
     """
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -237,8 +235,6 @@ class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
             )
         return result
 
-    # -- prepare_sampling ----------------------------------------------
-
     def prepare_sampling(
         self,
         request: DenoiseRequest,
@@ -282,7 +278,6 @@ class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
             do_cfg=request.guidance_scale > 1.0 and negative_prompt_embeds is not None,
         )
 
-    # -- trajectory boundary -------------------------------------------
     # Masks and negative embeds are exported only when present, so the no-CFG
     # path stays tensor-free and restore reads them back with ``.get``.
 

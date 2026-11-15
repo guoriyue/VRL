@@ -74,9 +74,6 @@ class Hunyuan3DSamplingState(GuidedDenoiseSamplingStateBase):
     num_views: int
 
 
-# -- checkpoint loading -----------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class Hunyuan3DCheckpoint:
     """The released shape checkpoint's two directories, resolved to local files."""
@@ -236,9 +233,6 @@ class Hunyuan3DComponents:
         return {"transformer": self.transformer, "vae": self.vae, "conditioner": self.conditioner}
 
 
-# -- models ------------------------------------------------------------------
-
-
 class Hunyuan3DModel(DiffusersModelBase):
     """Hunyuan3D shape DiT, scheduler and per-step math: the model replay runs."""
 
@@ -359,8 +353,6 @@ class Hunyuan3DPipelineModel(DiffusersPipelineModelBase, Hunyuan3DModel):
         model._cpu_resident = cpu_resident
         return model
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -386,8 +378,6 @@ class Hunyuan3DPipelineModel(DiffusersPipelineModelBase, Hunyuan3DModel):
         with torch.no_grad():
             embeds = conditioner(image=image.to(self.device, dtype=encoder_dtype))["main"]
         return {"image_embeds": embeds.to(self.device, dtype=self._transformer_dtype())}
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -428,8 +418,6 @@ class Hunyuan3DPipelineModel(DiffusersPipelineModelBase, Hunyuan3DModel):
             num_views=int(request.frame_count),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: Hunyuan3DSamplingState) -> dict[str, Any]:
         """Project Hunyuan3D sampling state into trajectory context."""
         return {
@@ -450,8 +438,6 @@ class Hunyuan3DPipelineModel(DiffusersPipelineModelBase, Hunyuan3DModel):
             "image_embeds": state.image_embeds,
             "latents_clean": state.latents.detach(),
         }
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode VecSet latents -> ``num_views`` shaded views ``[B, V, 3, H, W]``.

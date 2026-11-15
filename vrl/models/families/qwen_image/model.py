@@ -108,8 +108,6 @@ class QwenImageModel(DiffusersModelBase):
                 f"model.fused_kernels: {type(self).__name__} has no QwenImageTransformerBlock"
             )
 
-    # -- forward_step --------------------------------------------------
-
     def _img_shapes(self, state: QwenImageSamplingState, bsz: int) -> list:
         vsf = state.vae_scale_factor
         latent_h = state.height // vsf // 2
@@ -217,8 +215,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
         self._decode_height = 1024
         self._decode_width = 1024
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -268,8 +264,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
                 else negative_prompt_embeds_mask.to(self.device)
             )
         return result
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -329,8 +323,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
             vae_scale_factor=int(pipe.vae_scale_factor),
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: QwenImageSamplingState) -> dict[str, Any]:
         """Project Qwen-Image sampling state into trajectory context."""
         return {
@@ -359,8 +351,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
         if state.negative_prompt_embeds_mask is not None:
             tensors["negative_prompt_embeds_mask"] = state.negative_prompt_embeds_mask
         return tensors
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode packed latents → image via Qwen-Image video VAE.

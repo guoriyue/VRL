@@ -39,7 +39,7 @@ def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolic
     return root, precision
 
 
-# ---- torch.compile compatibility matrix ---------------------------------------
+# torch.compile compatibility matrix
 
 
 @dataclass(frozen=True, slots=True)

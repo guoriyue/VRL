@@ -191,8 +191,6 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
         model._cpu_resident = cpu_resident
         return model
 
-    # -- encode_prompt -------------------------------------------------
-
     def encode_prompt(
         self,
         prompt: str | list[str],
@@ -229,8 +227,6 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
             prompts, max_sequence_length, device=self._encoder_device()
         )
         return embeds.to(self.device, dtype=self.transformer.dtype), mask.to(self.device)
-
-    # -- prepare_sampling ----------------------------------------------
 
     def prepare_sampling(
         self,
@@ -287,8 +283,6 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
             uncond_skip_layers=UNCOND_SKIP_LAYERS,
         )
 
-    # -- collector boundary --------------------------------------------
-
     def export_batch_context(self, state: MossImageSamplingState) -> dict[str, Any]:
         """Project MOSS-Image sampling state into trajectory context."""
         return {
@@ -312,8 +306,6 @@ class MossImagePipelineModel(DiffusersPipelineModelBase, MossImageModel):
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
             tensors["negative_prompt_embeds_mask"] = state.negative_prompt_embeds_mask
         return tensors
-
-    # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode 4D latents -> image via the FLUX.2 VAE (denormalize, unfold, decode)."""
