@@ -20,7 +20,7 @@ from vrl.algorithms.grpo.continuous import (
 )
 from vrl.algorithms.logprob_mismatch import TIS_IMP_WEIGHT_CAP, PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import RolloutProposalSignal, TrajectorySignalBatch
 
 
 def _signals(
@@ -28,13 +28,13 @@ def _signals(
     log_prob: torch.Tensor,
     old_log_prob: torch.Tensor,
     prev_sample_mean: torch.Tensor,
-    old_prev_sample_mean: torch.Tensor | None,
+    old_prev_sample_mean: torch.Tensor,
     std_dev_t: torch.Tensor,
     dt: torch.Tensor,
 ) -> TrajectorySignalBatch:
     return TrajectorySignalBatch(
         segments={
-            "denoise": FlowSDESignal(
+            "denoise": RolloutProposalSignal(
                 name="denoise",
                 distribution="flow_matching",
                 log_prob=log_prob,

@@ -17,7 +17,7 @@ from vrl.algorithms.logprob_mismatch import (
 )
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-from vrl.rollouts.evaluators.types import FlowSDESignal
+from vrl.rollouts.evaluators.types import FlowSDESignal, RolloutProposalSignal, SegmentSignal
 
 
 @dataclass(slots=True)
@@ -72,8 +72,8 @@ class ImportanceRatioAlgorithm(OnlineAlgorithm):
     gradient-magnitude dilution).
     """
 
-    uses_evaluator = True
     needs_sde_rollout = True
+    signal = SegmentSignal
     sft_source = "unsupported"
     config: ImportanceRatioConfig
 
@@ -285,6 +285,7 @@ class FlashGRPO(GRPO):
     """
 
     sft_source = "unsupported"
+    signal = FlowSDESignal
     config: FlashGRPOConfig
 
     def __init__(self, config: FlashGRPOConfig, *, scheduler: Any) -> None:
@@ -384,9 +385,9 @@ class FlowDPPO(ImportanceRatioAlgorithm):
     policy are always kept. This is the key difference from PPO's symmetric clip.
     """
 
-    # The trust region is the loss; it needs a behaviour policy that moved
-    # and the rollout's stored proposal mean.
+    # The trust region is the loss; it needs a behaviour policy that moved.
     requires_active_trust_region = True
+    signal = RolloutProposalSignal
     config: FlowDPPOConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
@@ -490,9 +491,9 @@ class GRPOGuard(ImportanceRatioAlgorithm):
     early and late timesteps contribute comparably.
     """
 
-    # The guard is the loss; it needs a behaviour policy that moved and the
-    # rollout's stored proposal mean.
+    # The guard is the loss; it needs a behaviour policy that moved.
     requires_active_trust_region = True
+    signal = RolloutProposalSignal
     config: GRPOGuardConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:

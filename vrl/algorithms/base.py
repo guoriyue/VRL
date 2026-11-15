@@ -15,6 +15,7 @@ from vrl.algorithms.types import TrainStepMetrics
 
 if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmInput
+    from vrl.rollouts.evaluators.types import SegmentSignal
 
 
 class Algorithm(ABC):
@@ -23,7 +24,7 @@ class Algorithm(ABC):
     Every ``algorithm.kind`` names a subclass. Its class attributes below are
     facts of the algorithm's math, not YAML knobs: config resolution reads
     them before launch and the trainer reads them to decide which policies it
-    holds. A subclass states the first three and overrides only the facts
+    holds. A subclass states the first two and overrides only the facts
     that are true for it. Construction takes the algorithm's resolved config
     and nothing else; the facts an algorithm needs from other config sections
     are bridged into that config by ``BuiltConfigs.from_cfg``.
@@ -32,8 +33,6 @@ class Algorithm(ABC):
     rollouts the trainer collects, ``OfflineAlgorithm`` from a fixed dataset.
     """
 
-    # uses_evaluator: the loss reads evaluator signals (log-probs from a replay
-    #   of the rollout's reverse SDE) rather than replaying the forward process.
     # needs_sde_rollout: the algorithm trains on reverse-SDE transitions, so
     #   generation must run the stochastic sampler (``rollout.sde``).
     # sft_source: where a clean-target SFT term takes its targets, or that
@@ -46,17 +45,22 @@ class Algorithm(ABC):
     #   unconditionally, not only behind a KL weight.
     # requires_active_trust_region: the loss is *defined* by a clipped or
     #   guarded ratio against the rollout policy, so it needs a behaviour
-    #   policy that differs from the trained one and the stored proposal mean.
+    #   policy that differs from the trained one.
     #   Plain GRPO's clip is only a safety rail and leaves this False.
+    # signal: the evaluator signal type the loss reads (log-probs from a replay
+    #   of the rollout's reverse SDE), or None when it trains without the
+    #   evaluator. What the type carries is what the run must provide: a loss
+    #   on ``RolloutProposalSignal`` needs the rollout's proposal mean stored
+    #   at generation (rollout.return_prev_sample_mean).
     # consumed_sections: for an offline algorithm, the config sections it
     #   consumes (a listed section allows only the named fields; an empty set
     #   only an empty section; None forbids the section); None = unrestricted.
-    uses_evaluator: ClassVar[bool]
     needs_sde_rollout: ClassVar[bool]
     sft_source: ClassVar[Literal["unsupported", "latents", "preference_winner"]]
     requires_previous_policy: ClassVar[bool] = False
     requires_reference_policy: ClassVar[bool] = False
     requires_active_trust_region: ClassVar[bool] = False
+    signal: ClassVar[type[SegmentSignal] | None] = None
     consumed_sections: ClassVar[tuple[tuple[str, frozenset[str] | None], ...] | None] = None
 
     config: Any
@@ -185,7 +189,6 @@ class OfflineAlgorithm(Algorithm):
     owns the data pipeline (``vrl/trainers/offline``) calls it directly.
     """
 
-    uses_evaluator = False
     needs_sde_rollout = False
 
 

@@ -31,12 +31,8 @@ class FlowSDESignal(SegmentSignal):
     The SDE step always yields the proposal mean, its standard deviation, the
     step's ``sqrt(-dt)`` and flow-domain sigma, so objectives that read them
     (the KL in latent space, Flash-GRPO's rectification, the trust-region
-    losses) take this type and read the fields. The two optional means follow
-    startup decisions, not the replay: ``ref_prev_sample_mean`` accompanies
-    ``ref_log_prob``; ``old_prev_sample_mean`` is the rollout-time proposal
-    mean that generation stores only when the recipe sets
-    ``rollout.return_prev_sample_mean`` (the factory requires it for
-    trust-region objectives).
+    losses) take this type and read the fields. ``ref_prev_sample_mean``
+    follows a startup decision, not the replay: it accompanies ``ref_log_prob``.
     """
 
     prev_sample_mean: Any
@@ -44,7 +40,20 @@ class FlowSDESignal(SegmentSignal):
     dt: Any
     sigma: Any
     ref_prev_sample_mean: Any | None = None
-    old_prev_sample_mean: Any | None = None
+
+
+@dataclass(kw_only=True)
+class RolloutProposalSignal(FlowSDESignal):
+    """A flow-SDE replay step together with the mean the rollout drew its action from.
+
+    Generation stores that mean only on request
+    (``rollout.return_prev_sample_mean``), so the replay yields this type
+    exactly when the trajectory carries it. An algorithm whose loss reads the
+    rollout's proposal names this type as its ``signal``, and config
+    resolution turns that into the storage requirement.
+    """
+
+    old_prev_sample_mean: Any
 
 
 @dataclass

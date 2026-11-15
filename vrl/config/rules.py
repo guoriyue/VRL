@@ -124,9 +124,11 @@ def check_cross_section_rules(root: RootConfig) -> None:
     if algorithm_cls.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
 
-    # ── A trust-region loss measures drift against the rollout's proposal mean,
-    # which generation stores only on request.
-    if algorithm_cls.requires_active_trust_region and (
+    # ── A loss on the rollout's proposal mean needs it stored at generation,
+    # which happens only on request.
+    from vrl.rollouts.evaluators.types import RolloutProposalSignal
+
+    if algorithm_cls.signal is RolloutProposalSignal and (
         rollout is None or not rollout.return_prev_sample_mean
     ):
         raise ValueError(

@@ -724,7 +724,7 @@ class OnlineTrainer:
         from vrl.algorithms.trajectory import AlgorithmInput
         from vrl.utils.profiling import profile_range
 
-        if not self.algorithm.uses_evaluator:
+        if self.algorithm.signal is None:
             # DiffusionNFT owns its raw transformer boundaries and applies the
             # resolved contract there; its objective reductions remain outside.
             with profile_range("trainer.loss"):
@@ -1443,7 +1443,8 @@ class OnlineTrainer:
         timed into the step's stats.
         """
         defer_replay_tensors = (
-            self.algorithm.uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
+            self.algorithm.signal is not None
+            and self.evaluator.supports_deferred_replay_tensor_move
         )
 
         cfg = self.config
@@ -1785,7 +1786,7 @@ class OnlineTrainer:
         if (
             (self._replay_parity_passed and not cfg.replay_parity.every_update)
             or self.evaluator is None
-            or not self.algorithm.uses_evaluator
+            or self.algorithm.signal is None
         ):
             return resolved
 

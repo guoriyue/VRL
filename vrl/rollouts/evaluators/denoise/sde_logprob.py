@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 
 import vrl.math.denoise.flow_matching as flow_matching_math
 from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import (
+    FlowSDESignal,
+    RolloutProposalSignal,
+    TrajectorySignalBatch,
+)
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -127,22 +132,24 @@ class DenoiseSDELogProbEvaluator(Evaluator):
         # (rollout.return_prev_sample_mean) and replayed back unchanged, sliced
         # to this step to match result.prev_sample_mean's shape.
         stored_prev_sample_mean = replay.get("old_prev_sample_mean")
-        old_prev_sample_mean = (
-            move_value_to_device(stored_prev_sample_mean[:, timestep_idx], device)
-            if stored_prev_sample_mean is not None
-            else None
-        )
+        rollout_proposal: dict[str, Any] = {"signal_type": FlowSDESignal}
+        if stored_prev_sample_mean is not None:
+            rollout_proposal = {
+                "signal_type": RolloutProposalSignal,
+                "old_prev_sample_mean": move_value_to_device(
+                    stored_prev_sample_mean[:, timestep_idx], device
+                ),
+            }
 
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",
             log_prob=result.log_prob,
             timestep_idx=timestep_idx,
-            signal_type=FlowSDESignal,
             ref_log_prob=ref_log_prob,
             prev_sample_mean=result.prev_sample_mean,
             std_dev_t=result.std_dev_t,
             dt=result.sqrt_neg_dt,
             sigma=result.sigma,
             ref_prev_sample_mean=ref_prev_sample_mean,
-            old_prev_sample_mean=old_prev_sample_mean,
+            **rollout_proposal,
         )

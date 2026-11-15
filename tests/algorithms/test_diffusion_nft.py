@@ -1,6 +1,6 @@
 """Loss-correctness tests for DiffusionNFT (algorithms/diffusion_nft.py).
 
-DiffusionNFT runs the ``uses_evaluator=False`` trainer branch — a completely
+DiffusionNFT runs the ``signal=None`` trainer branch — a completely
 separate code path from every GRPO test, involving a reference forward and the
 trainable forward (theta_old is its detached prediction). A sign error here
 would train in reverse with nothing catching it.

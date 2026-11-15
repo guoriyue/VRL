@@ -37,7 +37,6 @@ class ForwardProcessAlgorithm(OnlineAlgorithm):
     scored against the wrong weights (``requires_previous_policy``).
     """
 
-    uses_evaluator = False
     sft_source = "unsupported"
     requires_previous_policy = True
     config: ForwardProcessConfig
