@@ -23,27 +23,102 @@ _GENERATION_MODEL_IMPORT_FLOOR = (
     "vrl.models.parking",
 )
 
+# The ``vrl`` packages each top-level package imports, lazy imports included.
+# The rows are the graph as it stands, cycles included (config <-> trainers,
+# rollouts <-> trainers, models <-> generation, generation <-> trajectory are
+# existing debt): a new edge is a layering decision made in this table, and a
+# removed one shrinks its row. ``vrl.scripts`` is the composition root and may
+# import anything.
+_PACKAGE_IMPORTS: dict[str, frozenset[str]] = {
+    "algorithms": frozenset({"math", "models", "rollouts", "trajectory"}),
+    "config": frozenset(
+        {
+            "algorithms",
+            "generation",
+            "models",
+            "ray",
+            "rewards",
+            "rollouts",
+            "trainers",
+            "trajectory",
+            "utils",
+        }
+    ),
+    "generation": frozenset(
+        {"config", "math", "models", "ray", "runtime_errors", "trajectory", "utils"}
+    ),
+    "math": frozenset(),
+    "models": frozenset({"config", "generation", "nn", "trajectory", "utils"}),
+    "nn": frozenset({"utils"}),
+    "ray": frozenset({"config", "models", "runtime_errors", "utils"}),
+    "rewards": frozenset({"config", "models", "ray", "runtime_errors", "utils"}),
+    "rollouts": frozenset(
+        {
+            "algorithms",
+            "config",
+            "generation",
+            "math",
+            "models",
+            "ray",
+            "rewards",
+            "runtime_errors",
+            "trainers",
+            "trajectory",
+            "utils",
+        }
+    ),
+    "run": frozenset({"config", "utils"}),
+    "runtime_errors": frozenset(),
+    "trainers": frozenset(
+        {
+            "algorithms",
+            "config",
+            "generation",
+            "math",
+            "models",
+            "nn",
+            "rollouts",
+            "trajectory",
+            "utils",
+        }
+    ),
+    "training_run_result": frozenset({"config", "runtime_errors", "utils"}),
+    "trajectory": frozenset({"generation", "models", "utils"}),
+    "utils": frozenset({"runtime_errors"}),
+}
 
-def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
-    """``vrl.generation`` must not import the algorithm, reward, rollout, script or trainer
-    layers: generation is the bottom of the stack.
+
+def test_packages_import_exactly_their_declared_dependencies() -> None:
+    """Every ``vrl`` package imports the packages its ``_PACKAGE_IMPORTS`` row names, no
+    more (a new edge needs a row change) and no fewer (a dropped edge shrinks the row).
     """
-    violations = _forbidden_imports(
-        VRL_ROOT / "generation",
-        forbidden=(
-            "vrl.algorithms",
-            "vrl.rewards",
-            "vrl.rollouts",
-            "vrl.scripts",
-            "vrl.trainers",
-        ),
-    )
-    assert not violations, _format_violations(violations)
+    actual: dict[str, set[str]] = {}
+    for path in _python_files(VRL_ROOT):
+        parts = path.relative_to(VRL_ROOT).parts
+        package = parts[0].removesuffix(".py")
+        if package in ("__init__", "scripts"):
+            continue
+        edges = actual.setdefault(package, set())
+        for target in _imports(path):
+            names = target.split(".")
+            if names[0] == "vrl" and len(names) > 1 and names[1] != package:
+                edges.add(names[1])
+
+    declared = {package: set(row) for package, row in _PACKAGE_IMPORTS.items()}
+    drift = {
+        package: {
+            "new": sorted(actual.get(package, set()) - declared.get(package, set())),
+            "gone": sorted(declared.get(package, set()) - actual.get(package, set())),
+        }
+        for package in sorted(actual.keys() | declared.keys())
+        if actual.get(package) != declared.get(package)
+    }
+    assert not drift, drift
 
 
 def test_importing_rewards_loads_no_generation_rollout_or_training_layer() -> None:
-    """The direct-import scan above cannot see a leak through ``vrl.config``;
-    import every reward module and inspect what actually loaded.
+    """The package table scans import statements and cannot see a leak through
+    ``vrl.config``; import every reward module and inspect what actually loaded.
     """
     code = (
         "import importlib, pkgutil, sys, vrl.rewards\n"
@@ -202,22 +277,6 @@ def test_trajectory_layer_stays_family_neutral() -> None:
             "vrl.algorithms",
             "vrl.generation.bindings.full_sequence",
             "vrl.generation.ray",
-            "vrl.rewards",
-            "vrl.rollouts",
-            "vrl.trainers",
-        ),
-    )
-    assert not violations, _format_violations(violations)
-
-
-def test_shared_ray_substrate_stays_domain_neutral() -> None:
-    """``vrl.ray`` is shared substrate and must not know generation, rewards, rollouts or
-    trainers.
-    """
-    violations = _forbidden_imports(
-        VRL_ROOT / "ray",
-        forbidden=(
-            "vrl.generation",
             "vrl.rewards",
             "vrl.rollouts",
             "vrl.trainers",
