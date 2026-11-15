@@ -142,8 +142,8 @@ class QuantizationPass:
 
         Reads ``build.precision.quantization`` (the caller has checked
         :meth:`enabled`) and dispatches to its module swap, which targets the
-        eligible attention projections and MLPs. Quantization is rollout-only and layered on the
-        ordinary rollout dtype, which remains responsible for unswapped
+        eligible attention projections and MLPs. Quantization is layered on the
+        role's ordinary dtype, which remains responsible for unswapped
         operations and parameter masters.
 
         Hardware/format checks happen before the swap, and a zero-match result

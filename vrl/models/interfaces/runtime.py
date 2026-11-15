@@ -74,7 +74,7 @@ class RolloutBuildOptions:
     they ignore.
 
     Replay builds carry ``rollout=None`` instead of hauling these fields through
-    a path that must never quantize or load generation-only prompt encoders.
+    a path that must never load generation-only prompt encoders.
     """
 
     prompt_encoder_dtype: Any

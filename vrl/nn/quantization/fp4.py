@@ -3,7 +3,8 @@
 Selected attention and MLP GEMMs run through ``torch._scaled_mm`` on packed
 ``float4_e2m1fn_x2`` operands. A source-dtype master weight remains available
 when full-parameter rollout weight sync needs it; the non-persistent NVFP4 cache
-is rebuilt after each load. Training/replay remains unquantized.
+is rebuilt after each load. A replay under ``precision.training.quantization``
+runs the same GEMM.
 
 The single ``nvfp4`` recipe uses two-level NVIDIA scaling: an FP32 tensor scale,
 1x16 E4M3 block scales in cuBLAS's blocked layout, and signed E2M1 values. CUDA
