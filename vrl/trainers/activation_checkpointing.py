@@ -30,6 +30,8 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -45,27 +47,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Ops whose recompute is pure waste (GEMM + attention): SAC saves their outputs so
-# backward reads them back instead of re-running them; everything cheap (norm,
-# pointwise, dropout) is recomputed.
-_ATTENTION_SAVE_OPS = {
-    torch.ops.aten._scaled_dot_product_flash_attention.default,
-    torch.ops.aten._scaled_dot_product_flash_attention_for_cpu.default,
-    torch.ops.aten._scaled_dot_product_efficient_attention.default,
-    torch.ops.aten._scaled_dot_product_cudnn_attention.default,
-}
-_GEMM_OPS = {torch.ops.aten.mm.default, torch.ops.aten.addmm.default}
-_GRADIENT_CHECKPOINT_SAVE_OPS = _GEMM_OPS | {torch.ops.aten.bmm.default} | _ATTENTION_SAVE_OPS
+_ATTENTION_OPS = frozenset(
+    {
+        torch.ops.aten._scaled_dot_product_flash_attention.default,
+        torch.ops.aten._scaled_dot_product_flash_attention_for_cpu.default,
+        torch.ops.aten._scaled_dot_product_efficient_attention.default,
+        torch.ops.aten._scaled_dot_product_cudnn_attention.default,
+    }
+)
+_GEMM_OPS = frozenset({torch.ops.aten.mm.default, torch.ops.aten.addmm.default})
+# Fewer rows than this are per-sample conditioning vectors or a short text
+# stream: their GEMMs are microseconds, not worth a saved tensor.
+_MIN_SAVED_GEMM_ROWS = 64
 
 
-def _selective_checkpoint_policy(ctx, op, *args, **kwargs):
-    if op in _GRADIENT_CHECKPOINT_SAVE_OPS:
-        return CheckpointPolicy.MUST_SAVE
-    return CheckpointPolicy.PREFER_RECOMPUTE
+@dataclass(frozen=True)
+class SelectiveCheckpoint:
+    """A diffusers ``gradient_checkpointing_func`` that recomputes a block under SAC.
 
-
-def selective_checkpoint_func(module, *args):
-    """Drop-in for diffusers' gradient_checkpointing_func that applies SAC.
+    Backward reads back the outputs of ``save_ops`` instead of re-running them;
+    with ``save_width_reducing_gemms`` it also keeps every token GEMM whose
+    output is narrower than its input. Everything else (norm, pointwise,
+    dropout, the remaining GEMMs) is recomputed.
 
     ``context_fn`` is a partial, not a lambda: when torch.compile traces this
     call (a root-compiled transformer forward loops over its blocks through
@@ -73,42 +76,50 @@ def selective_checkpoint_func(module, *args):
     "checkpoint not implemented for NestedUserFunctionVariable context_fn" on
     a lambda created in the traced frame.
     """
-    return checkpoint(
-        module.__call__,
-        *args,
-        use_reentrant=False,
-        context_fn=functools.partial(
-            create_selective_checkpoint_contexts, _selective_checkpoint_policy
-        ),
-    )
+
+    save_ops: frozenset[Any]
+    save_width_reducing_gemms: bool = False
+    # The SAC policy, built once as a plain function: dynamo cannot pass a bound
+    # method through ``context_fn`` ("Failed to convert UserMethodVariable").
+    policy: Callable[..., CheckpointPolicy] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        save_ops, save_width_reducing_gemms = self.save_ops, self.save_width_reducing_gemms
+
+        def policy(ctx: Any, op: Any, *args: Any, **kwargs: Any) -> CheckpointPolicy:
+            if op in save_ops:
+                return CheckpointPolicy.MUST_SAVE
+            if save_width_reducing_gemms and op in _GEMM_OPS:
+                mat1, mat2 = (args[1], args[2]) if op is torch.ops.aten.addmm.default else args[:2]
+                width_in, width_out = mat1.shape[-1], mat2.shape[-1]
+                if width_in > width_out and mat1.numel() // width_in >= _MIN_SAVED_GEMM_ROWS:
+                    return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        object.__setattr__(self, "policy", policy)
+
+    def __call__(self, module: Any, *args: Any) -> Any:
+        return checkpoint(
+            module.__call__,
+            *args,
+            use_reentrant=False,
+            context_fn=functools.partial(create_selective_checkpoint_contexts, self.policy),
+        )
 
 
-# Fewer rows than this are per-sample conditioning vectors or a short text
-# stream: their GEMMs are microseconds, not worth a saved tensor.
-_MIN_SAVED_GEMM_ROWS = 64
-
-
-def _attention_saving_policy(ctx, op, *args, **kwargs):
-    if op in _ATTENTION_SAVE_OPS:
-        return CheckpointPolicy.MUST_SAVE
-    if op in _GEMM_OPS:
-        mat1, mat2 = (args[1], args[2]) if op is torch.ops.aten.addmm.default else args[:2]
-        width_in, width_out = mat1.shape[-1], mat2.shape[-1]
-        if width_in > width_out and mat1.numel() // width_in >= _MIN_SAVED_GEMM_ROWS:
-            return CheckpointPolicy.MUST_SAVE
-    return CheckpointPolicy.PREFER_RECOMPUTE
-
-
-def attention_saving_checkpoint_func(module, *args):
-    """``selective_checkpoint_func`` saving attention and width-reducing GEMM outputs."""
-    return checkpoint(
-        module.__call__,
-        *args,
-        use_reentrant=False,
-        context_fn=functools.partial(
-            create_selective_checkpoint_contexts, _attention_saving_policy
-        ),
-    )
+# ``selective``: every GEMM and attention output.
+selective_checkpoint_func = SelectiveCheckpoint(
+    save_ops=_GEMM_OPS | {torch.ops.aten.bmm.default} | _ATTENTION_OPS,
+)
+# ``selective_attention``: attention, then the width-reducing token GEMMs.
+attention_saving_checkpoint_func = SelectiveCheckpoint(
+    save_ops=_ATTENTION_OPS,
+    save_width_reducing_gemms=True,
+)
+_SELECTIVE_MODES = {
+    "selective": selective_checkpoint_func,
+    "selective_attention": attention_saving_checkpoint_func,
+}
 
 
 def cpu_checkpoint_func(module, *args):
@@ -147,12 +158,8 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
                     "a custom gradient_checkpointing_func is required",
                 ) from exc
             continue
-        if mode in ("selective", "selective_attention"):
-            func = (
-                selective_checkpoint_func
-                if mode == "selective"
-                else attention_saving_checkpoint_func
-            )
+        func = _SELECTIVE_MODES.get(mode)
+        if func is not None:
             try:
                 inspect.signature(enable).bind_partial(gradient_checkpointing_func=func)
             except TypeError:
@@ -168,6 +175,7 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
 
 
 __all__ = [
+    "SelectiveCheckpoint",
     "attention_saving_checkpoint_func",
     "enable_transformer_gradient_checkpointing",
     "selective_checkpoint_func",

@@ -228,7 +228,7 @@ def test_attention_saving_policy_keeps_token_gemms_that_reduce_width() -> None:
 
     from torch.utils.checkpoint import CheckpointPolicy
 
-    from vrl.trainers.activation_checkpointing import _attention_saving_policy
+    from vrl.trainers.activation_checkpointing import attention_saving_checkpoint_func
 
     mm, addmm = torch.ops.aten.mm.default, torch.ops.aten.addmm.default
     tokens, vectors = 80, 2
@@ -237,7 +237,7 @@ def test_attention_saving_policy_keeps_token_gemms_that_reduce_width() -> None:
     reduce_vectors = (torch.empty(vectors, 32), torch.empty(32, 8))
 
     def policy(op, *args):
-        return _attention_saving_policy(None, op, *args)
+        return attention_saving_checkpoint_func.policy(None, op, *args)
 
     assert policy(mm, *reduce) is CheckpointPolicy.MUST_SAVE
     assert policy(addmm, torch.empty(8), *reduce) is CheckpointPolicy.MUST_SAVE
