@@ -372,6 +372,22 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
     def patch_size(self) -> tuple[int, int, int]:
         return tuple(int(p) for p in self.transformer.config.patch_size)
 
+    def apply_lora(self, build: ModelBuild) -> None:
+        """Attach the adapters; a quantized base then reads its AdaLN projections from a table.
+
+        Quantization is how the frozen base fits one card, and the 13.0B AdaLN
+        weights do not fit beside the rest even at NVFP4. Both builders attach
+        LoRA before the quantization swap, so the rollout and the replay
+        memoize the same projections and the swap never sees them.
+        """
+
+        super().apply_lora(build)
+        if build.precision.quantization is not None:
+            from vrl.models.families.minimax_h3.adaln_memo import memoize_adaln_projections
+
+            for root in self.policy_cores.values():
+                memoize_adaln_projections(root)
+
     def apply_fused_kernels(self, build: ModelBuild) -> None:
         """Swap every policy core's blocks to ``FusedMiniMaxH3TransformerBlock``."""
 
