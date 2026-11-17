@@ -35,7 +35,6 @@ _UNMOVED: dict[str, str] = {
     "algorithm.hyperparameters.nft_beta": "DiffusionNFT paper value",
     # Opt-in modes and diagnostics: off unless a run asks for them.
     "precision.rollout.quantization": "FP8/NVFP4 rollout kernels (docs/PRECISION.md)",
-    "precision.training.quantization": "replay through the rollout's FP8/NVFP4 GEMM (f14c55928)",
     "rollout.torch_profiler": "profiling window",
     "trainer.torch_profiler": "profiling window",
     "trainer.deterministic": "cuDNN/algorithm determinism switch",

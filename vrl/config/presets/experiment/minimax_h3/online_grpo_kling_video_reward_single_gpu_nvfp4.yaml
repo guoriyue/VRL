@@ -1,0 +1,44 @@
+# MiniMax-H3 T2V GRPO on one 32 GB card with the policy resident in NVFP4,
+# instead of streamed from the host per call as in the `_single_gpu` sibling.
+#
+# - precision.training.quantization swaps the frozen base's linears to NVFP4 in
+#   the replay and the rollout alike (docs/PRECISION.md); LoRA trains against it.
+# - Under quantization the family answers every block's AdaLN projection from a
+#   per-timestep table (models/families/minimax_h3/adaln_memo.py), so 20.1B of
+#   the 33.1B weights sit on the card: about 11 GB at 4.5 bits a weight.
+# - The rollout worker and the trainer each hold one such policy and share the
+#   card by the default phase handoff, one parked while the other runs.
+# - The Qwen3-VL-32B conditioner stays on the host (model.memory.cpu_resident),
+#   both VAEs sit on the card in fp32, and the canvas is 640x384, as in the
+#   sibling.
+#
+# Not validated: no run or probe of this file has completed. Measured so far on
+# the streamed model at 640x384, 7 steps: NVFP4 moves the single-forward
+# velocity by 23% against bf16 (fp8: 8%).
+#
+# Usage (run under a host-memory cap: the file-backed models exceed the RAM):
+#   CUDA_VISIBLE_DEVICES=0 systemd-run --user --scope -p MemoryMax=80G \
+#     vrl-train --config experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu_nvfp4
+defaults:
+  - /experiment/minimax_h3/online_grpo_kling_video_reward
+  - _self_
+
+precision:
+  training:
+    quantization:
+      format: nvfp4
+
+model:
+  memory:
+    cpu_resident: [text_encoder]
+
+sampling:
+  width: 640
+  height: 384
+
+actor:
+  gradient_checkpointing: full
+  training_microbatch_size: 1
+
+trainer:
+  output_dir: outputs/minimax_h3_kling_video_reward_single_gpu_nvfp4

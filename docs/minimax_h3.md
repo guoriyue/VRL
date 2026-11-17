@@ -76,6 +76,27 @@ The two file-backed models together exceed the host RAM, so every run goes
 under `systemd-run --user --scope -p MemoryMax=80G`: the page cache then evicts
 instead of the OOM killer rebooting the box (which it did once, 2026-10-14).
 
+### Resident in NVFP4
+
+`experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu_nvfp4` holds
+the policy on the card instead of streaming it:
+
+- `precision.training.quantization.format: nvfp4` swaps the frozen base's
+  linears in the replay and the rollout (`docs/PRECISION.md`).
+- 13.0B of the 33.1B weights are the blocks' `adaln_proj`, one
+  `Linear(2688, 96768)` a block whose input is one row per distinct noise level.
+  Under quantization the family replaces each with a per-timestep table
+  (`vrl/models/families/minimax_h3/adaln_memo.py`): the weight stays on the
+  host, a new timestep's row is computed once on the card, and later forwards
+  index it. The card then holds 20.1B weights, about 11 GB at 4.5 bits each.
+- The rollout worker and the trainer each hold one policy and hand the card
+  over between phases.
+
+Not run yet. The CPU tests cover the table against the stock projection on the
+tiny transformer; nothing has measured the resident footprint, the handoff, or
+training under NVFP4's weight error (23% single-forward velocity error at
+640x384 on the streamed model, against 8% for fp8).
+
 ## Integration check
 
 Pending. The full-sequence probe below is the check; the family stays
@@ -106,6 +127,9 @@ encode and the fp32 VAE decode.
 - `experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu`: the same
   recipe at 640x384 with the single-card residency above. The probe target; no
   training step has run on it.
+- `experiment/minimax_h3/online_grpo_kling_video_reward_single_gpu_nvfp4`: the
+  single-card recipe with the policy resident in NVFP4 instead of streamed. Not
+  run yet.
 
 ## Tests
 
