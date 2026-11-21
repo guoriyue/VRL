@@ -168,6 +168,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
     default_fps: int | None = None
     default_max_sequence_length: int | None = None
     sde_type: str = "flow_grpo"
+    supports_edit_mask: bool = False
 
     def __init__(
         self,
@@ -273,6 +274,8 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         from vrl.utils.profiling import profile_range
 
         params = self.parse_sampling_params(request)
+        if request.inputs[batch.prompt_index].edit_mask and not self.supports_edit_mask:
+            raise ValueError(f"{request.family} has no mask-constrained sampling (edit_mask)")
 
         # Host wall clock of each stage (no CUDA sync), summed over the batches.
         with timed("generation.encode_s"):

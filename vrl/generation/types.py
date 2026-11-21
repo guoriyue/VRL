@@ -38,6 +38,10 @@ class GenerationInput:
     # Ordered conditioning images. Single-image families (Wan I2V, Cosmos
     # Video2World) require exactly one; Qwen-Image-2.1 takes any number.
     reference_images: list[str] = field(default_factory=list)
+    # Grayscale image at the output geometry: the model generates where it is
+    # non-zero and is held to the first reference image everywhere else, at
+    # every denoise step. Families without constrained sampling reject it.
+    edit_mask: str | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt:
@@ -49,6 +53,8 @@ class GenerationInput:
         ):
             raise ValueError("GenerationInput.reference_images must be a list of non-empty paths")
         self.reference_images = list(self.reference_images)
+        if self.edit_mask is not None and not (self.edit_mask.strip() and self.reference_images):
+            raise ValueError("GenerationInput.edit_mask is a path and needs a reference image")
 
 
 @dataclass(slots=True)

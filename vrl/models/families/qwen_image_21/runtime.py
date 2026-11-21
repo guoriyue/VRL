@@ -28,6 +28,7 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
     min_reference_images = 0
     max_reference_images = None
     reference_image_mode = "RGBA"
+    supports_edit_mask = True
 
     def encode_prompt_for_batch(
         self,
@@ -42,6 +43,12 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
         if item.reference_video:
             raise ValueError("Qwen-Image-2.1 accepts reference images, not reference_video")
         options = QwenImage21SamplingSection.from_request(generation_request.sampling)
+        edit_mask = None
+        if item.edit_mask:
+            from PIL import Image
+
+            with Image.open(item.edit_mask) as opened:
+                edit_mask = opened.convert("L")
         return self.model.encode_prompt(
             item.prompt,
             params.model_request.negative_prompt or None,
@@ -49,6 +56,7 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
             reference_images=self._reference_images_for_batch(generation_request, batch),
             reference_resolution=options.reference_resolution,
             output_mode=options.output_mode,
+            edit_mask=edit_mask,
         )
 
     def build_prepare_kwargs(

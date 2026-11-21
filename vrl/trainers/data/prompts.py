@@ -25,6 +25,8 @@ class PromptExample:
     target_text: str = ""
     reference_video: str | None = None
     reference_images: list[str] = field(default_factory=list)
+    # See ``GenerationInput.edit_mask``.
+    edit_mask: str | None = None
     # CONTRACT: clean targets stay manifest-relative for the whole run. Exactly
     # one target_image/target_video is the identity key into sft-latents shards;
     # target-similarity rewards resolve the same artifact per process. Load-time
@@ -56,6 +58,7 @@ class PromptExample:
             task_type=self.task_type or None,
             reference_video=self.reference_video or None,
             reference_images=self.reference_images,
+            edit_mask=self.edit_mask or None,
         )
 
     def reward_metadata(self) -> dict[str, Any]:
@@ -86,6 +89,7 @@ class PromptExample:
             self,
             reference_video=resolve(reference_video) if reference_video else None,
             reference_images=[resolve(item) for item in self.reference_images],
+            edit_mask=resolve(self.edit_mask) if self.edit_mask else None,
         )
 
     def with_required_reference_images(

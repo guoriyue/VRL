@@ -28,6 +28,16 @@ Qwen-Image-2.1 specifics vs the 20B ``qwen_image`` family:
   sequence every step and stay bit-comparable.
 - Optional reference images are encoded once into a fixed latent prefix and
   replayed unchanged. Only target latents are sampled and assigned log-probs.
+- An optional ``edit_mask`` constrains sampling to a region. At every step the
+  transformer reads the target latents with the tokens outside the mask
+  replaced by the first reference at that step's noise level,
+  ``(1 - sigma) * reference + sigma * noise`` with the request's initial
+  noise, so what it generates inside is conditioned on the true surroundings
+  throughout the denoise; the decoded latents carry the clean reference
+  there. The recorded path is still the policy's own sample of every token:
+  the replacement is part of the model input, rebuilt identically at replay
+  from ``edit_mask`` / ``edit_noise``, so log-probs need no masking. Tokens
+  outside the mask never reach the output and only add variance to them.
 - The transformer time embedding multiplies its input by 1000 internally, so
   ``forward_step`` feeds ``t / 1000`` (matching ``QwenImage21Pipeline``).
 """
@@ -79,6 +89,10 @@ class QwenImage21SamplingState(GuidedDenoiseSamplingStateBase):
     vae_scale_factor: int
     reference_latents: torch.Tensor | None = None
     reference_shapes: tuple[tuple[int, int, int], ...] = ()
+    # ``[B, tokens]`` bool, True where the model generates; with it the initial
+    # noise ``[B, tokens, C]`` that re-noises the first reference elsewhere.
+    edit_mask: torch.Tensor | None = None
+    edit_noise: torch.Tensor | None = None
 
 
 class QwenImage21Model(DiffusersModelBase):
@@ -154,7 +168,15 @@ class QwenImage21Model(DiffusersModelBase):
         bsz, latent_tokens = state.latents.shape[0], state.latents.shape[1]
         td = self._transformer_dtype()
 
-        latent_input = state.latents.to(td)
+        latent_input = state.latents
+        if state.edit_mask is not None:
+            sigma = (expand_batch_timestep(t, bsz).to(state.edit_noise) / 1000.0).view(-1, 1, 1)
+            held = state.reference_latents[:, :latent_tokens].to(state.edit_noise.dtype)
+            held = (1 - sigma) * held + sigma * state.edit_noise
+            latent_input = torch.where(
+                state.edit_mask.bool().unsqueeze(-1), latent_input.to(held.dtype), held
+            )
+        latent_input = latent_input.to(td)
         if state.reference_latents is not None:
             latent_input = torch.cat([state.reference_latents.to(td), latent_input], dim=1)
         timestep_batch = (
@@ -223,6 +245,8 @@ class QwenImage21Model(DiffusersModelBase):
             reference_shapes=tuple(
                 tuple(shape) for shape in batch_context.get("reference_shapes", ())
             ),
+            edit_mask=replay_tensors.get("edit_mask"),
+            edit_noise=replay_tensors.get("edit_noise"),
         )
 
 
@@ -246,6 +270,8 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
         self._decode_height = 1024
         self._decode_width = 1024
         self._output_mode = "rgb"
+        # (edit_mask, first reference latents) of the batch being sampled, or None.
+        self._decode_held: tuple[torch.Tensor, torch.Tensor] | None = None
 
     def encode_prompt(
         self,
@@ -325,7 +351,22 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             image_pad_mask.sum(dim=1) * _LATENT_TOKENS_PER_MASK_SLOT == reference_tokens
         ):
             raise ValueError("Reference vision slots and VAE latent geometry disagree")
-        result: dict[str, Any] = {
+        edit_mask = kwargs.get("edit_mask")
+        result: dict[str, Any] = {}
+        if edit_mask is not None:
+            if not reference_shapes:
+                raise ValueError("edit_mask needs the reference image it holds the output to")
+            _, latent_h, latent_w = reference_shapes[0]
+            scale = pipe.vae_scale_factor
+            pixels = torch.from_numpy(
+                np.array(edit_mask.resize((latent_w * scale, latent_h * scale)))
+            )
+            # A token is generated when any pixel of its tile is in the mask.
+            tiles = pixels.reshape(latent_h, scale, latent_w, scale).amax(dim=(1, 3)) > 0
+            if not tiles.any() or tiles.all():
+                raise ValueError("edit_mask must leave some of the image to edit and some to hold")
+            result["edit_mask"] = tiles.reshape(1, -1).to(self.device)
+        result |= {
             "prompt_embeds": prompt_embeds,
             "prompt_embeds_mask": prompt_embeds_mask,
             "image_pad_mask": image_pad_mask,
@@ -388,6 +429,23 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
         self._decode_height = int(request.height)
         self._decode_width = int(request.width)
         self._output_mode = encoded.get("output_mode", "rgb")
+        edit_mask = encoded.get("edit_mask")
+        self._decode_held = None
+        if edit_mask is not None:
+            first = encoded["reference_shapes"][0]
+            scale = int(pipe.vae_scale_factor)
+            if tuple(first) != (1, request.height // scale, request.width // scale) or (
+                edit_mask.shape[1] != latents.shape[1]
+            ):
+                raise ValueError(
+                    "edit_mask holds the output to the first reference, which must be encoded at "
+                    f"the output geometry {request.width}x{request.height}: set "
+                    "sampling.reference_resolution to match"
+                )
+            self._decode_held = (
+                edit_mask,
+                encoded["reference_latents"][:, : latents.shape[1]].to(latents.dtype),
+            )
 
         return QwenImage21SamplingState(
             latents=latents,
@@ -406,6 +464,8 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
             vae_scale_factor=int(pipe.vae_scale_factor),
             reference_latents=encoded.get("reference_latents"),
             reference_shapes=encoded.get("reference_shapes", ()),
+            edit_mask=edit_mask,
+            edit_noise=None if edit_mask is None else latents.clone(),
         )
 
     def export_batch_context(self, state: QwenImage21SamplingState) -> dict[str, Any]:
@@ -433,6 +493,9 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
         }
         if state.reference_latents is not None:
             tensors["reference_latents"] = state.reference_latents
+        if state.edit_mask is not None:
+            tensors["edit_mask"] = state.edit_mask.to(torch.int64)
+            tensors["edit_noise"] = state.edit_noise
         if state.prompt_embeds_mask is not None:
             tensors["prompt_embeds_mask"] = state.prompt_embeds_mask
         if state.negative_prompt_embeds is not None:
@@ -485,6 +548,9 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
         vae_scale_factor = pipe.vae_scale_factor
         height = self._decode_height
         width = self._decode_width
+        if self._decode_held is not None:
+            edit_mask, held = self._decode_held
+            latents = torch.where(edit_mask.unsqueeze(-1), latents, held.to(latents.dtype))
 
         def _transform(batch: torch.Tensor) -> torch.Tensor:
             return denormalize_video_vae_latents(
